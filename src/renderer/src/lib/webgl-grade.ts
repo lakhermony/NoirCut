@@ -1,10 +1,21 @@
 /**
  * WebGL2 gerçek zamanlı renk düzenleme motoru.
- * Video karesini GPU dokusuna yükler, Lift/Gamma/Gain, Exposure, Contrast,
- * Temperature, Tint, Saturation ve 3D LUT (trilineer) + Split-Screen Wipe uygular.
+ * Video karesini GPU dokusuna yükler; Lift/Gamma/Gain/Offset, Exposure, Contrast,
+ * Highlights/Shadows, Temperature/Tint, Custom RGB & Luma Curves, Hue vs Sat / Hue vs Hue,
+ * Vibrance, Saturation, 3D LUT (trilineer), Vignette, Film Grain ve Split-Screen Wipe uygular.
  */
-import { wheelToRgbOffset, type ColorGrade } from '../../../shared/color'
+import {
+  areCurvesNeutral,
+  areHueBandsNeutral,
+  buildCurveLut256,
+  cameraProfileIndex,
+  defaultHueBands,
+  neutralWheel,
+  wheelToRgbOffset,
+  type ColorGrade
+} from '../../../shared/color'
 import type { Lut3D } from '../../../shared/lut'
+import { hexToRgb01 } from '../../../shared/noirfilm'
 
 const VERT_SRC = `#version 300 es
 in vec2 a_pos;
@@ -23,30 +34,242 @@ out vec4 outColor;
 
 uniform sampler2D u_video;
 uniform sampler3D u_lut;
+uniform sampler2D u_curves;
 
 uniform float u_exposure;
 uniform float u_contrast;
+uniform float u_highlights;
+uniform float u_shadows;
 uniform float u_temperature;
 uniform float u_tint;
+uniform float u_vibrance;
 uniform float u_saturation;
+uniform float u_vignette;
+uniform float u_filmGrain;
+uniform float u_time;
 uniform vec3 u_lift;
 uniform vec3 u_gamma;
 uniform vec3 u_gain;
+uniform vec3 u_offset;
+uniform float u_hasCurves;
+uniform float u_hasHueVs;
+uniform float u_hueVsSat[6];
+uniform float u_hueVsHue[6];
 uniform float u_hasLut;
 uniform float u_lutIntensity;
 uniform float u_split;
 uniform float u_wipe;
+uniform float u_profile;
+uniform float u_halation;
+uniform float u_mist;
+uniform float u_falseColor;
+uniform vec2 u_texel;
+
+// NoirFilm uniforms
+uniform float u_nfIntensity;
+uniform float u_nfEmuEnabled;
+uniform float u_nfEmuFormat;
+uniform vec4 u_nfEmu1;
+uniform vec4 u_nfEmu2;
+uniform vec3 u_nfEmuHiTint;
+uniform vec3 u_nfEmuShTint;
+uniform vec4 u_nfHalation;
+uniform vec3 u_nfHalationColor;
+uniform float u_nfHalationBlend;
+uniform vec4 u_nfBloom;
+uniform float u_nfBloomHi;
+uniform vec4 u_nfDiffusion;
+uniform vec4 u_nfMist;
+uniform vec4 u_nfGrain1;
+uniform vec4 u_nfGrain2;
+uniform float u_compareMode;
+
+float logLinear(float x, int p) {
+  if (p == 1) {
+    return x >= 0.100537775
+      ? (pow(10.0, (x - 0.790453) / 0.344676) - 0.009468) / 0.555556
+      : (x - 0.092864) / 8.735631;
+  }
+  if (p == 2) {
+    return x >= 0.100686685
+      ? (pow(10.0, (x - 0.384316) / 0.245281) - 0.064829) / 5.555556
+      : (x - 0.092864) / 8.799461;
+  }
+  if (p == 3) {
+    return x >= 171.2102946929 / 1023.0
+      ? pow(10.0, (x * 1023.0 - 420.0) / 261.5) * 0.19 - 0.01
+      : ((x * 1023.0 - 95.0) * 0.01125) / (171.2102946929 - 95.0);
+  }
+  if (p == 4) {
+    return x > 0.14
+      ? (pow(10.0, 3.89616 * x - 2.27752) - 0.0929) / 0.9892
+      : (x - 0.0929) / 6.025;
+  }
+  return x;
+}
+
+float rec709Oetf(float l) {
+  float v = clamp(l, 0.0, 1.0);
+  return v < 0.018 ? 4.5 * v : 1.099 * pow(v, 0.45) - 0.099;
+}
+
+vec3 applyProfile(vec3 c) {
+  int p = int(u_profile + 0.5);
+  if (p == 0) return c;
+  return vec3(
+    rec709Oetf(logLinear(c.r, p)),
+    rec709Oetf(logLinear(c.g, p)),
+    rec709Oetf(logLinear(c.b, p))
+  );
+}
+
+// Parlak bölgeleri toplayan disk örnekleyici (Halation: kırmızı ton, Mist: nötr)
+void gatherGlow(vec2 uv, float radiusPx, out vec3 hal, out vec3 mist) {
+  hal = vec3(0.0);
+  mist = vec3(0.0);
+  float wsum = 0.0;
+  for (int ring = 1; ring <= 3; ring++) {
+    float rr = radiusPx * float(ring) / 3.0;
+    for (int i = 0; i < 8; i++) {
+      float a = 6.2831853 * (float(i) + 0.5 * float(ring)) / 8.0;
+      vec2 off = vec2(cos(a), sin(a)) * rr * u_texel;
+      vec3 s = applyProfile(texture(u_video, uv + off).rgb);
+      float l = dot(s, vec3(0.2126, 0.7152, 0.0722));
+      float w = 1.0 / float(ring);
+      hal += s * smoothstep(0.62, 0.95, l) * w;
+      mist += s * smoothstep(0.35, 0.9, l) * w;
+      wsum += w;
+    }
+  }
+  hal /= wsum;
+  mist /= wsum;
+}
+
+vec3 falseColorMap(vec3 c) {
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  vec3 g = vec3(l * 0.85 + 0.05);
+  if (l < 0.04) return vec3(0.42, 0.12, 0.78);
+  if (l < 0.10) return mix(vec3(0.42, 0.12, 0.78), vec3(0.15, 0.35, 0.90), (l - 0.04) / 0.06);
+  if (l >= 0.40 && l < 0.44) return vec3(0.13, 0.78, 0.35);
+  if (l >= 0.52 && l < 0.68) return vec3(0.96, 0.45, 0.70);
+  if (l >= 0.94 && l < 0.98) return vec3(0.98, 0.80, 0.10);
+  if (l >= 0.98) return vec3(0.93, 0.15, 0.12);
+  return g;
+}
+
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+vec3 rgb2hsv(vec3 c) {
+  vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+  vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+  vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+  float d = q.x - min(q.w, q.y);
+  float e = 1.0e-10;
+  return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)) * 360.0, d / (q.x + e), q.x);
+}
+
+vec3 hsv2rgb(vec3 c) {
+  vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+  vec3 p = abs(fract(vec3(c.x / 360.0) + K.xyz) * 6.0 - K.www);
+  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+
+vec3 applyFilmEmulation(vec3 cIn) {
+  if (u_nfEmuEnabled < 0.5 || u_nfIntensity <= 0.001) return cIn;
+  vec3 c = cIn;
+  float fmt = u_nfEmuFormat;
+  float fmtContrast = fmt > 1.5 ? 0.14 : (fmt > 0.5 ? 0.08 : 0.04);
+  float fmtRoll = fmt > 1.5 ? 0.22 : (fmt > 0.5 ? 0.18 : 0.12);
+
+  float temp = u_nfEmu2.y * 0.14;
+  c.r = clamp(c.r + temp, 0.0, 1.0);
+  c.b = clamp(c.b - temp, 0.0, 1.0);
+
+  float sh = u_nfEmu1.z;
+  float resp = u_nfEmu2.z;
+  vec3 toe = sh * 0.12 * (1.0 - c) * (1.0 - c);
+  vec3 mid = resp * 0.14 * c * (1.0 - c) * (c - 0.5) * -4.0;
+  c = clamp(c + toe + mid, 0.0, 1.0);
+
+  float k = 1.0 + u_nfEmu1.x * 0.7 + fmtContrast;
+  c = clamp((c - 0.5) * k + 0.5, 0.0, 1.0);
+
+  float roll = clamp(u_nfEmu1.y + fmtRoll, 0.0, 1.0);
+  if (roll > 0.001) {
+    float knee = 0.62 - roll * 0.18;
+    float denom = max(0.001, 1.0 - knee);
+    float eDenom = 1.0 - exp(-(1.0 + roll * 1.4));
+    vec3 over = max(vec3(0.0), c - knee);
+    vec3 t = over / denom;
+    vec3 comp = knee + denom * (1.0 - exp(-t * (1.0 + roll * 1.4))) / eDenom;
+    vec3 mask = step(vec3(knee), c);
+    c = clamp(mix(c, mix(c, comp, roll), mask), 0.0, 1.0);
+  }
+
+  float density = u_nfEmu2.x;
+  if (abs(density) > 0.001) {
+    float maxC = max(c.r, max(c.g, c.b));
+    float minC = min(c.r, min(c.g, c.b));
+    float chroma = maxC - minC;
+    c = clamp(c * (1.0 - density * 0.24 * chroma), 0.0, 1.0);
+  }
+  float luma2 = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  float effSat = max(0.0, u_nfEmu1.w * (1.0 + density * 0.22));
+  c = clamp(mix(vec3(luma2), c, effSat), 0.0, 1.0);
+
+  float hiW = pow(clamp(luma2, 0.0, 1.0), 1.6) * 0.22;
+  float shW = pow(clamp(1.0 - luma2, 0.0, 1.0), 1.8) * 0.24;
+  c = clamp(c + (u_nfEmuHiTint - 0.95) * hiW + (u_nfEmuShTint - 0.08) * shW, 0.0, 1.0);
+
+  return mix(cIn, c, u_nfIntensity);
+}
+
+vec3 sampleGlowAt(vec2 uv, float radiusPx, float threshold) {
+  vec3 acc = vec3(0.0);
+  float wsum = 0.0;
+  for (int ring = 1; ring <= 3; ring++) {
+    float rr = radiusPx * float(ring) / 3.0;
+    for (int i = 0; i < 8; i++) {
+      float a = 6.2831853 * (float(i) + 0.5 * float(ring)) / 8.0;
+      vec2 off = vec2(cos(a), sin(a)) * rr * u_texel;
+      vec3 s = applyProfile(texture(u_video, clamp(uv + off, 0.001, 0.999)).rgb);
+      float l = dot(s, vec3(0.2126, 0.7152, 0.0722));
+      float w = 1.0 / float(ring);
+      acc += s * smoothstep(threshold - 0.15, min(0.99, threshold + 0.28), l) * w;
+      wsum += w;
+    }
+  }
+  return acc / max(0.001, wsum);
+}
 
 void main() {
-  vec4 texel = texture(u_video, v_uv);
+  vec2 sampleUv = v_uv;
+  if (u_compareMode > 2.5 && u_compareMode < 3.5) {
+    sampleUv.x = fract(v_uv.x * 2.0);
+  }
+  vec4 texel = texture(u_video, sampleUv);
   vec3 raw = texel.rgb;
 
-  if (u_split > 0.5 && v_uv.x < u_wipe) {
+  if (u_compareMode > 3.5) {
+    outColor = vec4(raw, 1.0);
+    return;
+  }
+  if (u_compareMode > 2.5 && v_uv.x < 0.5) {
+    outColor = vec4(raw, 1.0);
+    return;
+  }
+  if ((u_compareMode > 0.5 && u_compareMode < 1.5 && v_uv.x < u_wipe) ||
+      (u_compareMode > 1.5 && u_compareMode < 2.5 && v_uv.y < u_wipe) ||
+      (u_split > 0.5 && v_uv.x < u_wipe)) {
     outColor = vec4(raw, 1.0);
     return;
   }
 
-  vec3 c = raw;
+  vec3 c = applyProfile(raw);
 
   // 1) Exposure
   c *= exp2(u_exposure);
@@ -60,20 +283,156 @@ void main() {
   float contrast = 1.0 + u_contrast * 0.65;
   c = (c - 0.5) * contrast + 0.5;
 
-  // 4) Lift / Gain / Gamma
+  // 3b) Shadows & Highlights
+  if (abs(u_shadows) > 0.001 || abs(u_highlights) > 0.001) {
+    float l = clamp(dot(c, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
+    float sMask = pow(1.0 - l, 1.6);
+    float hMask = pow(l, 1.6);
+    c += vec3(u_shadows * 0.28 * sMask + u_highlights * 0.28 * hMask);
+  }
+
+  // 4) Lift / Gain / Gamma / Offset
   c = clamp(c, 0.0, 1.0);
   c = c + u_lift * (1.0 - c);
   c = clamp(c * (1.0 + u_gain), 0.0, 1.0);
   c = pow(c, 1.0 / max(vec3(0.2), 1.0 + u_gamma));
+  c = clamp(c + u_offset, 0.0, 1.0);
 
-  // 5) Saturation
+  // 4b) Custom RGB & Luma Curves (256x1 RGBA LUT)
+  if (u_hasCurves > 0.5) {
+    float rC = texture(u_curves, vec2(c.r, 0.5)).r;
+    float gC = texture(u_curves, vec2(c.g, 0.5)).g;
+    float bC = texture(u_curves, vec2(c.b, 0.5)).b;
+    c.r = texture(u_curves, vec2(rC, 0.5)).a;
+    c.g = texture(u_curves, vec2(gC, 0.5)).a;
+    c.b = texture(u_curves, vec2(bC, 0.5)).a;
+  }
+
+  // 4c) Selective Color Curves (Hue vs Sat & Hue vs Hue)
+  if (u_hasHueVs > 0.5) {
+    vec3 hsv = rgb2hsv(c);
+    if (hsv.y > 0.02 && hsv.z > 0.02) {
+      float centers[6] = float[6](0.0, 30.0, 60.0, 120.0, 180.0, 240.0);
+      float widths[6]  = float[6](38.0, 32.0, 42.0, 65.0, 65.0, 75.0);
+      float satDelta = 0.0;
+      float hueDelta = 0.0;
+      for (int i = 0; i < 6; i++) {
+        float diff = abs(hsv.x - centers[i]);
+        if (diff > 180.0) diff = 360.0 - diff;
+        if (diff < widths[i]) {
+          float w = 0.5 * (1.0 + cos(3.14159265 * (diff / widths[i])));
+          satDelta += w * u_hueVsSat[i];
+          hueDelta += w * u_hueVsHue[i] * 45.0;
+        }
+      }
+      hsv.x = mod(hsv.x + hueDelta + 360.0, 360.0);
+      hsv.y = clamp(hsv.y * max(0.0, 1.0 + satDelta), 0.0, 1.0);
+      c = hsv2rgb(hsv);
+    }
+  }
+
+  // 5) Vibrance (Skin-Tone Protected) + Saturation
   float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
-  c = clamp(mix(vec3(luma), c, u_saturation), 0.0, 1.0);
+  float effSat = u_saturation;
+  if (abs(u_vibrance) > 0.001) {
+    float maxC = max(c.r, max(c.g, c.b));
+    float minC = min(c.r, min(c.g, c.b));
+    float chroma = maxC - minC;
+    float skinProtect = 1.0;
+    if (u_vibrance > 0.0 && c.r > c.g && c.g > c.b && maxC > 0.08) {
+      vec3 hsv = rgb2hsv(c);
+      float dist = abs(hsv.x - 26.0);
+      if (dist < 28.0) {
+        skinProtect = 1.0 - 0.55 * (1.0 - dist / 28.0);
+      }
+    }
+    float vibFactor = 1.0 + u_vibrance * (1.0 - chroma * chroma) * skinProtect;
+    effSat *= max(0.0, vibFactor);
+  }
+  c = clamp(mix(vec3(luma), c, effSat), 0.0, 1.0);
 
   // 6) 3D LUT + Intensity
   if (u_hasLut > 0.5 && u_lutIntensity > 0.001) {
     vec3 lutColor = texture(u_lut, c).rgb;
     c = mix(c, lutColor, u_lutIntensity);
+  }
+
+  // 6a) NoirFilm Dijital Film Emülasyonu
+  c = applyFilmEmulation(c);
+
+  // 6b) Sinema Lens Fiziği: Klasik + NoirFilm Işık Efektleri
+  float sizeScale = max(1.0, 1.0 / (u_texel.y * 1080.0));
+  if (u_halation > 0.001 || u_mist > 0.001) {
+    float rad = (6.0 + 22.0 * max(u_halation, u_mist)) * sizeScale;
+    vec3 hal;
+    vec3 mst;
+    gatherGlow(sampleUv, rad, hal, mst);
+    vec3 halTint = vec3(1.0, 0.30, 0.05) * dot(hal, vec3(0.2126, 0.7152, 0.0722)) * 2.2;
+    c = 1.0 - (1.0 - c) * (1.0 - clamp(halTint * u_halation, 0.0, 1.0));
+    c = 1.0 - (1.0 - c) * (1.0 - clamp(mst * u_mist * 0.75, 0.0, 1.0));
+    c = mix(c, c * 0.92 + 0.04, u_mist * 0.5);
+  }
+
+  if (u_nfIntensity > 0.001) {
+    if (u_nfHalation.x > 0.001) {
+      float rad = (5.0 + 28.0 * u_nfHalation.z + 12.0 * u_nfHalation.w) * sizeScale;
+      vec3 g = sampleGlowAt(sampleUv, rad, u_nfHalation.y);
+      float gl = dot(g, vec3(0.2126, 0.7152, 0.0722));
+      vec3 halCol = u_nfHalationColor * gl * (1.6 + u_nfHalation.w * 1.4);
+      vec3 screened = 1.0 - (1.0 - c) * (1.0 - clamp(halCol * u_nfHalation.x * u_nfIntensity, 0.0, 1.0));
+      c = mix(c, screened, u_nfHalationBlend);
+    }
+    if (u_nfBloom.x > 0.001) {
+      float rad = (4.0 + 26.0 * u_nfBloom.z) * sizeScale;
+      vec3 g = sampleGlowAt(sampleUv, rad, u_nfBloom.y);
+      vec3 bloomAdd = g * (0.7 + u_nfBloomHi * 1.4) * (0.6 + u_nfBloom.w * 0.5);
+      c = 1.0 - (1.0 - c) * (1.0 - clamp(bloomAdd * u_nfBloom.x * u_nfIntensity, 0.0, 1.0));
+    }
+    if (u_nfDiffusion.x > 0.001) {
+      float rad = (3.0 + 16.0 * u_nfDiffusion.z) * sizeScale;
+      vec3 g = sampleGlowAt(sampleUv, rad, 0.42 - u_nfDiffusion.y * 0.2);
+      vec3 diffused = mix(c, max(c, g * (0.7 + u_nfDiffusion.y * 0.6)), u_nfDiffusion.x * 0.65 * u_nfIntensity);
+      c = mix(diffused, mix(diffused, c, 0.35 * u_nfDiffusion.w), 0.35);
+    }
+    if (u_nfMist.x > 0.001) {
+      float rad = (6.0 + 24.0 * u_nfMist.y) * sizeScale;
+      vec3 g = sampleGlowAt(sampleUv, rad, 0.35);
+      c = 1.0 - (1.0 - c) * (1.0 - clamp(g * u_nfMist.x * (0.55 + u_nfMist.z * 0.4) * u_nfIntensity, 0.0, 1.0));
+      c = mix(c, c * (1.0 - 0.14 * u_nfMist.w) + 0.07 * u_nfMist.w, u_nfMist.x * 0.5 * u_nfIntensity);
+    }
+  }
+
+  // 7) Optical Vignette
+  if (u_vignette > 0.001) {
+    vec2 d = (sampleUv - 0.5) * vec2(1.35, 1.0);
+    float distSq = dot(d, d);
+    float vig = 1.0 - smoothstep(0.12, 0.68, distSq) * (u_vignette * 0.88);
+    c *= vig;
+  }
+
+  // 8) Organic 35mm Film Grain + NoirFilm Texture
+  if (u_filmGrain > 0.001) {
+    float n = hash12(sampleUv * vec2(1280.0, 720.0) + vec2(u_time * 37.0, u_time * 19.0)) - 0.5;
+    float midWeight = 1.0 - abs(dot(c, vec3(0.333)) - 0.5) * 1.4;
+    c += n * u_filmGrain * 0.16 * max(0.25, midWeight);
+  }
+  if (u_nfGrain1.x > 0.5 && u_nfGrain1.y > 0.001 && u_nfIntensity > 0.001) {
+    float grainPx = mix(1.0, 3.2, u_nfGrain1.z);
+    vec2 gCoord = floor((sampleUv * vec2(1280.0, 720.0)) / grainPx);
+    float nLuma = hash12(gCoord + vec2(u_time * 43.0, u_time * 23.0)) - 0.5;
+    float nR = hash12(gCoord + vec2(u_time * 31.0 + 17.0, u_time * 13.0)) - 0.5;
+    float nG = hash12(gCoord + vec2(u_time * 29.0, u_time * 41.0 + 11.0)) - 0.5;
+    float nB = hash12(gCoord + vec2(u_time * 53.0 + 7.0, u_time * 19.0)) - 0.5;
+    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    float toneWeight = max(0.22, 1.0 - abs(l - u_nfGrain2.y) * 1.45);
+    float amp = u_nfGrain1.y * (0.08 + u_nfGrain1.w * 0.14) * (1.0 - u_nfGrain2.x * 0.35) * u_nfIntensity;
+    vec3 grainVec = vec3(nLuma) * u_nfGrain2.z + vec3(nR, nG, nB) * (u_nfGrain2.w * 0.65);
+    c += grainVec * amp * toneWeight;
+  }
+
+  if (u_falseColor > 0.5) {
+    outColor = vec4(falseColorMap(clamp(c, 0.0, 1.0)), 1.0);
+    return;
   }
 
   outColor = vec4(clamp(c, 0.0, 1.0), 1.0);
@@ -97,9 +456,11 @@ export class WebGLColorEngine {
   private program: WebGLProgram
   private videoTex: WebGLTexture
   private lutTex: WebGLTexture
+  private curveTex: WebGLTexture
   private vao: WebGLVertexArrayObject
   private vbo: WebGLBuffer
   private uploadedLutKey = ''
+  private uploadedCurveKey = ''
 
   private loc: Record<string, WebGLUniformLocation | null>
 
@@ -157,21 +518,62 @@ export class WebGLColorEngine {
     gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 
+    this.curveTex = gl.createTexture()!
+    gl.bindTexture(gl.TEXTURE_2D, this.curveTex)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
     const names = [
       'u_video',
       'u_lut',
+      'u_curves',
       'u_exposure',
       'u_contrast',
+      'u_highlights',
+      'u_shadows',
       'u_temperature',
       'u_tint',
+      'u_vibrance',
       'u_saturation',
+      'u_vignette',
+      'u_filmGrain',
+      'u_time',
       'u_lift',
       'u_gamma',
       'u_gain',
+      'u_offset',
+      'u_hasCurves',
+      'u_hasHueVs',
+      'u_hueVsSat[0]',
+      'u_hueVsHue[0]',
       'u_hasLut',
       'u_lutIntensity',
       'u_split',
-      'u_wipe'
+      'u_wipe',
+      'u_profile',
+      'u_halation',
+      'u_mist',
+      'u_falseColor',
+      'u_texel',
+      'u_nfIntensity',
+      'u_nfEmuEnabled',
+      'u_nfEmuFormat',
+      'u_nfEmu1',
+      'u_nfEmu2',
+      'u_nfEmuHiTint',
+      'u_nfEmuShTint',
+      'u_nfHalation',
+      'u_nfHalationColor',
+      'u_nfHalationBlend',
+      'u_nfBloom',
+      'u_nfBloomHi',
+      'u_nfDiffusion',
+      'u_nfMist',
+      'u_nfGrain1',
+      'u_nfGrain2',
+      'u_compareMode'
     ]
     this.loc = {}
     for (const n of names) {
@@ -190,7 +592,6 @@ export class WebGLColorEngine {
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
 
     if (!lut) {
-      // 2x2x2 birim LUT
       const id = new Uint8Array([
         0, 0, 0, 255, 0, 0, 0, 255, 0, 255, 255, 0,
         0, 0, 255, 255, 0, 255, 0, 255, 255, 255, 255, 255
@@ -218,19 +619,42 @@ export class WebGLColorEngine {
     )
   }
 
+  private ensureCurves(grade: ColorGrade): boolean {
+    const hasCurves = Boolean(grade.curves && !areCurvesNeutral(grade.curves))
+    if (!hasCurves) return false
+    const key = JSON.stringify(grade.curves)
+    const gl = this.gl
+    gl.activeTexture(gl.TEXTURE2)
+    gl.bindTexture(gl.TEXTURE_2D, this.curveTex)
+    if (key !== this.uploadedCurveKey) {
+      this.uploadedCurveKey = key
+      const data = buildCurveLut256(grade.curves)
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data)
+    }
+    return true
+  }
+
   render(
-    video: HTMLVideoElement,
+    source: HTMLVideoElement | HTMLImageElement,
     grade: ColorGrade,
     lut: Lut3D | null,
     split: boolean,
-    wipePercent: number
+    wipePercent: number,
+    falseColor = false,
+    compareMode: 'none' | 'v-wipe' | 'h-wipe' | 'side-by-side' | 'original' = 'none',
+    isPlaying = false
   ): boolean {
-    if (video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) return false
+    const isVideo = 'videoWidth' in source
+    const srcW = isVideo ? source.videoWidth : source.naturalWidth
+    const srcH = isVideo ? source.videoHeight : source.naturalHeight
+    const ready = isVideo ? source.readyState >= 2 : source.complete
+    if (!ready || srcW === 0 || srcH === 0) return false
     const gl = this.gl
     const canvas = gl.canvas as HTMLCanvasElement
-    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-      canvas.width = video.videoWidth
-      canvas.height = video.videoHeight
+    if (canvas.width !== srcW || canvas.height !== srcH) {
+      canvas.width = srcW
+      canvas.height = srcH
     }
 
     gl.viewport(0, 0, canvas.width, canvas.height)
@@ -239,28 +663,148 @@ export class WebGLColorEngine {
 
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.videoTex)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
 
     this.ensureLut(lut)
+    const hasCurves = this.ensureCurves(grade)
+    const hasHueVs =
+      !areHueBandsNeutral(grade.hueVsSat) || !areHueBandsNeutral(grade.hueVsHue)
 
     const lift = wheelToRgbOffset(grade.lift, 0.55, 0.35)
     const gamma = wheelToRgbOffset(grade.gamma, 0.75, 0.6)
     const gain = wheelToRgbOffset(grade.gain, 0.75, 0.6)
+    const offset = wheelToRgbOffset(grade.offset ?? neutralWheel(), 0.45, 0.35)
+
+    const hSat = (grade.hueVsSat ?? defaultHueBands()).map((v) => v / 100)
+    const hHue = (grade.hueVsHue ?? defaultHueBands()).map((v) => v / 100)
 
     gl.uniform1i(this.loc['u_video'], 0)
     gl.uniform1i(this.loc['u_lut'], 1)
+    gl.uniform1i(this.loc['u_curves'], 2)
     gl.uniform1f(this.loc['u_exposure'], grade.exposure)
     gl.uniform1f(this.loc['u_contrast'], grade.contrast / 100)
+    gl.uniform1f(this.loc['u_highlights'], (grade.highlights ?? 0) / 100)
+    gl.uniform1f(this.loc['u_shadows'], (grade.shadows ?? 0) / 100)
     gl.uniform1f(this.loc['u_temperature'], grade.temperature / 100)
     gl.uniform1f(this.loc['u_tint'], grade.tint / 100)
+    gl.uniform1f(this.loc['u_vibrance'], (grade.vibrance ?? 0) / 100)
     gl.uniform1f(this.loc['u_saturation'], grade.saturation / 100)
+    gl.uniform1f(this.loc['u_vignette'], (grade.vignette ?? 0) / 100)
+    gl.uniform1f(this.loc['u_filmGrain'], (grade.filmGrain ?? 0) / 100)
+    gl.uniform1f(this.loc['u_time'], (performance.now() % 10000) / 1000)
     gl.uniform3f(this.loc['u_lift'], lift[0], lift[1], lift[2])
     gl.uniform3f(this.loc['u_gamma'], gamma[0], gamma[1], gamma[2])
     gl.uniform3f(this.loc['u_gain'], gain[0], gain[1], gain[2])
+    gl.uniform3f(this.loc['u_offset'], offset[0], offset[1], offset[2])
+    gl.uniform1f(this.loc['u_hasCurves'], hasCurves ? 1 : 0)
+    gl.uniform1f(this.loc['u_hasHueVs'], hasHueVs ? 1 : 0)
+    gl.uniform1fv(this.loc['u_hueVsSat[0]'], new Float32Array(hSat))
+    gl.uniform1fv(this.loc['u_hueVsHue[0]'], new Float32Array(hHue))
     gl.uniform1f(this.loc['u_hasLut'], lut ? 1 : 0)
     gl.uniform1f(this.loc['u_lutIntensity'], grade.lutIntensity / 100)
     gl.uniform1f(this.loc['u_split'], split ? 1 : 0)
     gl.uniform1f(this.loc['u_wipe'], wipePercent / 100)
+    gl.uniform1f(this.loc['u_profile'], cameraProfileIndex(grade.cameraProfile))
+    gl.uniform1f(this.loc['u_halation'], (grade.halation ?? 0) / 100)
+    gl.uniform1f(this.loc['u_mist'], (grade.mist ?? 0) / 100)
+    gl.uniform1f(this.loc['u_falseColor'], falseColor ? 1 : 0)
+    gl.uniform2f(this.loc['u_texel'], 1 / canvas.width, 1 / canvas.height)
+
+    // NoirFilm uniformları
+    const nf = grade.noirFilm
+    const nfInt = (nf?.lookIntensity ?? 100) / 100
+    const emu = nf?.filmEmulation
+    const fmtNum = emu?.format === '8mm' ? 2 : emu?.format === '16mm' ? 1 : 0
+    const hiTint = hexToRgb01(emu?.highlightTint ?? '#FFF8EE')
+    const shTint = hexToRgb01(emu?.shadowTint ?? '#0D141C')
+    const hal = nf?.lightEffects?.halation
+    const halCol = hexToRgb01(hal?.color ?? '#FF4B1F')
+    const blm = nf?.lightEffects?.bloom
+    const dif = nf?.lightEffects?.diffusion
+    const mst = nf?.lightEffects?.mist
+    const tex = nf?.texture
+    const grainActive = Boolean(tex?.enabled && (!isPlaying || tex?.playbackPreview !== false))
+    const cmpVal =
+      compareMode === 'v-wipe'
+        ? 1
+        : compareMode === 'h-wipe'
+          ? 2
+          : compareMode === 'side-by-side'
+            ? 3
+            : compareMode === 'original'
+              ? 4
+              : 0
+
+    gl.uniform1f(this.loc['u_nfIntensity'], nfInt)
+    gl.uniform1f(this.loc['u_nfEmuEnabled'], emu?.enabled ? 1 : 0)
+    gl.uniform1f(this.loc['u_nfEmuFormat'], fmtNum)
+    gl.uniform4f(
+      this.loc['u_nfEmu1'],
+      (emu?.contrast ?? 0) / 100,
+      (emu?.highlightRolloff ?? 35) / 100,
+      (emu?.shadowResponse ?? 0) / 100,
+      (emu?.saturation ?? 100) / 100
+    )
+    gl.uniform4f(
+      this.loc['u_nfEmu2'],
+      (emu?.colorDensity ?? 0) / 100,
+      (emu?.temperature ?? 0) / 100,
+      (emu?.filmResponse ?? 0) / 100,
+      0
+    )
+    gl.uniform3f(this.loc['u_nfEmuHiTint'], hiTint[0], hiTint[1], hiTint[2])
+    gl.uniform3f(this.loc['u_nfEmuShTint'], shTint[0], shTint[1], shTint[2])
+
+    gl.uniform4f(
+      this.loc['u_nfHalation'],
+      hal?.enabled ? (hal.intensity ?? 0) / 100 : 0,
+      (hal?.threshold ?? 62) / 100,
+      (hal?.radius ?? 45) / 100,
+      (hal?.spread ?? 50) / 100
+    )
+    gl.uniform3f(this.loc['u_nfHalationColor'], halCol[0], halCol[1], halCol[2])
+    gl.uniform1f(this.loc['u_nfHalationBlend'], (hal?.blend ?? 65) / 100)
+
+    gl.uniform4f(
+      this.loc['u_nfBloom'],
+      blm?.enabled ? (blm.intensity ?? 0) / 100 : 0,
+      (blm?.threshold ?? 65) / 100,
+      (blm?.radius ?? 50) / 100,
+      (blm?.softness ?? 55) / 100
+    )
+    gl.uniform1f(this.loc['u_nfBloomHi'], (blm?.highlightStrength ?? 60) / 100)
+
+    gl.uniform4f(
+      this.loc['u_nfDiffusion'],
+      dif?.enabled ? (dif.strength ?? 0) / 100 : 0,
+      (dif?.highlightDiffusion ?? 55) / 100,
+      (dif?.softness ?? 50) / 100,
+      (dif?.contrastPreservation ?? 70) / 100
+    )
+
+    gl.uniform4f(
+      this.loc['u_nfMist'],
+      mst?.enabled ? (mst.intensity ?? 0) / 100 : 0,
+      (mst?.highlightSpread ?? 55) / 100,
+      (mst?.atmosphericSoftness ?? 50) / 100,
+      (mst?.contrastReduction ?? 25) / 100
+    )
+
+    gl.uniform4f(
+      this.loc['u_nfGrain1'],
+      grainActive ? 1 : 0,
+      (tex?.amount ?? 0) / 100,
+      (tex?.size ?? 38) / 100,
+      (tex?.strength ?? 45) / 100
+    )
+    gl.uniform4f(
+      this.loc['u_nfGrain2'],
+      (tex?.softness ?? 35) / 100,
+      (tex?.distribution ?? 50) / 100,
+      (tex?.luminanceGrain ?? 75) / 100,
+      (tex?.colorGrain ?? 25) / 100
+    )
+    gl.uniform1f(this.loc['u_compareMode'], cmpVal)
 
     gl.drawArrays(gl.TRIANGLES, 0, 6)
     return true
@@ -270,6 +814,7 @@ export class WebGLColorEngine {
     const gl = this.gl
     gl.deleteTexture(this.videoTex)
     gl.deleteTexture(this.lutTex)
+    gl.deleteTexture(this.curveTex)
     gl.deleteBuffer(this.vbo)
     gl.deleteVertexArray(this.vao)
     gl.deleteProgram(this.program)

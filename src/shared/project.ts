@@ -4,7 +4,13 @@
 import type { ColorGrade } from './color'
 import type { CreditConfig } from './credits'
 import type { Lut3D } from './lut'
-import type { ExportSettings, LaneMap, TimelineClip } from './timeline'
+import type {
+  CaseMarker,
+  ExportSettings,
+  GradeStill,
+  LaneMap,
+  TimelineClip
+} from './timeline'
 
 export interface ProjectMediaRef {
   id: string
@@ -22,4 +28,10 @@ export interface NoirCutProject {
   draftCredit: CreditConfig
   fallbackGrade: ColorGrade
   exportSettings?: ExportSettings
+  /** Sahne İşaretçileri ve Yönetmen Notları (Case Markers) */
+  markers?: CaseMarker[]
+  /** Anlık Yakalanan Referans Kareler (Grab Stills) */
+  stills?: GradeStill[]
+  /** Diyalog Önceliği (Auto-Ducking) */
+  autoDucking?: boolean
 }

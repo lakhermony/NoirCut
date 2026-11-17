@@ -4,18 +4,21 @@
  */
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
-import { BrowserWindow, dialog, net, protocol } from 'electron'
-import { existsSync } from 'fs'
-import { mkdir } from 'fs/promises'
+import { BrowserWindow, dialog, protocol } from 'electron'
+import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'fs'
+import { mkdir, stat } from 'fs/promises'
 import { tmpdir } from 'os'
-import { basename, join, resolve } from 'path'
-import { pathToFileURL } from 'url'
+import { basename, extname, join, resolve } from 'path'
+import { synthesizeNoirSoundscapeWav } from '../../shared/foley-wav'
+import { NOIR_SOUNDSCAPE_PRESETS, type NoirSoundscapeId } from '../../shared/timeline'
 import type { ImportResult, MediaItem, PeaksResult, ProxyUpdate } from '../../shared/types'
 import { getEngineInfo } from '../engine/ffmpeg-engine'
 import { extractPeaks, makeThumbnail, probeMedia } from './media-probe'
 
 export const MEDIA_SCHEME = 'noircut-media'
-export const VIDEO_EXTENSIONS = ['mp4', 'mov', 'mkv']
+export const VIDEO_EXTENSIONS = ['mp4', 'mov', 'mkv', 'webm']
+export const AUDIO_EXTENSIONS = ['mp3', 'wav', 'aac', 'flac', 'ogg', 'm4a']
+export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp']
 
 const NATIVE_VIDEO_CODECS = new Set(['h264', 'vp8', 'vp9', 'av1', 'theora'])
 const NATIVE_AUDIO_CODECS = new Set([
@@ -53,21 +56,143 @@ export function registerMediaScheme(): void {
   ])
 }
 
-/** app 'ready' olduktan sonra çağrılmalı. */
+const MIME_BY_EXT: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp'
+}
+
+function nodeStreamToWeb(filePath: string, start: number, end: number): ReadableStream<Uint8Array> {
+  const rs = createReadStream(filePath, { start, end })
+  let closed = false
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      rs.on('data', (chunk: Buffer | string) => {
+        if (closed) return
+        try {
+          const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+          controller.enqueue(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength))
+        } catch {
+          closed = true
+          rs.destroy()
+        }
+      })
+      rs.on('end', () => {
+        if (closed) return
+        closed = true
+        try {
+          controller.close()
+        } catch {
+          // akış zaten kapalı
+        }
+      })
+      rs.on('error', (err) => {
+        if (closed) return
+        closed = true
+        try {
+          controller.error(err)
+        } catch {
+          // akış zaten kapalı
+        }
+      })
+    },
+    cancel() {
+      closed = true
+      rs.destroy()
+    }
+  })
+}
+
+/** app 'ready' olduktan sonra çağrılmalı (HTTP 206 Byte-Range destekli medya sunucusu). */
 export function registerMediaProtocol(): void {
   protocol.handle(MEDIA_SCHEME, async (request) => {
     const url = new URL(request.url)
     const filePath = resolve(decodeURIComponent(url.pathname.slice(1)))
     if (!approvedPaths.has(filePath)) return new Response('Forbidden', { status: 403 })
-    const res = await net.fetch(pathToFileURL(filePath).toString(), {
-      headers: request.headers,
-      bypassCustomProtocolHandlers: true
-    })
-    const headers = new Headers(res.headers)
-    headers.set('Access-Control-Allow-Origin', '*')
-    return new Response(res.body, {
-      status: res.status,
-      statusText: res.statusText,
+
+    let fileSize = 0
+    try {
+      const st = await stat(filePath)
+      fileSize = st.size
+    } catch {
+      return new Response('Not Found', { status: 404 })
+    }
+
+    const contentType = MIME_BY_EXT[extname(filePath).toLowerCase()] ?? 'application/octet-stream'
+    const baseHeaders: Record<string, string> = {
+      'Access-Control-Allow-Origin': '*',
+      'Accept-Ranges': 'bytes',
+      'Content-Type': contentType
+    }
+
+    if (fileSize === 0) {
+      return new Response(null, {
+        status: 200,
+        headers: { ...baseHeaders, 'Content-Length': '0' }
+      })
+    }
+
+    const rangeHeader = request.headers.get('range') ?? request.headers.get('Range')
+    if (rangeHeader) {
+      const m = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader.trim())
+      if (!m) {
+        return new Response(null, {
+          status: 416,
+          headers: { ...baseHeaders, 'Content-Range': `bytes */${fileSize}` }
+        })
+      }
+      let start = m[1] ? Number(m[1]) : NaN
+      let end = m[2] ? Number(m[2]) : NaN
+      if (Number.isNaN(start) && !Number.isNaN(end)) {
+        // bytes=-suffix
+        start = Math.max(0, fileSize - end)
+        end = fileSize - 1
+      } else {
+        if (Number.isNaN(start)) start = 0
+        if (Number.isNaN(end) || end >= fileSize) end = fileSize - 1
+      }
+      if (start < 0 || start >= fileSize || end < start) {
+        return new Response(null, {
+          status: 416,
+          headers: { ...baseHeaders, 'Content-Range': `bytes */${fileSize}` }
+        })
+      }
+      const chunkLength = end - start + 1
+      const headers = {
+        ...baseHeaders,
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Content-Length': String(chunkLength)
+      }
+      if (request.method === 'HEAD') {
+        return new Response(null, { status: 206, headers })
+      }
+      return new Response(nodeStreamToWeb(filePath, start, end), {
+        status: 206,
+        headers
+      })
+    }
+
+    const headers = {
+      ...baseHeaders,
+      'Content-Length': String(fileSize)
+    }
+    if (request.method === 'HEAD') {
+      return new Response(null, { status: 200, headers })
+    }
+    return new Response(nodeStreamToWeb(filePath, 0, fileSize - 1), {
+      status: 200,
       headers
     })
   })
@@ -78,7 +203,49 @@ export function mediaUrl(filePath: string): string {
 }
 
 export function getMediaItem(id: string): MediaItem | undefined {
-  return mediaRegistry.get(id)
+  const existing = mediaRegistry.get(id)
+  if (existing && existsSync(existing.path)) return existing
+  if (id.startsWith('sfx-')) {
+    const presetId = id.slice(4) as NoirSoundscapeId
+    if (NOIR_SOUNDSCAPE_PRESETS.some((p) => p.id === presetId)) {
+      return ensureSoundscapeItemSync(presetId)
+    }
+  }
+  return existing
+}
+
+export function ensureSoundscapeItemSync(presetId: NoirSoundscapeId): MediaItem {
+  const id = `sfx-${presetId}`
+  const sfxDir = join(tmpdir(), 'noircut-soundscape')
+  mkdirSync(sfxDir, { recursive: true })
+  const outPath = resolve(join(sfxDir, `${id}.wav`))
+  const { wav, peaks, duration, label } = synthesizeNoirSoundscapeWav(presetId, 48000)
+  if (!existsSync(outPath)) {
+    writeFileSync(outPath, wav)
+  }
+  approvedPaths.add(outPath)
+  const item: MediaItem = {
+    id,
+    path: outPath,
+    name: `SFX · ${label}`,
+    mediaKind: 'audio',
+    duration,
+    width: 0,
+    height: 0,
+    codec: 'none',
+    fps: 24,
+    hasAudio: true,
+    audioCodec: 'pcm_s16le',
+    thumbnail: null,
+    url: mediaUrl(outPath),
+    needsProxy: false,
+    proxyState: 'none',
+    proxyProgress: 1,
+    proxyUrl: null
+  }
+  mediaRegistry.set(id, item)
+  peaksCache.set(id, Promise.resolve({ peaks, perSecond: 50 }))
+  return item
 }
 
 function broadcastProxyUpdate(update: ProxyUpdate): void {
@@ -200,9 +367,17 @@ async function buildItem(rawPath: string): Promise<MediaItem> {
   const filePath = resolve(rawPath)
   const info = await probeMedia(filePath)
   approvedPaths.add(filePath)
-  const thumbnail = await makeThumbnail(filePath, Math.min(1, info.duration * 0.1))
+  const thumbnail =
+    info.mediaKind === 'audio'
+      ? null
+      : await makeThumbnail(
+          filePath,
+          info.mediaKind === 'image' ? 0 : Math.min(1, info.duration * 0.1),
+          info.mediaKind === 'image'
+        )
   const id = createHash('sha1').update(filePath).digest('hex').slice(0, 12)
-  const needsProxy = checkNeedsProxy(info.codec, info.hasAudio, info.audioCodec)
+  const needsProxy =
+    info.mediaKind === 'video' ? checkNeedsProxy(info.codec, info.hasAudio, info.audioCodec) : false
 
   const item: MediaItem = {
     id,
@@ -253,13 +428,19 @@ export async function importPaths(paths: string[]): Promise<Omit<ImportResult, '
   return { items, errors }
 }
 
-/** Dosya seçici (MP4 / MOV / MKV) açar ve seçilenleri içe aktarır. */
+/** Dosya seçici (Video / Ses / Görsel) açar ve seçilenleri içe aktarır. */
 export async function importFromDialog(win: BrowserWindow | null): Promise<ImportResult> {
   const options: Electron.OpenDialogOptions = {
-    title: 'Video Seç',
+    title: 'Medya Seç (Video, Ses veya Görsel)',
     properties: ['openFile', 'multiSelections'],
     filters: [
-      { name: 'Video (MP4, MOV, MKV)', extensions: VIDEO_EXTENSIONS },
+      {
+        name: 'Tüm Desteklenen Medya',
+        extensions: [...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS, ...IMAGE_EXTENSIONS]
+      },
+      { name: 'Video (MP4, MOV, MKV, WEBM)', extensions: VIDEO_EXTENSIONS },
+      { name: 'Ses (MP3, WAV, AAC, FLAC, OGG, M4A)', extensions: AUDIO_EXTENSIONS },
+      { name: 'Görsel (PNG, JPG, WEBP)', extensions: IMAGE_EXTENSIONS },
       { name: 'Tüm Dosyalar', extensions: ['*'] }
     ]
   }

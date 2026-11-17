@@ -18,6 +18,162 @@ export const AUDIO_LANES: LaneId[] = ['A1', 'A2']
 export const MIN_DB = -60
 export const MAX_DB = 12
 
+export interface ClipTransform {
+  /** Yakınlaştırma %10 - %400 (varsayılan 100) */
+  scale: number
+  /** Yatay konum kayması %-100 .. %+100 (varsayılan 0) */
+  posX: number
+  /** Dikey konum kayması %-100 .. %+100 (varsayılan 0) */
+  posY: number
+  /** Döndürme açısı -180° .. +180° (varsayılan 0) */
+  rotation: number
+  /** Saydamlık %0 .. %100 (varsayılan 100) */
+  opacity: number
+}
+
+export type TransformParam = keyof ClipTransform
+export type KeyframeEasing = 'linear' | 'ease-in-out'
+
+export interface TransformKeyframe {
+  id: string
+  /** Klibin başlangıcından itibaren yerel zaman (saniye, 0 <= time <= clip.duration) */
+  time: number
+  /** Hangi Transform parametresi ('scale' | 'posX' | 'posY' | 'rotation' | 'opacity') */
+  param: TransformParam
+  /** Parametrenin o saniyedeki sayısal değeri */
+  value: number
+  /** İki keyframe arası geçiş eğrisi */
+  easing?: KeyframeEasing
+}
+
+export function defaultClipTransform(): ClipTransform {
+  return {
+    scale: 100,
+    posX: 0,
+    posY: 0,
+    rotation: 0,
+    opacity: 100
+  }
+}
+
+export function cloneKeyframes(
+  kfs: TransformKeyframe[] | undefined
+): TransformKeyframe[] | undefined {
+  if (!kfs) return undefined
+  return kfs.map((k) => ({ ...k }))
+}
+
+export function getParamKeyframes(
+  clip: Pick<TimelineClip, 'keyframes'> | null | undefined,
+  param: TransformParam
+): TransformKeyframe[] {
+  if (!clip?.keyframes || clip.keyframes.length === 0) return []
+  return clip.keyframes
+    .filter((k) => k.param === param)
+    .slice()
+    .sort((a, b) => a.time - b.time)
+}
+
+export function findKeyframeAt(
+  clip: Pick<TimelineClip, 'keyframes'> | null | undefined,
+  param: TransformParam,
+  localTime: number,
+  tolerance = 0.045
+): TransformKeyframe | undefined {
+  if (!clip?.keyframes) return undefined
+  return clip.keyframes.find(
+    (k) => k.param === param && Math.abs(k.time - localTime) <= tolerance
+  )
+}
+
+export function evaluateTransformParamAt(
+  clip: Pick<TimelineClip, 'transform' | 'keyframes' | 'keyframeEasing'> | null | undefined,
+  param: TransformParam,
+  localTime: number
+): number {
+  const baseTf = clip?.transform ?? defaultClipTransform()
+  const kfs = getParamKeyframes(clip, param)
+  if (kfs.length === 0) return baseTf[param]
+  if (kfs.length === 1) return kfs[0].value
+  if (localTime <= kfs[0].time) return kfs[0].value
+  const last = kfs[kfs.length - 1]
+  if (localTime >= last.time) return last.value
+
+  for (let i = 0; i < kfs.length - 1; i++) {
+    const a = kfs[i]
+    const b = kfs[i + 1]
+    if (localTime >= a.time && localTime <= b.time) {
+      const dt = Math.max(1e-6, b.time - a.time)
+      const u = Math.max(0, Math.min(1, (localTime - a.time) / dt))
+      const mode: KeyframeEasing = a.easing ?? clip?.keyframeEasing ?? 'ease-in-out'
+      const eased = mode === 'ease-in-out' ? u * u * (3 - 2 * u) : u
+      return a.value + (b.value - a.value) * eased
+    }
+  }
+  return last.value
+}
+
+export function evaluateClipTransformAt(
+  clip:
+    | Pick<TimelineClip, 'start' | 'duration' | 'transform' | 'keyframes' | 'keyframeEasing'>
+    | null
+    | undefined,
+  globalTime: number
+): ClipTransform {
+  if (!clip) return defaultClipTransform()
+  const localTime = Math.max(0, Math.min(clip.duration, globalTime - clip.start))
+  return {
+    scale: evaluateTransformParamAt(clip, 'scale', localTime),
+    posX: evaluateTransformParamAt(clip, 'posX', localTime),
+    posY: evaluateTransformParamAt(clip, 'posY', localTime),
+    rotation: evaluateTransformParamAt(clip, 'rotation', localTime),
+    opacity: evaluateTransformParamAt(clip, 'opacity', localTime)
+  }
+}
+
+/**
+ * FFmpeg filtre ifadeleri (scale / overlay / rotate / blend) için
+ * zaman değişkenine (`t` veya `T`) bağlı parçalı (piecewise) interpolasyon ifadesi üretir.
+ */
+export function buildFfmpegKeyframeExpr(
+  clip: Pick<TimelineClip, 'transform' | 'keyframes' | 'keyframeEasing'>,
+  param: TransformParam,
+  timeVar = 't'
+): string {
+  const baseTf = clip.transform ?? defaultClipTransform()
+  const kfs = getParamKeyframes(clip, param)
+  if (kfs.length === 0) return baseTf[param].toFixed(4)
+  if (kfs.length === 1) return kfs[0].value.toFixed(4)
+
+  const mode: KeyframeEasing = clip.keyframeEasing ?? 'ease-in-out'
+
+  // Parçalı ifadeyi sondan başa doğru iç içe if(lte(t, ...), ..., ...) olarak kur
+  let expr = kfs[kfs.length - 1].value.toFixed(4)
+  for (let i = kfs.length - 2; i >= 0; i--) {
+    const a = kfs[i]
+    const b = kfs[i + 1]
+    const t0 = a.time.toFixed(4)
+    const t1 = b.time.toFixed(4)
+    const dt = Math.max(0.001, b.time - a.time).toFixed(4)
+    const v0 = a.value.toFixed(4)
+    const dv = (b.value - a.value).toFixed(4)
+    const uExpr = `((${timeVar}-${t0})/${dt})`
+    const segMode = a.easing ?? mode
+    const easedExpr =
+      segMode === 'ease-in-out'
+        ? `(pow(${uExpr},2)*(3-2*${uExpr}))`
+        : uExpr
+    const segVal = `(${v0}+(${dv})*${easedExpr})`
+    expr = `if(lte(${timeVar},${t1}),${segVal},${expr})`
+  }
+  const firstT = kfs[0].time.toFixed(4)
+  const firstV = kfs[0].value.toFixed(4)
+  return `if(lte(${timeVar},${firstT}),${firstV},${expr})`
+}
+
+export type TransitionType = 'none' | 'cross-dissolve' | 'dip-to-black'
+export type AudioFxPreset = 'none' | 'denoise' | 'bass-boost'
+
 export interface TimelineClip {
   id: string
   mediaId: string
@@ -39,6 +195,27 @@ export interface TimelineClip {
   grade?: ColorGrade
   /** Sadece V2: jenerik / metin klibi ayarları */
   credit?: CreditConfig
+  /** EDIT Workspace: Kadraj & Hareket (Scale, Position X/Y, Rotation, Opacity) */
+  transform?: ClipTransform
+  /** EDIT Workspace: Keyframe (Anahtar Kare) animasyon noktaları */
+  keyframes?: TransformKeyframe[]
+  /** EDIT Workspace: Keyframe geçiş eğrisi ('ease-in-out' | 'linear') */
+  keyframeEasing?: KeyframeEasing
+  /** NLE Kısayolları: Klip içi Giriş (In) ve Çıkış (Out) işaret noktaları (yerel saniye) */
+  markIn?: number | null
+  markOut?: number | null
+  /** EDIT Workspace: Oynatma hızı %25 - %400 (varsayılan 100) */
+  speed?: number
+  /** EDIT Workspace: Ters oynatma (Reverse) */
+  reverse?: boolean
+  /** EDIT Workspace: Geçiş efekti tipi */
+  transitionType?: TransitionType
+  /** EDIT Workspace: Geçiş efekti süresi (saniye, varsayılan 0.8) */
+  transitionDuration?: number
+  /** EDIT Workspace: Ses sağ/sol dengesi (-100 Sol .. +100 Sağ, varsayılan 0) */
+  pan?: number
+  /** EDIT Workspace: Ses efekti ön ayarı (Gürültü azaltma / Sinematik Bas) */
+  audioPreset?: AudioFxPreset
 }
 
 export interface LaneState {
@@ -67,13 +244,69 @@ export type ExportResolution = '1080p' | '4k' | 'vertical'
 export type ExportFps = 24 | 30 | 60
 export type ExportFormat = 'mp4' | 'mov'
 export type ExportQuality = 'low' | 'medium' | 'high'
+export type ExportEncoder =
+  | 'auto'
+  | 'libx264'
+  | 'h264_nvenc'
+  | 'h264_vaapi'
+  | 'h264_qsv'
+  | 'h264_amf'
+export type ExportPlatformPresetId =
+  | 'custom'
+  | 'youtube-4k'
+  | 'social-vertical'
+  | 'cinema-24p'
+  | 'fast-draft'
 
 export interface ExportSettings {
   resolution: ExportResolution
   fps: ExportFps
   format: ExportFormat
   quality: ExportQuality
+  encoder?: ExportEncoder
+  presetId?: ExportPlatformPresetId
+  useInOutRange?: boolean
 }
+
+export interface ExportPlatformPresetMeta {
+  id: Exclude<ExportPlatformPresetId, 'custom'>
+  label: string
+  hint: string
+  patch: Partial<ExportSettings>
+}
+
+export const EXPORT_PLATFORM_PRESETS: ExportPlatformPresetMeta[] = [
+  {
+    id: 'youtube-4k',
+    label: 'YouTube 4K Master',
+    hint: '3840×2160 · 30fps · Yüksek',
+    patch: { resolution: '4k', fps: 30, format: 'mp4', quality: 'high', presetId: 'youtube-4k' }
+  },
+  {
+    id: 'social-vertical',
+    label: 'Reels / TikTok / Shorts',
+    hint: '1080×1920 · 60fps · Yüksek',
+    patch: {
+      resolution: 'vertical',
+      fps: 60,
+      format: 'mp4',
+      quality: 'high',
+      presetId: 'social-vertical'
+    }
+  },
+  {
+    id: 'cinema-24p',
+    label: 'Sinema 24p Noir',
+    hint: '1920×1080 · 24fps · Yüksek',
+    patch: { resolution: '1080p', fps: 24, format: 'mov', quality: 'high', presetId: 'cinema-24p' }
+  },
+  {
+    id: 'fast-draft',
+    label: 'Hızlı Taslak / İnceleme',
+    hint: '1920×1080 · 30fps · Düşük',
+    patch: { resolution: '1080p', fps: 30, format: 'mp4', quality: 'low', presetId: 'fast-draft' }
+  }
+]
 
 export const EXPORT_RESOLUTION_DIM: Record<ExportResolution, { width: number; height: number; label: string }> = {
   '1080p': { width: 1920, height: 1080, label: '1080p (1920×1080)' },
@@ -86,9 +319,93 @@ export function defaultExportSettings(): ExportSettings {
     resolution: '1080p',
     fps: 30,
     format: 'mp4',
-    quality: 'high'
+    quality: 'high',
+    encoder: 'auto',
+    presetId: 'custom',
+    useInOutRange: false
   }
 }
+
+export type CaseMarkerColor = 'amber' | 'crimson' | 'emerald' | 'cyan' | 'violet'
+
+export interface CaseMarker {
+  id: string
+  /** Timeline üzerindeki saniye */
+  time: number
+  /** Sahne başlığı (örn: "Sahne 1: Sorgu") */
+  title: string
+  /** Yönetmen notu */
+  note: string
+  /** İşaretçi rengi */
+  color: CaseMarkerColor
+}
+
+export const CASE_MARKER_COLOR_META: Record<
+  CaseMarkerColor,
+  { hex: string; label: string; glow: string }
+> = {
+  amber: { hex: '#F59E0B', label: 'Kehribar', glow: 'rgba(245,158,11,0.45)' },
+  crimson: { hex: '#EF4444', label: 'Kızıl', glow: 'rgba(239,68,68,0.45)' },
+  emerald: { hex: '#10B981', label: 'Zümrüt', glow: 'rgba(16,185,129,0.45)' },
+  cyan: { hex: '#06B6D4', label: 'Camgöbeği', glow: 'rgba(6,182,212,0.45)' },
+  violet: { hex: '#8B5CF6', label: 'Mor', glow: 'rgba(139,92,246,0.45)' }
+}
+
+export interface GradeStill {
+  id: string
+  name: string
+  createdAt: string
+  timecode: string
+  /** Yakalanan renk düzenlemeli karenin JPEG/PNG data URL küçük resmi */
+  thumbnailDataUrl: string
+  /** O kareye ait tam ColorGrade kopyası */
+  grade: ColorGrade
+}
+
+export type NoirSoundscapeId =
+  | 'tension-riser'
+  | 'sub-drop'
+  | 'film-projector'
+  | 'night-rain'
+
+export interface NoirSoundscapePresetMeta {
+  id: NoirSoundscapeId
+  label: string
+  desc: string
+  duration: number
+  icon: string
+}
+
+export const NOIR_SOUNDSCAPE_PRESETS: NoirSoundscapePresetMeta[] = [
+  {
+    id: 'tension-riser',
+    label: 'Gerilim Riser',
+    desc: 'Yükselen sinematik gerilim',
+    duration: 3.5,
+    icon: ''
+  },
+  {
+    id: 'sub-drop',
+    label: 'Düşük Bas / Sub Drop',
+    desc: 'Derin LFE bas darbesi',
+    duration: 3.0,
+    icon: ''
+  },
+  {
+    id: 'film-projector',
+    label: 'Film Projektörü',
+    desc: '35mm 24fps mekanik makara',
+    duration: 4.0,
+    icon: ''
+  },
+  {
+    id: 'night-rain',
+    label: 'Gece Yağmuru',
+    desc: 'Noir atmosferik sağanak',
+    duration: 5.0,
+    icon: ''
+  }
+]
 
 export interface ExportRequest {
   clips: TimelineClip[]
@@ -96,6 +413,10 @@ export interface ExportRequest {
   customLuts?: Record<string, Lut3D>
   creditOverlays?: Record<string, CreditExportOverlay>
   settings?: ExportSettings
+  autoDucking?: boolean
+  outputPath?: string
+  rangeStart?: number | null
+  rangeEnd?: number | null
 }
 
 export const clipEnd = (c: Pick<TimelineClip, 'start' | 'duration'>): number => c.start + c.duration
@@ -117,6 +438,48 @@ export function fadeGain(c: Pick<TimelineClip, 'fadeIn' | 'fadeOut' | 'duration'
 /** Klibin o andaki toplam çarpanı (ses seviyesi × fade). */
 export function clipGainAt(c: TimelineClip, local: number): number {
   return dbToGain(c.gainDb) * fadeGain(c, local)
+}
+
+/**
+ * Auto-Ducking (Diyalog Önceliği):
+ * V1 (sesi ayrılmamış) veya A1 kanalında `t` anında duyulabilir diyalog/ses varsa
+ * A2 (müzik/ambiyans) kanalının kazancını yumuşak geçişle %28'e (-11 dB) kısar.
+ */
+export function computeAutoDuckMultiplierAt(
+  clips: TimelineClip[],
+  lanes: LaneMap,
+  t: number,
+  autoDucking: boolean
+): number {
+  if (!autoDucking) return 1
+  const ramp = 0.25
+  const duckTarget = 0.28 // ~ -11 dB
+  let maxDuckDepth = 0
+
+  for (const c of clips) {
+    if (c.lane !== 'V1' && c.lane !== 'A1') continue
+    if (c.lane === 'V1' && c.audioDetached) continue
+    if (!isLaneAudible(lanes, c.lane)) continue
+    if (c.gainDb <= MIN_DB) continue
+
+    const start = c.start
+    const end = c.start + c.duration
+    if (t < start - ramp || t > end + ramp) continue
+
+    let env = 1
+    if (t < start) {
+      env = clamp01(1 - (start - t) / ramp)
+    } else if (t > end) {
+      env = clamp01(1 - (t - end) / ramp)
+    }
+    const local = Math.max(0, Math.min(c.duration, t - start))
+    const dialogGain = Math.min(1, clipGainAt(c, local))
+    if (dialogGain > 0.02) {
+      maxDuckDepth = Math.max(maxDuckDepth, env * Math.min(1, dialogGain * 1.2))
+    }
+  }
+
+  return 1 - maxDuckDepth * (1 - duckTarget)
 }
 
 /**

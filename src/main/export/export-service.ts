@@ -10,23 +10,39 @@
  * birebir aynı matematikle MP4 çıktısına işler.
  */
 import { ChildProcess, spawn } from 'child_process'
-import { BrowserWindow, dialog } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
+
+function resolveExportFfmpegPath(fallbackPath: string): string {
+  if (process.platform === 'win32') {
+    const winCandidates = [
+      join(process.resourcesPath, 'bin', 'win', 'ffmpeg.exe'),
+      resolve(app.getAppPath(), '..', 'bin', 'win', 'ffmpeg.exe'),
+      resolve(process.cwd(), 'resources', 'bin', 'win', 'ffmpeg.exe')
+    ]
+    const found = winCandidates.find((p) => existsSync(p))
+    if (found) return found
+  }
+  return fallbackPath
+}
 import { bakeColorGradeToCube, isNeutralGrade } from '../../shared/color'
+import { hexToRgb01 } from '../../shared/noirfilm'
 import { synthesizeCreditFoleyWav } from '../../shared/foley-wav'
 import {
   EXPORT_RESOLUTION_DIM,
   MIN_DB,
   TimelineClip,
+  buildFfmpegKeyframeExpr,
   dbToGain,
   defaultExportSettings,
+  getParamKeyframes,
   isLaneAudible,
   projectEnd,
   type ExportRequest
 } from '../../shared/timeline'
-import type { ExportResult } from '../../shared/types'
+import type { ExportResult, VideoEncoderId } from '../../shared/types'
 import { getEngineInfo } from '../engine/ffmpeg-engine'
 import { getMediaItem } from '../media/media-service'
 
@@ -45,11 +61,52 @@ export function cancelActiveExport(): void {
   }
 }
 
+function sliceClipsToRange(
+  rawClips: TimelineClip[],
+  rangeStart?: number | null,
+  rangeEnd?: number | null
+): { clips: TimelineClip[]; total: number; offset: number } {
+  const fullTotal = projectEnd(rawClips)
+  const rStart = rangeStart != null && rangeStart > 0 ? rangeStart : 0
+  const rEnd =
+    rangeEnd != null && rangeEnd > rStart + 0.05 ? Math.min(fullTotal, rangeEnd) : fullTotal
+
+  if (rStart <= 0.001 && rEnd >= fullTotal - 0.001) {
+    return { clips: rawClips, total: fullTotal, offset: 0 }
+  }
+
+  const sliced: TimelineClip[] = []
+  for (const c of rawClips) {
+    const cEnd = c.start + c.duration
+    if (cEnd <= rStart + 0.02 || c.start >= rEnd - 0.02) continue
+    const overlapStart = Math.max(c.start, rStart)
+    const overlapEnd = Math.min(cEnd, rEnd)
+    const newDur = overlapEnd - overlapStart
+    if (newDur <= 0.02) continue
+    const headCut = overlapStart - c.start
+    const speedFactor = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
+    const shiftedKeyframes = c.keyframes
+      ?.map((k) => ({ ...k, time: k.time - headCut }))
+      .filter((k) => k.time >= -0.001 && k.time <= newDur + 0.001)
+      .map((k) => ({ ...k, time: Math.max(0, Math.min(newDur, k.time)) }))
+    sliced.push({
+      ...c,
+      start: overlapStart - rStart,
+      in: c.in + headCut * speedFactor,
+      duration: newDur,
+      fadeIn: Math.max(0, c.fadeIn - headCut),
+      fadeOut: Math.max(0, c.fadeOut - Math.max(0, cEnd - overlapEnd)),
+      keyframes: shiftedKeyframes
+    })
+  }
+  return { clips: sliced, total: Math.max(0, rEnd - rStart), offset: rStart }
+}
+
 export async function exportTimeline(
   req: ExportRequest,
   win: BrowserWindow | null
 ): Promise<ExportResult> {
-  const { clips, lanes, customLuts, creditOverlays } = req
+  const { lanes, customLuts, creditOverlays } = req
   const settings = req.settings ?? defaultExportSettings()
   const { width, height } = EXPORT_RESOLUTION_DIM[settings.resolution]
   const fps = settings.fps
@@ -57,14 +114,16 @@ export async function exportTimeline(
   const crf = settings.quality === 'high' ? '15' : settings.quality === 'low' ? '26' : '20'
   const preset = settings.quality === 'high' ? 'medium' : settings.quality === 'low' ? 'veryfast' : 'faster'
 
-  const total = projectEnd(clips)
+  const { clips, total } = sliceClipsToRange(req.clips, req.rangeStart, req.rangeEnd)
   if (clips.length === 0 || total <= 0.05) {
     return { ok: false, error: 'Dışa aktarılacak klip bulunamadı.' }
   }
 
-  let outPath = process.env['NOIRCUT_EXPORT_OUT']
-    ? resolve(process.env['NOIRCUT_EXPORT_OUT'])
-    : ''
+  let outPath = req.outputPath
+    ? resolve(req.outputPath)
+    : process.env['NOIRCUT_EXPORT_OUT']
+      ? resolve(process.env['NOIRCUT_EXPORT_OUT'])
+      : ''
 
   if (!outPath) {
     const saveOpts: Electron.SaveDialogOptions = {
@@ -86,6 +145,17 @@ export async function exportTimeline(
   }
 
   // Kullanılan medya dosyalarını tekilleştirerek FFmpeg -i indekslerini ata (V2 metin klipleri hariç)
+  const imageMaxDur = new Map<string, number>()
+  for (const c of clips) {
+    if (c.lane === 'V2') continue
+    const m = getMediaItem(c.mediaId)
+    if (m?.mediaKind === 'image') {
+      const speedFactor = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
+      const need = Math.max(1, c.duration * speedFactor + 1)
+      imageMaxDur.set(c.mediaId, Math.max(imageMaxDur.get(c.mediaId) ?? 0, need))
+    }
+  }
+
   const inputArgs: string[] = []
   const mediaInputIdx = new Map<string, number>()
   let nextInputIdx = 0
@@ -95,7 +165,12 @@ export async function exportTimeline(
       const m = getMediaItem(c.mediaId)
       if (!m) return { ok: false, error: `Medya bulunamadı: ${c.name}` }
       mediaInputIdx.set(c.mediaId, nextInputIdx++)
-      inputArgs.push('-i', m.path)
+      if (m.mediaKind === 'image') {
+        const loopDur = Math.max(5, imageMaxDur.get(c.mediaId) ?? 10)
+        inputArgs.push('-loop', '1', '-t', loopDur.toFixed(2), '-i', m.path)
+      } else {
+        inputArgs.push('-i', m.path)
+      }
     }
   }
 
@@ -115,6 +190,7 @@ export async function exportTimeline(
     p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'")
 
   for (const c of vClips) {
+    const mediaItem = getMediaItem(c.mediaId)
     if (c.start > cursor + 0.02) {
       const gap = c.start - cursor
       const lbl = `vseg${segCounter++}`
@@ -126,16 +202,269 @@ export async function exportTimeline(
     }
     const inIdx = mediaInputIdx.get(c.mediaId)!
     const lbl = `vseg${segCounter++}`
-    let gradeFilter = ''
+    const speedFactor = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
+    const srcDur = Math.max(0.05, c.duration * speedFactor)
+    const clipIn = mediaItem?.mediaKind === 'image' ? 0 : c.in
+
+    const vChain: string[] = [
+      `trim=start=${clipIn.toFixed(4)}:duration=${srcDur.toFixed(4)}`,
+      `setpts=(PTS-STARTPTS)/${speedFactor.toFixed(4)}`
+    ]
+    if (c.reverse && mediaItem?.mediaKind !== 'image') {
+      vChain.push('reverse')
+    }
+    vChain.push(
+      `fps=${fps}`,
+      `scale=${width}:${height}:force_original_aspect_ratio=decrease`,
+      `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black`,
+      `setsar=1`
+    )
+
+    // Renk Düzenleme (Kamera Profili + 3D LUT + Auto WB + Highlights/Shadows) + Halation/Mist + Vignette + Film Grain
+    let fxOutLabel: string | null = null
     if (c.grade && !isNeutralGrade(c.grade)) {
       if (!tempLutDir) tempLutDir = mkdtempSync(join(tmpdir(), 'noircut-lut-'))
       const cubePath = join(tempLutDir, `grade-${segCounter}.cube`)
-      writeFileSync(cubePath, bakeColorGradeToCube(c.grade, customLuts, 33), 'utf-8')
-      gradeFilter = `,format=rgb24,lut3d=file='${escapeFilterPath(cubePath)}':interp=trilinear`
+      const hasLogProfile = !!c.grade.cameraProfile && c.grade.cameraProfile !== 'rec709'
+      writeFileSync(
+        cubePath,
+        bakeColorGradeToCube(c.grade, customLuts, hasLogProfile ? 65 : 33),
+        'utf-8'
+      )
+      vChain.push(`format=rgb24`, `lut3d=file='${escapeFilterPath(cubePath)}':interp=trilinear`)
+
+      // Halation + Mist + NoirFilm Işık Efektleri (Halation, Bloom, Diffusion, Mist)
+      const nf = c.grade.noirFilm
+      const nfInt = Math.min(1, Math.max(0, (nf?.lookIntensity ?? 100) / 100))
+      const halation = Math.min(100, Math.max(0, c.grade.halation ?? 0))
+      const mist = Math.min(100, Math.max(0, c.grade.mist ?? 0))
+      const nfHal = nf?.lightEffects?.halation
+      const nfBlm = nf?.lightEffects?.bloom
+      const nfDif = nf?.lightEffects?.diffusion
+      const nfMst = nf?.lightEffects?.mist
+      const hasNfHal = Boolean(nfHal?.enabled && (nfHal.intensity ?? 0) > 0.5 && nfInt > 0.01)
+      const hasNfBlm = Boolean(nfBlm?.enabled && (nfBlm.intensity ?? 0) > 0.5 && nfInt > 0.01)
+      const hasNfDif = Boolean(nfDif?.enabled && (nfDif.strength ?? 0) > 0.5 && nfInt > 0.01)
+      const hasNfMst = Boolean(nfMst?.enabled && (nfMst.intensity ?? 0) > 0.5 && nfInt > 0.01)
+
+      if (halation > 0.5 || mist > 0.5 || hasNfHal || hasNfBlm || hasNfDif || hasNfMst) {
+        let cur = `fxin${segCounter}`
+        filterParts.push(`[${inIdx}:v]${vChain.join(',')}[${cur}]`)
+        vChain.length = 0
+        if (halation > 0.5) {
+          const a = `hal_a${segCounter}`
+          const b = `hal_b${segCounter}`
+          const g = `hal_g${segCounter}`
+          const out = `hal_o${segCounter}`
+          const sigma = (height * (0.008 + 0.014 * (halation / 100))).toFixed(2)
+          const opacity = (0.15 + 0.85 * (halation / 100) * 0.8).toFixed(3)
+          filterParts.push(`[${cur}]split=2[${a}][${b}]`)
+          filterParts.push(
+            `[${b}]curves=all='0/0 0.55/0 1/1',gblur=sigma=${sigma},colorchannelmixer=rr=1:gg=0.30:bb=0.04[${g}]`
+          )
+          filterParts.push(
+            `[${a}][${g}]blend=all_mode=screen:all_opacity=${opacity},format=rgb24[${out}]`
+          )
+          cur = out
+        }
+        if (mist > 0.5) {
+          const a = `mist_a${segCounter}`
+          const b = `mist_b${segCounter}`
+          const g = `mist_g${segCounter}`
+          const out = `mist_o${segCounter}`
+          const sigma = (height * (0.006 + 0.012 * (mist / 100))).toFixed(2)
+          const opacity = (0.5 * (mist / 100)).toFixed(3)
+          filterParts.push(`[${cur}]split=2[${a}][${b}]`)
+          filterParts.push(`[${b}]curves=all='0/0 0.35/0.1 1/1',gblur=sigma=${sigma}[${g}]`)
+          filterParts.push(
+            `[${a}][${g}]blend=all_mode=screen:all_opacity=${opacity},format=rgb24[${out}]`
+          )
+          cur = out
+        }
+        if (hasNfHal && nfHal) {
+          const a = `nfhal_a${segCounter}`
+          const b = `nfhal_b${segCounter}`
+          const g = `nfhal_g${segCounter}`
+          const out = `nfhal_o${segCounter}`
+          const [hr, hg, hb] = hexToRgb01(nfHal.color)
+          const thresh = Math.min(0.9, Math.max(0.1, nfHal.threshold / 100)).toFixed(2)
+          const sigma = (height * (0.006 + 0.022 * (nfHal.radius / 100))).toFixed(2)
+          const opacity = Math.min(1, (nfHal.intensity / 100) * (nfHal.blend / 100) * nfInt * 0.9).toFixed(3)
+          filterParts.push(`[${cur}]split=2[${a}][${b}]`)
+          filterParts.push(
+            `[${b}]curves=all='0/0 ${thresh}/0 1/1',gblur=sigma=${sigma},colorchannelmixer=rr=${hr.toFixed(2)}:gg=${hg.toFixed(2)}:bb=${hb.toFixed(2)}[${g}]`
+          )
+          filterParts.push(
+            `[${a}][${g}]blend=all_mode=screen:all_opacity=${opacity},format=rgb24[${out}]`
+          )
+          cur = out
+        }
+        if (hasNfBlm && nfBlm) {
+          const a = `nfblm_a${segCounter}`
+          const b = `nfblm_b${segCounter}`
+          const g = `nfblm_g${segCounter}`
+          const out = `nfblm_o${segCounter}`
+          const thresh = Math.min(0.9, Math.max(0.15, nfBlm.threshold / 100)).toFixed(2)
+          const sigma = (height * (0.005 + 0.02 * (nfBlm.radius / 100))).toFixed(2)
+          const opacity = Math.min(1, (nfBlm.intensity / 100) * (0.5 + 0.5 * (nfBlm.highlightStrength / 100)) * nfInt).toFixed(3)
+          filterParts.push(`[${cur}]split=2[${a}][${b}]`)
+          filterParts.push(`[${b}]curves=all='0/0 ${thresh}/0 1/1',gblur=sigma=${sigma}[${g}]`)
+          filterParts.push(
+            `[${a}][${g}]blend=all_mode=screen:all_opacity=${opacity},format=rgb24[${out}]`
+          )
+          cur = out
+        }
+        if (hasNfDif && nfDif) {
+          const a = `nfdif_a${segCounter}`
+          const b = `nfdif_b${segCounter}`
+          const g = `nfdif_g${segCounter}`
+          const out = `nfdif_o${segCounter}`
+          const sigma = (height * (0.004 + 0.014 * (nfDif.softness / 100))).toFixed(2)
+          const opacity = Math.min(0.85, (nfDif.strength / 100) * nfInt * 0.55).toFixed(3)
+          filterParts.push(`[${cur}]split=2[${a}][${b}]`)
+          filterParts.push(`[${b}]gblur=sigma=${sigma}[${g}]`)
+          filterParts.push(
+            `[${a}][${g}]blend=all_mode=lighten:all_opacity=${opacity},format=rgb24[${out}]`
+          )
+          cur = out
+        }
+        if (hasNfMst && nfMst) {
+          const a = `nfmst_a${segCounter}`
+          const b = `nfmst_b${segCounter}`
+          const g = `nfmst_g${segCounter}`
+          const out = `nfmst_o${segCounter}`
+          const sigma = (height * (0.006 + 0.018 * (nfMst.highlightSpread / 100))).toFixed(2)
+          const opacity = Math.min(0.85, (nfMst.intensity / 100) * nfInt * 0.6).toFixed(3)
+          filterParts.push(`[${cur}]split=2[${a}][${b}]`)
+          filterParts.push(`[${b}]curves=all='0/0 0.30/0.08 1/1',gblur=sigma=${sigma}[${g}]`)
+          filterParts.push(
+            `[${a}][${g}]blend=all_mode=screen:all_opacity=${opacity},format=rgb24[${out}]`
+          )
+          cur = out
+        }
+        fxOutLabel = cur
+      }
+
+      if ((c.grade.vignette ?? 0) > 0.5) {
+        const angle = ((Math.PI / 4) * Math.min(100, c.grade.vignette)) / 100
+        vChain.push(`vignette=angle=${angle.toFixed(4)}`)
+      }
+      const tex = nf?.texture
+      const nfGrainStrength =
+        tex?.enabled && (tex.amount ?? 0) > 0.5 && nfInt > 0.01
+          ? Math.round(((tex.amount ?? 0) / 100) * (0.5 + (tex.strength ?? 50) / 100) * nfInt * 20)
+          : 0
+      const combinedGrain = Math.max(
+        (c.grade.filmGrain ?? 0) > 0.5
+          ? Math.max(1, Math.round((Math.min(100, c.grade.filmGrain) / 100) * 26))
+          : 0,
+        nfGrainStrength
+      )
+      if (combinedGrain > 0) {
+        const flags = (tex?.colorGrain ?? 0) > 30 ? 't+u' : 't'
+        vChain.push(`noise=alls=${combinedGrain}:allf=${flags}`)
+      }
     }
-    filterParts.push(
-      `[${inIdx}:v]trim=start=${c.in.toFixed(4)}:duration=${c.duration.toFixed(4)},setpts=PTS-STARTPTS,fps=${fps},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1${gradeFilter},format=yuv420p[${lbl}]`
-    )
+
+    // Transform & Keyframe Animasyonu (Scale, Position X/Y, Rotation, Opacity)
+    const hasKeyframes = (c.keyframes?.length ?? 0) > 0
+    const tf = c.transform
+    let streamLabel = fxOutLabel ? `[${fxOutLabel}]` : `[${inIdx}:v]`
+
+    if (hasKeyframes) {
+      const preLbl = `vpre${segCounter}`
+      filterParts.push(`${streamLabel}${vChain.length ? vChain.join(',') : 'null'}[${preLbl}]`)
+      vChain.length = 0
+
+      const bg0Lbl = `vbg0_${segCounter}`
+      const fg0Lbl = `vfg0_${segCounter}`
+      const bgLbl = `vbg_${segCounter}`
+      const fgLbl = `vfg_${segCounter}`
+      const ovLbl = `vov_kf_${segCounter}`
+
+      filterParts.push(`[${preLbl}]split=2[${bg0Lbl}][${fg0Lbl}]`)
+      filterParts.push(
+        `[${bg0Lbl}]drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill[${bgLbl}]`
+      )
+
+      const scaleExpr = buildFfmpegKeyframeExpr(c, 'scale', 't')
+      const posXExpr = buildFfmpegKeyframeExpr(c, 'posX', 't')
+      const posYExpr = buildFfmpegKeyframeExpr(c, 'posY', 't')
+      const rotExpr = buildFfmpegKeyframeExpr(c, 'rotation', 't')
+      const hasRotKf =
+        getParamKeyframes(c, 'rotation').length > 0 || Math.abs(tf?.rotation ?? 0) > 0.25
+
+      const fgChain: string[] = [
+        `format=rgba`,
+        `scale=w='max(16,trunc(${width}*clip((${scaleExpr})/100,0.1,4.0)/2)*2)':h='max(16,trunc(${height}*clip((${scaleExpr})/100,0.1,4.0)/2)*2)':eval=frame`
+      ]
+      if (hasRotKf) {
+        fgChain.push(`rotate=a='((${rotExpr})*PI/180)':ow=iw:oh=ih:c=0x00000000`)
+      }
+      filterParts.push(`[${fg0Lbl}]${fgChain.join(',')}[${fgLbl}]`)
+      filterParts.push(
+        `[${bgLbl}][${fgLbl}]overlay=x='(W-w)/2+(W*(${posXExpr})/100)':y='(H-h)/2+(H*(${posYExpr})/100)':eval=frame:format=auto[${ovLbl}]`
+      )
+      streamLabel = `[${ovLbl}]`
+
+      const hasOpKf = getParamKeyframes(c, 'opacity').length > 0
+      if (hasOpKf) {
+        const opExprT = buildFfmpegKeyframeExpr(c, 'opacity', 'T')
+        const opA = `vopa_${segCounter}`
+        const opB0 = `vopb0_${segCounter}`
+        const opB = `vopb_${segCounter}`
+        const opOut = `vopout_${segCounter}`
+        filterParts.push(`${streamLabel}format=rgb24,split=2[${opA}][${opB0}]`)
+        filterParts.push(`[${opB0}]drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill[${opB}]`)
+        filterParts.push(
+          `[${opA}][${opB}]blend=all_expr='A*clip((${opExprT})/100,0,1)'[${opOut}]`
+        )
+        streamLabel = `[${opOut}]`
+      } else if ((tf?.opacity ?? 100) < 99.5) {
+        const op = Math.max(0, Math.min(1, (tf?.opacity ?? 100) / 100))
+        vChain.push(`colorchannelmixer=rr=${op.toFixed(3)}:gg=${op.toFixed(3)}:bb=${op.toFixed(3)}`)
+      }
+    } else if (tf) {
+      const sc = Math.max(0.1, Math.min(4.0, (tf.scale ?? 100) / 100))
+      const px = ((tf.posX ?? 0) / 100) * width
+      const py = ((tf.posY ?? 0) / 100) * height
+      const rotRad = ((tf.rotation ?? 0) * Math.PI) / 180
+      const op = Math.max(0, Math.min(1, (tf.opacity ?? 100) / 100))
+
+      if (Math.abs(sc - 1) > 0.01 || Math.abs(px) > 0.5 || Math.abs(py) > 0.5) {
+        const sw = Math.max(16, Math.round((width * sc) / 2) * 2)
+        const sh = Math.max(16, Math.round((height * sc) / 2) * 2)
+        vChain.push(`scale=${sw}:${sh}`)
+        if (sc >= 1) {
+          const cx = Math.max(0, Math.min(sw - width, Math.round((sw - width) / 2 - px)))
+          const cy = Math.max(0, Math.min(sh - height, Math.round((sh - height) / 2 - py)))
+          vChain.push(`crop=${width}:${height}:${cx}:${cy}`)
+        } else {
+          const padX = Math.max(0, Math.min(width - sw, Math.round((width - sw) / 2 + px)))
+          const padY = Math.max(0, Math.min(height - sh, Math.round((height - sh) / 2 + py)))
+          vChain.push(`pad=${width}:${height}:${padX}:${padY}:black`)
+        }
+      }
+      if (Math.abs(rotRad) > 0.005) {
+        vChain.push(`rotate=${rotRad.toFixed(4)}:ow=${width}:oh=${height}:c=black`)
+      }
+      if (op < 0.995) {
+        vChain.push(`colorchannelmixer=rr=${op.toFixed(3)}:gg=${op.toFixed(3)}:bb=${op.toFixed(3)}`)
+      }
+    }
+
+    // Geçiş Efektleri (Cross Dissolve / Dip to Black)
+    if (c.transitionType && c.transitionType !== 'none' && (c.transitionDuration ?? 0) > 0.05) {
+      const trDur = Math.min(c.duration * 0.48, c.transitionDuration ?? 0.8)
+      const foStart = Math.max(0, c.duration - trDur)
+      vChain.push(
+        `fade=t=in:st=0:d=${trDur.toFixed(4)}:color=black`,
+        `fade=t=out:st=${foStart.toFixed(4)}:d=${trDur.toFixed(4)}:color=black`
+      )
+    }
+
+    vChain.push(`trim=duration=${c.duration.toFixed(4)}`, `setpts=PTS-STARTPTS`, `format=yuv420p`)
+    filterParts.push(`${streamLabel}${vChain.join(',')}[${lbl}]`)
     vSegLabels.push(`[${lbl}]`)
     cursor = c.start + c.duration
   }
@@ -199,7 +528,7 @@ export async function exportTimeline(
 
   filterParts.push(`${currentVLabel}format=yuv420p[vout]`)
 
-  // 2) Ses akışı (V1 gömülü + A1 + A2)
+  // 2) Ses akışı (V1 gömülü + A1 + A2) + Auto-Ducking (Diyalog Önceliği)
   const audibleClips: TimelineClip[] = clips.filter((c) => {
     if (c.duration <= 0.02 || c.gainDb <= MIN_DB) return false
     if (c.lane === 'V1' && c.audioDetached) return false
@@ -207,6 +536,10 @@ export async function exportTimeline(
     const m = getMediaItem(c.mediaId)
     return Boolean(m?.hasAudio)
   })
+
+  const dialogClips = req.autoDucking
+    ? audibleClips.filter((c) => c.lane === 'V1' || c.lane === 'A1')
+    : []
 
   filterParts.push(
     `anullsrc=r=48000:cl=stereo,atrim=0:${total.toFixed(4)},asetpts=PTS-STARTPTS[abase]`
@@ -216,13 +549,53 @@ export async function exportTimeline(
   audibleClips.forEach((c, idx) => {
     const inIdx = mediaInputIdx.get(c.mediaId)!
     const gain = dbToGain(c.gainDb)
+    const speedFactor = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
+    const srcDur = Math.max(0.05, c.duration * speedFactor)
+
     const chain: string[] = [
-      `atrim=start=${c.in.toFixed(4)}:duration=${c.duration.toFixed(4)}`,
-      `asetpts=PTS-STARTPTS`,
+      `atrim=start=${c.in.toFixed(4)}:duration=${srcDur.toFixed(4)}`,
+      `asetpts=PTS-STARTPTS`
+    ]
+    if (c.reverse) {
+      chain.push('areverse')
+    }
+    // FFmpeg atempo (0.5..2.0 aralığında zincirleme)
+    if (Math.abs(speedFactor - 1.0) > 0.01) {
+      let rem = speedFactor
+      while (rem < 0.5) {
+        chain.push('atempo=0.5')
+        rem /= 0.5
+      }
+      while (rem > 2.0) {
+        chain.push('atempo=2.0')
+        rem /= 2.0
+      }
+      if (Math.abs(rem - 1.0) > 0.01) {
+        chain.push(`atempo=${rem.toFixed(4)}`)
+      }
+    }
+
+    chain.push(
       `aresample=48000`,
       `aformat=sample_fmts=fltp:channel_layouts=stereo`,
       `volume=${gain.toFixed(6)}`
-    ]
+    )
+
+    // Pan (Sol/Sağ Denge: -100..+100)
+    const panVal = Math.max(-100, Math.min(100, c.pan ?? 0)) / 100
+    if (Math.abs(panVal) > 0.01) {
+      const lGain = panVal > 0 ? 1 - panVal : 1
+      const rGain = panVal < 0 ? 1 + panVal : 1
+      chain.push(`pan=stereo|c0=${lGain.toFixed(3)}*c0|c1=${rGain.toFixed(3)}*c1`)
+    }
+
+    // Ses Efekt Ön Ayarı (Denoise / Bass Boost)
+    if (c.audioPreset === 'denoise') {
+      chain.push('highpass=f=85', 'lowpass=f=11500')
+    } else if (c.audioPreset === 'bass-boost') {
+      chain.push('bass=g=7:f=100:w=0.6')
+    }
+
     if (c.fadeIn > 0.005) {
       const fi = Math.min(c.fadeIn, c.duration)
       chain.push(`afade=t=in:st=0:d=${fi.toFixed(4)}:curve=tri`)
@@ -237,6 +610,15 @@ export async function exportTimeline(
       chain.push(`adelay=${delayMs}:all=1`)
     }
     chain.push(`apad=whole_dur=${total.toFixed(4)}`)
+
+    // Auto-Ducking: V1/A1 aktifken A2 müziğini yumuşat (%28 = -11 dB)
+    if (c.lane === 'A2' && dialogClips.length > 0) {
+      const betweenTerms = dialogClips
+        .map((dc) => `between(t,${dc.start.toFixed(4)},${(dc.start + dc.duration).toFixed(4)})`)
+        .join('+')
+      chain.push(`volume=volume='if(gt(${betweenTerms},0),0.28,1.0)':eval=frame`)
+    }
+
     const lbl = `aud${idx}`
     filterParts.push(`[${inIdx}:a]${chain.join(',')}[${lbl}]`)
     aLabels.push(`[${lbl}]`)
@@ -281,82 +663,123 @@ export async function exportTimeline(
   }
 
   const engine = await getEngineInfo()
-  const args: string[] = ['-y', '-v', 'error', '-progress', 'pipe:1', '-nostats', ...inputArgs]
-  args.push(
-    '-filter_complex',
-    filterParts.join(';'),
-    '-map',
-    '[vout]',
-    '-map',
-    '[aout]',
-    '-t',
-    total.toFixed(4),
-    '-c:v',
-    'libx264',
-    '-preset',
-    preset,
-    '-crf',
-    crf,
-    '-pix_fmt',
-    'yuv420p',
-    '-c:a',
-    'aac',
-    '-b:a',
-    '192k',
-    '-ar',
-    '48000',
-    '-movflags',
-    '+faststart',
-    outPath
-  )
+  const baseBin = resolveExportFfmpegPath(engine.ffmpegPath)
+
+  const avail = engine.availableEncoders ?? ['libx264']
+  const reqEnc = settings.encoder ?? 'auto'
+  const hwEncoder: VideoEncoderId =
+    reqEnc === 'auto'
+      ? (avail.find((e) => e !== 'libx264') ?? 'libx264')
+      : avail.includes(reqEnc)
+        ? reqEnc
+        : 'libx264'
+
+  const buildArgsForEncoder = (enc: VideoEncoderId): { bin: string; args: string[] } => {
+    const isVaapi = enc === 'h264_vaapi'
+    const parts = isVaapi
+      ? [...filterParts, '[vout]format=nv12,hwupload[vout_hw]']
+      : filterParts
+    const vMap = isVaapi ? '[vout_hw]' : '[vout]'
+    const bin = enc !== 'libx264' && engine.gpuFfmpegPath ? engine.gpuFfmpegPath : baseBin
+
+    const preArgs: string[] = ['-y', '-v', 'error', '-progress', 'pipe:1', '-nostats']
+    if (isVaapi) {
+      preArgs.push('-vaapi_device', '/dev/dri/renderD128')
+    }
+
+    const vCodecArgs =
+      enc === 'h264_nvenc'
+        ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', crf, '-pix_fmt', 'yuv420p']
+        : enc === 'h264_vaapi'
+          ? ['-c:v', 'h264_vaapi', '-qp', crf]
+          : enc === 'h264_qsv'
+            ? ['-c:v', 'h264_qsv', '-global_quality', crf, '-pix_fmt', 'yuv420p']
+            : enc === 'h264_amf'
+              ? ['-c:v', 'h264_amf', '-quality', 'balanced', '-qp_i', crf, '-qp_p', crf, '-pix_fmt', 'yuv420p']
+              : ['-c:v', 'libx264', '-preset', preset, '-crf', crf, '-pix_fmt', 'yuv420p']
+
+    return {
+      bin,
+      args: [
+        ...preArgs,
+        ...inputArgs,
+        '-filter_complex',
+        parts.join(';'),
+        '-map',
+        vMap,
+        '-map',
+        '[aout]',
+        '-t',
+        total.toFixed(4),
+        ...vCodecArgs,
+        '-c:a',
+        'aac',
+        '-b:a',
+        '192k',
+        '-ar',
+        '48000',
+        '-movflags',
+        '+faststart',
+        outPath
+      ]
+    }
+  }
+
+  const runSpawn = (bin: string, args: string[]): Promise<ExportResult> =>
+    new Promise((resolvePromise) => {
+      const proc = spawn(bin, args)
+      activeProc = proc
+      let stderr = ''
+
+      proc.stdout.on('data', (chunk: Buffer) => {
+        const text = chunk.toString()
+        const m = text.match(/out_time_us=(\d+)/) ?? text.match(/out_time_ms=(\d+)/)
+        if (m && total > 0) {
+          const sec = Number(m[1]) / 1_000_000
+          sendProgress(win, (sec / total) * 100)
+        }
+      })
+      proc.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString()
+      })
+      proc.on('close', (code, signal) => {
+        activeProc = null
+        if (signal === 'SIGTERM') {
+          resolvePromise({ ok: false, canceled: true })
+        } else if (code === 0 && existsSync(outPath)) {
+          sendProgress(win, 100)
+          resolvePromise({ ok: true, path: outPath })
+        } else {
+          resolvePromise({
+            ok: false,
+            error: stderr.trim() || `FFmpeg çıkış kodu: ${code}`
+          })
+        }
+      })
+      proc.on('error', (err) => {
+        activeProc = null
+        resolvePromise({ ok: false, error: err.message })
+      })
+    })
 
   sendProgress(win, 0)
 
-  return new Promise((resolvePromise) => {
-    const cleanup = () => {
-      if (tempLutDir) {
-        try {
-          rmSync(tempLutDir, { recursive: true, force: true })
-        } catch {
-          // yoksay
-        }
-        tempLutDir = null
-      }
+  try {
+    const primary = buildArgsForEncoder(hwEncoder)
+    let result = await runSpawn(primary.bin, primary.args)
+    if (!result.ok && !result.canceled && hwEncoder !== 'libx264') {
+      const cpuFallback = buildArgsForEncoder('libx264')
+      result = await runSpawn(cpuFallback.bin, cpuFallback.args)
     }
-    const proc = spawn(engine.ffmpegPath, args)
-    activeProc = proc
-    let stderr = ''
-
-    proc.stdout.on('data', (chunk: Buffer) => {
-      const text = chunk.toString()
-      const m = text.match(/out_time_us=(\d+)/) ?? text.match(/out_time_ms=(\d+)/)
-      if (m && total > 0) {
-        const sec = Number(m[1]) / 1_000_000
-        sendProgress(win, (sec / total) * 100)
+    return result
+  } finally {
+    if (tempLutDir) {
+      try {
+        rmSync(tempLutDir, { recursive: true, force: true })
+      } catch {
+        // yoksay
       }
-    })
-    proc.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString()
-    })
-    proc.on('close', (code, signal) => {
-      activeProc = null
-      cleanup()
-      if (signal === 'SIGTERM') {
-        resolvePromise({ ok: false, canceled: true })
-      } else if (code === 0 && existsSync(outPath)) {
-        sendProgress(win, 100)
-        resolvePromise({ ok: true, path: outPath })
-      } else {
-        resolvePromise({
-          ok: false,
-          error: stderr.trim() || `FFmpeg çıkış kodu: ${code}`
-        })
-      }
-    })
-    proc.on('error', (err) => {
-      activeProc = null
-      cleanup()
-      resolvePromise({ ok: false, error: err.message })
-    })
-  })
+      tempLutDir = null
+    }
+  }
 }

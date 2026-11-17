@@ -53,17 +53,16 @@ export default function WaveformCanvas({
 
     if (data && data.length > 0 && clip.duration > 0) {
       const barStep = 2
-      if (muted) {
-        ctx.fillStyle = 'rgba(255,255,255,0.2)'
-      } else {
-        const grad = ctx.createLinearGradient(0, 0, 0, h)
-        grad.addColorStop(0, '#E0F2FE')
-        grad.addColorStop(0.25, color)
-        grad.addColorStop(0.5, '#FFFFFF')
-        grad.addColorStop(0.75, color)
-        grad.addColorStop(1, '#E0F2FE')
-        ctx.fillStyle = grad
-      }
+      const vuGrad = ctx.createLinearGradient(0, 0, 0, h)
+      vuGrad.addColorStop(0.0, '#EF4444') // Peak Red (Üst Tavan)
+      vuGrad.addColorStop(0.22, '#F59E0B') // Nominal Amber
+      vuGrad.addColorStop(0.42, '#22C55E') // VU Green
+      vuGrad.addColorStop(0.5, '#4ADE80') // Merkez Parlak Yeşil
+      vuGrad.addColorStop(0.58, '#22C55E') // VU Green
+      vuGrad.addColorStop(0.78, '#F59E0B') // Nominal Amber
+      vuGrad.addColorStop(1.0, '#EF4444') // Peak Red (Alt Tavan)
+
+      ctx.fillStyle = muted ? 'rgba(255,255,255,0.2)' : vuGrad
 
       for (let x = 0; x < w; x += barStep) {
         const localSec = (x / w) * clip.duration
@@ -75,17 +74,11 @@ export default function WaveformCanvas({
         const barH = Math.max(1, amp * (h - 2))
         const top = mid - barH / 2
         ctx.fillRect(x, top, 1.4, barH)
-        if (!muted && amp > 0.45) {
-          ctx.fillStyle = 'rgba(255,255,255,0.85)'
+        if (!muted && amp > 0.72) {
+          ctx.fillStyle = 'rgba(254, 202, 202, 0.92)'
           ctx.fillRect(x, top, 1.4, 1.2)
           ctx.fillRect(x, top + barH - 1.2, 1.4, 1.2)
-          const grad = ctx.createLinearGradient(0, 0, 0, h)
-          grad.addColorStop(0, '#E0F2FE')
-          grad.addColorStop(0.25, color)
-          grad.addColorStop(0.5, '#FFFFFF')
-          grad.addColorStop(0.75, color)
-          grad.addColorStop(1, '#E0F2FE')
-          ctx.fillStyle = grad
+          ctx.fillStyle = vuGrad
         }
       }
     }

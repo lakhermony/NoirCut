@@ -1,7 +1,7 @@
 {
   "name": "noircut",
   "productName": "NoirCut",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "NoirCut - Cinema Darkroom video editor (Linux & Windows)",
   "main": "./out/main/index.js",
   "private": true,
@@ -9,9 +9,100 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dist:linux": "npm run build && electron-builder --linux AppImage",
+    "dist:win": "npm run build && LANG=C.UTF-8 LC_ALL=C.UTF-8 electron-builder --win portable nsis --x64",
+    "dist": "npm run build && electron-builder"
+  },
+  "build": {
+    "appId": "com.noircut.studio",
+    "productName": "NoirCut",
+    "copyright": "Copyright © 2026 NoirCut Studio",
+    "toolsets": {
+      "nsis": "1.2.1"
+    },
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "out/**/*",
+      "resources/icon.png",
+      "package.json",
+      "!node_modules/*/{CHANGELOG.md,README.md,readme.md,test,tests}"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "node_modules/ffprobe-static/**"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "noircut",
+        "repo": "noircut"
+      }
+    ],
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "resources/icon.png",
+          "to": "icon.png"
+        }
+      ],
+      "category": "AudioVideo",
+      "icon": "build/icon.png",
+      "executableName": "noircut"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "resources/bin/win",
+          "to": "bin/win",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "resources/icon.png",
+          "to": "icon.png"
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "ffmpeg-static": "^5.3.0",
     "ffprobe-static": "^3.1.0",
     "fluent-ffmpeg": "^2.1.3",
@@ -27,6 +118,7 @@
     "@vitejs/plugin-react": "^6.3.0",
     "autoprefixer": "^10.6.2",
     "electron": "^45.3.2",
+    "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0",
     "postcss": "^8.5.33",
     "tailwindcss": "^3.4.19",

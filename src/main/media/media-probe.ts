@@ -6,11 +6,15 @@ import { spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { readFile, rm } from 'fs/promises'
 import { tmpdir } from 'os'
-import { join } from 'path'
-import type { PeaksResult } from '../../shared/types'
+import { extname, join } from 'path'
+import type { MediaKind, PeaksResult } from '../../shared/types'
 import { ffmpeg, getEngineInfo, probe } from '../engine/ffmpeg-engine'
 
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
+const IMAGE_CODECS = new Set(['png', 'mjpeg', 'jpeg2000', 'webp', 'bmp', 'tiff'])
+
 export interface ProbeResult {
+  mediaKind: MediaKind
   duration: number
   width: number
   height: number
@@ -28,12 +32,51 @@ function parseFps(rate: string | undefined): number {
 
 export async function probeMedia(filePath: string): Promise<ProbeResult> {
   const data = await probe(filePath)
+  const ext = extname(filePath).toLowerCase()
   const video = data.streams.find((s) => s.codec_type === 'video')
   const audio = data.streams.find((s) => s.codec_type === 'audio')
-  if (!video) throw new Error('Dosyada video akışı bulunamadı')
+
+  // Statik görsel dosyaları (PNG, JPG, WEBP)
+  const isImageByExt = IMAGE_EXTS.has(ext)
+  const isImageByStream =
+    Boolean(video) &&
+    !audio &&
+    IMAGE_CODECS.has((video?.codec_name ?? '').toLowerCase()) &&
+    Number(data.format.duration ?? video?.duration ?? 0) <= 0.1
+  if (isImageByExt || isImageByStream) {
+    return {
+      mediaKind: 'image',
+      duration: 5,
+      width: video?.width ?? 1920,
+      height: video?.height ?? 1080,
+      codec: video?.codec_name ?? 'image',
+      fps: 24,
+      hasAudio: false,
+      audioCodec: null
+    }
+  }
+
+  // Bağımsız ses dosyaları (MP3, WAV, FLAC, AAC, OGG, M4A)
+  if (!video) {
+    if (!audio) throw new Error('Dosyada video veya ses akışı bulunamadı')
+    const duration = Number(data.format.duration ?? audio.duration ?? 0)
+    if (!duration || !isFinite(duration)) throw new Error('Ses süresi okunamadı')
+    return {
+      mediaKind: 'audio',
+      duration,
+      width: 0,
+      height: 0,
+      codec: 'none',
+      fps: 24,
+      hasAudio: true,
+      audioCodec: audio.codec_name ?? null
+    }
+  }
+
   const duration = Number(data.format.duration ?? video.duration ?? 0)
   if (!duration || !isFinite(duration)) throw new Error('Video süresi okunamadı')
   return {
+    mediaKind: 'video',
     duration,
     width: video.width ?? 0,
     height: video.height ?? 0,
@@ -44,12 +87,17 @@ export async function probeMedia(filePath: string): Promise<ProbeResult> {
   }
 }
 
-/** Videodan tek kare alır, data: URL olarak döndürür. Hata olursa null. */
-export function makeThumbnail(filePath: string, atSeconds: number): Promise<string | null> {
+/** Video veya statik görselden küçük resim üretir, data: URL olarak döndürür. Hata olursa null. */
+export function makeThumbnail(
+  filePath: string,
+  atSeconds: number,
+  isImage = false
+): Promise<string | null> {
   const out = join(tmpdir(), `noircut-thumb-${randomUUID()}.jpg`)
   return new Promise((resolve) => {
-    ffmpeg(filePath)
-      .seekInput(atSeconds)
+    const cmd = ffmpeg(filePath)
+    if (!isImage) cmd.seekInput(atSeconds)
+    cmd
       .frames(1)
       .outputOptions(['-vf', 'scale=320:-2', '-q:v', '4'])
       .output(out)

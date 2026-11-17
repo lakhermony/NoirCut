@@ -1,23 +1,57 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron'
+import { existsSync } from 'fs'
 import { readFile, writeFile } from 'fs/promises'
-import { basename, delimiter, join } from 'path'
+import { basename, delimiter, join, resolve } from 'path'
 import { parseCubeLut } from '../shared/lut'
 import type { NoirCutProject } from '../shared/project'
-import type { ExportRequest } from '../shared/timeline'
+import type { ExportRequest, NoirSoundscapeId } from '../shared/timeline'
 import { getEngineInfo, initEngine } from './engine/ffmpeg-engine'
 import { cancelActiveExport, exportTimeline } from './export/export-service'
 import {
+  ensureSoundscapeItemSync,
   getPeaksForMedia,
   importFromDialog,
   importPaths,
   registerMediaProtocol,
   registerMediaScheme
 } from './media/media-service'
+import {
+  dismissAutosaveRecovery,
+  getAutosaveStatus,
+  markCleanExitSync,
+  readAutosaveSnapshot,
+  writeAutosaveSnapshot
+} from './project-backup'
+import {
+  checkForAppUpdates,
+  downloadAppUpdate,
+  initAutoUpdater,
+  quitAndInstallAppUpdate
+} from './updater'
 
 // Özel protokol 'ready' öncesi kaydedilmek zorunda
 registerMediaScheme()
 
+function resolveWindowIcon() {
+  const candidates = [
+    join(process.resourcesPath ?? '', 'icon.png'),
+    join(app.getAppPath(), 'resources', 'icon.png'),
+    join(__dirname, '../../resources/icon.png'),
+    join(__dirname, '../../build/icon.png'),
+    resolve(process.cwd(), 'resources', 'icon.png'),
+    resolve(process.cwd(), 'build', 'icon.png')
+  ]
+  for (const p of candidates) {
+    if (p && existsSync(p)) {
+      const img = nativeImage.createFromPath(p)
+      if (!img.isEmpty()) return img
+    }
+  }
+  return undefined
+}
+
 function createWindow(): BrowserWindow {
+  const icon = resolveWindowIcon()
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -27,6 +61,7 @@ function createWindow(): BrowserWindow {
     backgroundColor: '#08080A',
     autoHideMenuBar: true,
     title: 'NoirCut',
+    ...(icon ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -84,6 +119,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('engine:info', () => getEngineInfo())
   ipcMain.handle('media:import', (e) => importFromDialog(BrowserWindow.fromWebContents(e.sender)))
   ipcMain.handle('media:peaks', (_e, mediaId: string) => getPeaksForMedia(mediaId))
+  ipcMain.handle('soundscape:generate', (_e, presetId: NoirSoundscapeId) =>
+    ensureSoundscapeItemSync(presetId)
+  )
   ipcMain.handle('export:run', (e, req: ExportRequest) =>
     exportTimeline(req, BrowserWindow.fromWebContents(e.sender))
   )
@@ -113,6 +151,52 @@ app.whenReady().then(async () => {
     if (filePath) shell.showItemInFolder(filePath)
   })
 
+  ipcMain.handle(
+    'file:saveText',
+    async (
+      e,
+      args: { defaultName: string; content: string; filterName: string; extension: string }
+    ) => {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      const opts: Electron.SaveDialogOptions = {
+        title: `${args.filterName} Dışa Aktar`,
+        defaultPath: args.defaultName,
+        filters: [{ name: args.filterName, extensions: [args.extension] }]
+      }
+      const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+      if (res.canceled || !res.filePath) return { ok: false, canceled: true }
+      try {
+        const suffix = `.${args.extension}`
+        const target = res.filePath.endsWith(suffix) ? res.filePath : `${res.filePath}${suffix}`
+        await writeFile(target, args.content, 'utf-8')
+        return { ok: true, path: target }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
+
+  ipcMain.handle('noirfilm:openLook', async (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts: Electron.OpenDialogOptions = {
+      title: 'Noir Look veya 3D LUT İçe Aktar',
+      properties: ['openFile'],
+      filters: [{ name: 'Noir Look / 3D LUT', extensions: ['noirlook', 'cube'] }]
+    }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || res.filePaths.length === 0) return { canceled: true }
+    const filePath = res.filePaths[0]
+    try {
+      const content = await readFile(filePath, 'utf-8')
+      const lower = filePath.toLowerCase()
+      const ext = lower.endsWith('.cube') ? 'cube' : 'noirlook'
+      const name = basename(filePath).replace(/\.(noirlook|cube)$/i, '')
+      return { ext, name, content }
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
   ipcMain.handle('project:save', async (e, project: NoirCutProject) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     const opts: Electron.SaveDialogOptions = {
@@ -131,6 +215,41 @@ app.whenReady().then(async () => {
     }
   })
 
+  async function hydrateProject(project: NoirCutProject, filePath?: string) {
+    if (!project || project.version !== 1 || !Array.isArray(project.clips)) {
+      return { ok: false, error: 'Geçersiz .noircut proje dosyası.' }
+    }
+    const regularPaths: string[] = []
+    const sfxItems = []
+    for (const r of project.mediaRefs ?? []) {
+      if (r.id.startsWith('sfx-')) {
+        const presetId = r.id.slice(4) as NoirSoundscapeId
+        sfxItems.push(ensureSoundscapeItemSync(presetId))
+      } else if (r.path) {
+        regularPaths.push(r.path)
+      }
+    }
+    const imported =
+      regularPaths.length > 0 ? await importPaths(regularPaths) : { items: [], errors: [] }
+    return {
+      ok: true,
+      project,
+      mediaItems: [...imported.items, ...sfxItems],
+      mediaErrors: imported.errors,
+      path: filePath
+    }
+  }
+
+  async function loadProjectFromPath(filePath: string) {
+    try {
+      const raw = await readFile(filePath, 'utf-8')
+      const project = JSON.parse(raw) as NoirCutProject
+      return await hydrateProject(project, filePath)
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   ipcMain.handle('project:load', async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     const opts: Electron.OpenDialogOptions = {
@@ -140,33 +259,66 @@ app.whenReady().then(async () => {
     }
     const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     if (res.canceled || res.filePaths.length === 0) return { ok: false, canceled: true }
-    const filePath = res.filePaths[0]
-    try {
-      const raw = await readFile(filePath, 'utf-8')
-      const project = JSON.parse(raw) as NoirCutProject
-      if (!project || project.version !== 1 || !Array.isArray(project.clips)) {
-        return { ok: false, error: 'Geçersiz .noircut proje dosyası.' }
-      }
-      const paths = (project.mediaRefs ?? []).map((r) => r.path).filter(Boolean)
-      const imported = paths.length > 0 ? await importPaths(paths) : { items: [], errors: [] }
-      return {
-        ok: true,
-        project,
-        mediaItems: imported.items,
-        mediaErrors: imported.errors,
-        path: filePath
-      }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
+    return loadProjectFromPath(res.filePaths[0])
   })
 
+  ipcMain.handle('project:load-path', async (_e, filePath: string) => {
+    if (!filePath) return { ok: false, error: 'Geçersiz proje yolu.' }
+    return loadProjectFromPath(filePath)
+  })
+
+  ipcMain.handle(
+    'export:select-path',
+    async (e, args: { format: 'mp4' | 'mov'; defaultName?: string }) => {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      const ext = args.format === 'mov' ? 'mov' : 'mp4'
+      const opts: Electron.SaveDialogOptions = {
+        title: `Render Hedefi Seç (${ext.toUpperCase()})`,
+        defaultPath: args.defaultName || `NoirCut-Export.${ext}`,
+        filters: [
+          ext === 'mov'
+            ? { name: 'QuickTime Movie (MOV)', extensions: ['mov'] }
+            : { name: 'MP4 Video', extensions: ['mp4'] }
+        ]
+      }
+      const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+      if (res.canceled || !res.filePath) return null
+      return res.filePath.toLowerCase().endsWith(`.${ext}`)
+        ? res.filePath
+        : `${res.filePath}.${ext}`
+    }
+  )
+
+  ipcMain.handle('autosave:write', async (_e, args: { project: NoirCutProject; label?: string }) => {
+    const r = await writeAutosaveSnapshot(args.project, args.label)
+    return { ok: r.ok }
+  })
+  ipcMain.handle('autosave:status', () => getAutosaveStatus())
+  ipcMain.handle('autosave:restore', async (_e, snapshotId: string) => {
+    const proj = await readAutosaveSnapshot(snapshotId)
+    if (!proj) return { ok: false, error: 'Otomatik yedek bulunamadı veya bozuk.' }
+    const res = await hydrateProject(proj)
+    await dismissAutosaveRecovery()
+    return res
+  })
+  ipcMain.handle('autosave:dismiss', () => dismissAutosaveRecovery())
+
+  ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.handle('updater:check', () => checkForAppUpdates())
+  ipcMain.handle('updater:download', () => downloadAppUpdate())
+  ipcMain.handle('updater:quit-and-install', () => quitAndInstallAppUpdate())
+
+  initAutoUpdater()
   const win = createWindow()
   openStartupMedia(win)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('before-quit', () => {
+  markCleanExitSync()
 })
 
 app.on('window-all-closed', () => {

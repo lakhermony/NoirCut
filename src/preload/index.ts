@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { MediaItem, NoirCutApi, ProxyUpdate } from '../shared/types'
+import type { MediaItem, NoirCutApi, ProxyUpdate, UpdateStatus } from '../shared/types'
 
 const api: NoirCutApi = {
   getEngineInfo: () => ipcRenderer.invoke('engine:info'),
@@ -25,7 +25,27 @@ const api: NoirCutApi = {
   importLut: () => ipcRenderer.invoke('lut:import'),
   revealInFolder: (filePath) => ipcRenderer.invoke('shell:reveal', filePath),
   saveProject: (project) => ipcRenderer.invoke('project:save', project),
-  loadProject: () => ipcRenderer.invoke('project:load')
+  loadProject: () => ipcRenderer.invoke('project:load'),
+  generateSoundscape: (presetId) => ipcRenderer.invoke('soundscape:generate', presetId),
+  saveTextFile: (defaultName, content, filterName, extension) =>
+    ipcRenderer.invoke('file:saveText', { defaultName, content, filterName, extension }),
+  openLookFile: () => ipcRenderer.invoke('noirfilm:openLook'),
+  loadProjectByPath: (filePath) => ipcRenderer.invoke('project:load-path', filePath),
+  checkForUpdates: () => ipcRenderer.invoke('updater:check'),
+  downloadUpdate: () => ipcRenderer.invoke('updater:download'),
+  quitAndInstallUpdate: () => ipcRenderer.invoke('updater:quit-and-install'),
+  onUpdateStatus: (cb) => {
+    const handler = (_e: unknown, status: UpdateStatus) => cb(status)
+    ipcRenderer.on('updater:status', handler)
+    return () => ipcRenderer.removeListener('updater:status', handler)
+  },
+  getAppVersion: () => ipcRenderer.invoke('app:version'),
+  selectExportPath: (format, defaultName) =>
+    ipcRenderer.invoke('export:select-path', { format, defaultName }),
+  writeAutosave: (project, label) => ipcRenderer.invoke('autosave:write', { project, label }),
+  getAutosaveStatus: () => ipcRenderer.invoke('autosave:status'),
+  restoreAutosave: (snapshotId) => ipcRenderer.invoke('autosave:restore', snapshotId),
+  dismissAutosave: () => ipcRenderer.invoke('autosave:dismiss')
 }
 
 contextBridge.exposeInMainWorld('noircut', api)

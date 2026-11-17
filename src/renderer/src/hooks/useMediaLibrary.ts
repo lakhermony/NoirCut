@@ -83,6 +83,17 @@ export function useMediaLibrary() {
     [loadPeaks]
   )
 
+  const registerVirtualMedia = useCallback(
+    (item: MediaItem) => {
+      setItems((prev) => {
+        if (prev.some((m) => m.id === item.id)) return prev
+        return [...prev, item]
+      })
+      loadPeaks([item])
+    },
+    [loadPeaks]
+  )
+
   return {
     items,
     active,
@@ -90,6 +101,7 @@ export function useMediaLibrary() {
     setActiveId,
     peaksMap,
     importMedia,
+    registerVirtualMedia,
     replaceAll,
     busy,
     errors,

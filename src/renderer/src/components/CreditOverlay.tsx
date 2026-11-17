@@ -1,9 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
-  FONT_MAP,
   creditTypewriterInfo,
+  formatCreditText,
+  resolveCreditFontCss,
   type CreditConfig
 } from '../../../shared/credits'
+import { registerCustomFontFace } from '../lib/custom-fonts'
 import { foleyAudio } from '../lib/foley-audio'
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
@@ -21,9 +23,21 @@ export default function CreditOverlay({
   playing?: boolean
   isPreview?: boolean
 }) {
+  const [, setFontLoadTick] = useState(0)
   const dur = Math.max(0.2, duration || credit.duration)
   const p = clamp01(localTime / dur)
-  const fontFamily = FONT_MAP[credit.font]?.css ?? FONT_MAP.sans.css
+  const fontFamily = resolveCreditFontCss(credit)
+
+  useEffect(() => {
+    if (credit.font !== 'custom' || !credit.customFont) return
+    let alive = true
+    void registerCustomFontFace(credit.customFont).then((ok) => {
+      if (ok && alive) setFontLoadTick((t) => t + 1)
+    })
+    return () => {
+      alive = false
+    }
+  }, [credit.font, credit.customFont?.name, credit.customFont?.dataUrl])
 
   const { totalChars, visibleChars, titleLen } = creditTypewriterInfo(credit, localTime, dur)
   const prevVisibleRef = useRef(visibleChars)
@@ -64,9 +78,17 @@ export default function CreditOverlay({
     }
   }, [playing, credit.sfxEnabled, credit.filmWeave, credit.sfxVolume])
 
-  const displayTitle = credit.typewriter ? credit.title.slice(0, Math.min(titleLen, visibleChars)) : credit.title
+  const rawDisplayTitle = credit.typewriter
+    ? credit.title.slice(0, Math.min(titleLen, visibleChars))
+    : credit.title
   const subChars = Math.max(0, visibleChars - titleLen)
-  const displaySubtitle = credit.typewriter ? credit.subtitle.slice(0, subChars) : credit.subtitle
+  const rawDisplaySubtitle = credit.typewriter ? credit.subtitle.slice(0, subChars) : credit.subtitle
+  const displayTitle = formatCreditText(
+    rawDisplayTitle,
+    credit.autoAscii,
+    credit.templateId === 'standard-text' ? credit.uppercase : false
+  )
+  const displaySubtitle = formatCreditText(rawDisplaySubtitle, credit.autoAscii)
   const showCaret = credit.typewriter && visibleChars < totalChars
 
   // Fade zarfı (0..1)
@@ -94,6 +116,15 @@ export default function CreditOverlay({
   const weaveX = credit.filmWeave ? Math.sin(localTime * 37.7) * 1.4 + Math.cos(localTime * 19.3) * 0.8 : 0
   const weaveY = credit.filmWeave ? Math.cos(localTime * 43.1) * 1.2 + Math.sin(localTime * 23.7) * 0.6 : 0
   const flicker = credit.filmWeave ? 0.94 + Math.sin(localTime * 53.0) * 0.04 : 1
+  const lineHeightVal = credit.lineHeight ?? 1.25
+  const shadowAmt = Math.max(0, Math.min(100, credit.textShadow ?? 45)) / 100
+  const glowHex = credit.glowColor && credit.glowColor.toLowerCase() !== '#000000' ? credit.glowColor : null
+  const cinematicTextShadow =
+    shadowAmt <= 0.01
+      ? 'none'
+      : glowHex
+        ? `0 ${(2 + shadowAmt * 4).toFixed(1)}px ${(6 + shadowAmt * 14).toFixed(1)}px rgba(0,0,0,${(0.45 + shadowAmt * 0.45).toFixed(2)}), 0 0 ${(8 + shadowAmt * 22).toFixed(1)}px ${glowHex}, 0 0 ${(14 + shadowAmt * 38).toFixed(1)}px ${glowHex}`
+        : `0 ${(2 + shadowAmt * 4).toFixed(1)}px ${(6 + shadowAmt * 22).toFixed(1)}px rgba(0,0,0,${(0.35 + shadowAmt * 0.6).toFixed(2)}), 0 0 ${(shadowAmt * 20).toFixed(1)}px rgba(255,255,255,${(shadowAmt * 0.24).toFixed(2)})`
 
   return (
     <div
@@ -102,6 +133,8 @@ export default function CreditOverlay({
       style={{
         fontFamily,
         color: credit.color,
+        lineHeight: lineHeightVal,
+        textShadow: cinematicTextShadow,
         transform: credit.filmWeave ? `translate(${weaveX.toFixed(2)}px, ${weaveY.toFixed(2)}px)` : undefined,
         opacity: flicker
       }}
@@ -154,13 +187,13 @@ export default function CreditOverlay({
                   className="text-right font-semibold uppercase opacity-60"
                   style={{ letterSpacing: `${Math.max(1, credit.letterSpacing * 0.7)}px` }}
                 >
-                  {row.role}
+                  {formatCreditText(row.role, credit.autoAscii)}
                 </span>
                 <span
                   className="text-left font-medium"
                   style={{ letterSpacing: `${Math.max(0.5, credit.letterSpacing * 0.35)}px` }}
                 >
-                  {row.name}
+                  {formatCreditText(row.name, credit.autoAscii)}
                 </span>
               </div>
             ))}
@@ -174,14 +207,14 @@ export default function CreditOverlay({
           style={{
             opacity: alpha,
             filter: blurPx > 0.05 ? `blur(${blurPx.toFixed(1)}px)` : 'none',
-            textShadow: '0 4px 24px rgba(0,0,0,0.85)'
-          }}
+                      }}
         >
           <div
-            className="font-bold uppercase leading-tight"
+            className="font-bold uppercase"
             style={{
               fontSize: `clamp(18px, ${credit.fontSize * 0.07}vw, ${credit.fontSize}px)`,
-              letterSpacing: `${credit.letterSpacing}px`
+              letterSpacing: `${credit.letterSpacing}px`,
+              lineHeight: lineHeightVal
             }}
           >
             {displayTitle}
@@ -204,19 +237,20 @@ export default function CreditOverlay({
 
       {credit.templateId === 'lower-third' && (
         <div
-          className="absolute bottom-[10%] left-[6%] flex items-stretch gap-3 rounded-r-md bg-black/55 px-4 py-2.5 backdrop-blur-sm"
+          className="absolute bottom-[10%] left-[6%] flex items-stretch gap-3 rounded-r-md bg-black/55 px-4 py-2.5 "
           style={{
             opacity: alpha,
             transform: `translateX(${((1 - alpha) * -18).toFixed(1)}px)`
           }}
         >
-          <div className="w-1 rounded-full bg-tungsten shadow-[0_0_10px_#F5A623]" />
+          <div className="w-1 rounded-full bg-tungsten " />
           <div>
             <div
-              className="font-bold uppercase leading-tight"
+              className="font-bold uppercase"
               style={{
                 fontSize: `clamp(13px, ${credit.fontSize * 0.045}vw, ${Math.round(credit.fontSize * 0.78)}px)`,
-                letterSpacing: `${credit.letterSpacing}px`
+                letterSpacing: `${credit.letterSpacing}px`,
+                lineHeight: lineHeightVal
               }}
             >
               {displayTitle}
@@ -238,13 +272,59 @@ export default function CreditOverlay({
         </div>
       )}
 
+      {credit.templateId === 'standard-text' && (
+        <div
+          className={`flex h-full w-full flex-col px-10 py-10 ${
+            credit.textPosition === 'top'
+              ? 'justify-start'
+              : credit.textPosition === 'bottom'
+                ? 'justify-end'
+                : 'justify-center'
+          } ${
+            credit.textAlign === 'left'
+              ? 'items-start text-left'
+              : credit.textAlign === 'right'
+                ? 'items-end text-right'
+                : 'items-center text-center'
+          }`}
+          style={{ opacity: alpha }}
+        >
+          <div
+            className={`whitespace-pre-wrap font-semibold ${
+              credit.uppercase ? 'uppercase' : ''
+            }`}
+            style={{
+              fontSize: `clamp(14px, ${credit.fontSize * 0.06}vw, ${credit.fontSize}px)`,
+              letterSpacing: `${credit.letterSpacing}px`,
+              lineHeight: lineHeightVal,
+              textShadow: cinematicTextShadow
+            }}
+          >
+            {displayTitle}
+            {showCaret && visibleChars <= titleLen && <span className="animate-pulse opacity-75">|</span>}
+          </div>
+          {credit.subtitle.trim() && (
+            <div
+              className="mt-2 whitespace-pre-wrap opacity-80"
+              style={{
+                fontSize: `clamp(10px, ${credit.fontSize * 0.032}vw, ${Math.max(12, Math.round(credit.fontSize * 0.48))}px)`,
+                letterSpacing: `${Math.max(0, credit.letterSpacing * 0.4)}px`,
+                textShadow: '0 1px 10px rgba(0,0,0,0.85)'
+              }}
+            >
+              {displaySubtitle}
+              {showCaret && visibleChars > titleLen && <span className="animate-pulse opacity-75">|</span>}
+            </div>
+          )}
+        </div>
+      )}
+
       {credit.templateId === 'chapter-card' && (
         <div
           className="flex h-full w-full flex-col items-center justify-center px-8 text-center"
           style={{
             opacity: alpha,
-            textShadow: '0 4px 20px rgba(0,0,0,0.85)'
-          }}
+                      }}
         >
           <div
             className="font-bold uppercase"

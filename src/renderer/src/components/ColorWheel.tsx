@@ -146,7 +146,9 @@ export default function ColorWheel({
 
             {/* Hedef İmleç (Puck / Crosshair) */}
             <span
-              className="pointer-events-none absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[var(--bg-app)]/90 shadow-[0_0_6px_rgba(0,0,0,0.95)]"
+              className={`pointer-events-none absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[var(--bg-app)]/90 transition-transform duration-150 ${
+                dragging ? 'scale-125 border-[var(--accent)] shadow-[0_0_8px_rgba(183,227,106,0.55)]' : ''
+              }`}
               style={{
                 left: `${(puckX * 0.5 + 0.5) * 100}%`,
                 top: `${(puckY * 0.5 + 0.5) * 100}%`
@@ -165,6 +167,7 @@ export default function ColorWheel({
             step={0.01}
             value={value.l}
             onChange={(e) => onChange({ ...value, l: parseFloat(e.target.value) })}
+            style={{ '--pct': `${((value.l + 1) / 2) * 100}%` } as React.CSSProperties}
             className="w-full min-w-0 flex-1"
             title={`Master Parlaklık (${value.l.toFixed(2)})`}
           />
@@ -187,16 +190,20 @@ export function HoneycombColorWheels({
   lift,
   gamma,
   gain,
+  offset,
   onLift,
   onGamma,
-  onGain
+  onGain,
+  onOffset
 }: {
   lift: WheelValue
   gamma: WheelValue
   gain: WheelValue
+  offset?: WheelValue
   onLift: (v: WheelValue) => void
   onGamma: (v: WheelValue) => void
   onGain: (v: WheelValue) => void
+  onOffset?: (v: WheelValue) => void
 }) {
   const rows: Array<{
     key: string
@@ -206,54 +213,84 @@ export function HoneycombColorWheels({
   }> = [
     { key: 'lift', label: 'Lift Y', value: lift, onChange: onLift },
     { key: 'gamma', label: 'Gamma Y', value: gamma, onChange: onGamma },
-    { key: 'gain', label: 'Gain Y', value: gain, onChange: onGain }
+    { key: 'gain', label: 'Gain Y', value: gain, onChange: onGain },
+    ...(offset && onOffset
+      ? [{ key: 'offset', label: 'Offset Y', value: offset, onChange: onOffset }]
+      : [])
   ]
 
   return (
-    <div className="space-y-3">
-      {/* Üçgen Petek Kümesi (4px kenar boşluğu ile kenetlenen 3 altıgen) */}
-      <div className="relative mx-auto h-[186px] w-[198px]">
-        <div className="absolute left-0 top-0">
-          <ColorWheel label="Lift" value={lift} onChange={onLift} size={104} hideSlider />
-        </div>
-        <div className="absolute left-[94px] top-0">
-          <ColorWheel label="Gamma" value={gamma} onChange={onGamma} size={104} hideSlider />
-        </div>
-        <div className="absolute left-[47px] top-[82px]">
-          <ColorWheel label="Gain" value={gain} onChange={onGain} size={104} hideSlider />
-        </div>
-      </div>
-
-      {/* Kompakt Master Parlaklık Kontrol Bloğu */}
-      <div className="space-y-1.5 rounded-md border border-[color:var(--border-subtle)] bg-[var(--bg-panel)]/70 px-2.5 py-2">
-        {rows.map((r) => (
-          <div key={r.key} className="flex items-center gap-2">
-            <span className="w-[52px] shrink-0 font-mono text-[10px] text-[var(--text-muted)]">
-              {r.label}
-            </span>
-            <input
-              type="range"
-              min={-1}
-              max={1}
-              step={0.01}
-              value={r.value.l}
-              onChange={(e) => r.onChange({ ...r.value, l: parseFloat(e.target.value) })}
-              className="min-w-0 flex-1"
-            />
-            <span className="w-8 shrink-0 text-right font-mono text-[10px] text-white/70">
-              {r.value.l.toFixed(2)}
-            </span>
-            <button
-              type="button"
-              onClick={() => r.onChange({ ...r.value, l: 0 })}
-              disabled={Math.abs(r.value.l) <= 0.001}
-              title={`${r.label} Sıfırla`}
-              className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] text-[var(--text-muted)] transition hover:bg-white/10 hover:text-white disabled:opacity-25"
-            >
-              ↺
-            </button>
+    <div className="space-y-2.5">
+      {/* Altıgen Petek Kümesi (Lift / Gamma / Gain + Opsiyonel Offset Tekerleği) */}
+      {offset && onOffset ? (
+        <div className="relative mx-auto h-[176px] w-[282px]">
+          <div className="absolute left-0 top-0">
+            <ColorWheel label="Lift" value={lift} onChange={onLift} size={96} hideSlider />
           </div>
-        ))}
+          <div className="absolute left-[88px] top-0">
+            <ColorWheel label="Gamma" value={gamma} onChange={onGamma} size={96} hideSlider />
+          </div>
+          <div className="absolute left-[44px] top-[76px]">
+            <ColorWheel label="Gain" value={gain} onChange={onGain} size={96} hideSlider />
+          </div>
+          <div className="absolute left-[182px] top-[38px]">
+            <ColorWheel label="Offset" value={offset} onChange={onOffset} size={96} hideSlider />
+          </div>
+        </div>
+      ) : (
+        <div className="relative mx-auto h-[186px] w-[198px]">
+          <div className="absolute left-0 top-0">
+            <ColorWheel label="Lift" value={lift} onChange={onLift} size={104} hideSlider />
+          </div>
+          <div className="absolute left-[94px] top-0">
+            <ColorWheel label="Gamma" value={gamma} onChange={onGamma} size={104} hideSlider />
+          </div>
+          <div className="absolute left-[47px] top-[82px]">
+            <ColorWheel label="Gain" value={gain} onChange={onGain} size={104} hideSlider />
+          </div>
+        </div>
+      )}
+
+      {/* Kompakt Master Parlaklık Kontrol Bloğu (Lift Y / Gamma Y / Gain Y / Offset Y) */}
+      <div className="space-y-1.5 rounded-xl bg-black/25 px-3 py-2">
+        {rows.map((r) => {
+          const pct = ((r.value.l + 1) / 2) * 100
+          const startPct = Math.min(50, pct)
+          const endPct = Math.max(50, pct)
+          return (
+            <div key={r.key} className="flex items-center gap-2">
+              <span className="w-[54px] shrink-0 font-mono text-[9px] text-[var(--text-muted)]">
+                {r.label}
+              </span>
+              <input
+                data-testid={`wheel-luma-${r.key}`}
+                type="range"
+                min={-1}
+                max={1}
+                step={0.01}
+                value={r.value.l}
+                onDoubleClick={() => r.onChange({ ...r.value, l: 0 })}
+                onChange={(e) => r.onChange({ ...r.value, l: parseFloat(e.target.value) })}
+                className="min-w-0 flex-1"
+                style={{
+                  background: `linear-gradient(90deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.08) ${startPct}%, var(--accent) ${startPct}%, var(--accent) ${endPct}%, rgba(255,255,255,0.08) ${endPct}%, rgba(255,255,255,0.08) 100%)`
+                }}
+              />
+              <span className="w-8 shrink-0 text-right font-mono text-[9px] text-white/75">
+                {r.value.l > 0 ? `+${r.value.l.toFixed(2)}` : r.value.l.toFixed(2)}
+              </span>
+              <button
+                type="button"
+                onClick={() => r.onChange({ ...r.value, l: 0 })}
+                disabled={Math.abs(r.value.l) <= 0.001}
+                title={`${r.label} Sıfırla`}
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] text-[var(--text-muted)] transition-all duration-200 hover:bg-white/10 hover:text-white disabled:opacity-20"
+              >
+                ↺
+              </button>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

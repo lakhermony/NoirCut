@@ -53,7 +53,7 @@ export default function ExportModal({
   return (
     <div
       data-testid="export-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75  p-4"
       onClick={() => !exporting && onClose()}
     >
       <div
@@ -70,7 +70,7 @@ export default function ExportModal({
           <button
             disabled={exporting}
             onClick={onClose}
-            className="rounded-md px-2 py-1 text-xs text-white/50 hover:bg-white/10 hover:text-white disabled:opacity-30"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-xs text-white/50 transition hover:bg-white/10 hover:text-white disabled:opacity-30"
           >
             ✕
           </button>
@@ -78,7 +78,7 @@ export default function ExportModal({
 
         {/* Çözünürlük */}
         <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/50">
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
             Çözünürlük
           </div>
           <div className="grid grid-cols-3 gap-2">
@@ -87,10 +87,10 @@ export default function ExportModal({
                 key={r}
                 disabled={exporting}
                 onClick={() => onSettings({ ...settings, resolution: r })}
-                className={`rounded-lg border px-2.5 py-2 text-center text-[11px] transition disabled:opacity-50 ${
+                className={`rounded-full border px-2.5 py-2 text-center text-[11px] transition duration-150 active:scale-[0.97] disabled:opacity-50 ${
                   settings.resolution === r
-                    ? 'border-tungsten bg-tungsten/15 text-tungsten font-semibold'
-                    : 'border-white/10 bg-black/30 text-white/70 hover:border-white/30'
+                    ? 'border-[var(--accent)] bg-[var(--accent)]/15 font-semibold text-[var(--accent)]'
+                    : 'border-[color:var(--border-subtle)] bg-[var(--bg-surface)] text-white/75 hover:border-white/30'
                 }`}
               >
                 {EXPORT_RESOLUTION_DIM[r].label}
@@ -101,7 +101,7 @@ export default function ExportModal({
 
         {/* Kare Hızı (FPS) */}
         <div>
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/50">
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
             Kare Hızı (FPS)
           </div>
           <div className="grid grid-cols-3 gap-2">
@@ -110,10 +110,10 @@ export default function ExportModal({
                 key={f.value}
                 disabled={exporting}
                 onClick={() => onSettings({ ...settings, fps: f.value })}
-                className={`rounded-lg border px-2.5 py-2 text-[11px] transition disabled:opacity-50 ${
+                className={`rounded-full border px-2.5 py-2 text-[11px] transition duration-150 active:scale-[0.97] disabled:opacity-50 ${
                   settings.fps === f.value
-                    ? 'border-tungsten bg-tungsten/15 text-tungsten font-semibold'
-                    : 'border-white/10 bg-black/30 text-white/70 hover:border-white/30'
+                    ? 'border-[var(--accent)] bg-[var(--accent)]/15 font-semibold text-[var(--accent)]'
+                    : 'border-[color:var(--border-subtle)] bg-[var(--bg-surface)] text-white/75 hover:border-white/30'
                 }`}
               >
                 {f.label}
@@ -125,7 +125,7 @@ export default function ExportModal({
         {/* Format ve Kalite */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/50">
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
               Format
             </div>
             <div className="grid grid-cols-2 gap-1.5">
@@ -134,10 +134,10 @@ export default function ExportModal({
                   key={fmt.value}
                   disabled={exporting}
                   onClick={() => onSettings({ ...settings, format: fmt.value })}
-                  className={`rounded-lg border py-2 text-[11px] transition disabled:opacity-50 ${
+                  className={`rounded-full border py-2 text-[11px] transition duration-150 active:scale-[0.97] disabled:opacity-50 ${
                     settings.format === fmt.value
-                      ? 'border-tungsten bg-tungsten/15 text-tungsten font-semibold'
-                      : 'border-white/10 bg-black/30 text-white/70 hover:border-white/30'
+                      ? 'border-[var(--accent)] bg-[var(--accent)]/15 font-semibold text-[var(--accent)]'
+                      : 'border-[color:var(--border-subtle)] bg-[var(--bg-surface)] text-white/75 hover:border-white/30'
                   }`}
                 >
                   {fmt.label}
@@ -147,7 +147,7 @@ export default function ExportModal({
           </div>
 
           <div>
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/50">
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
               Kalite / Bitrate
             </div>
             <div className="grid grid-cols-3 gap-1.5">
@@ -157,10 +157,10 @@ export default function ExportModal({
                   disabled={exporting}
                   title={q.hint}
                   onClick={() => onSettings({ ...settings, quality: q.value })}
-                  className={`rounded-lg border py-2 text-[11px] transition disabled:opacity-50 ${
+                  className={`rounded-full border py-2 text-[11px] transition duration-150 active:scale-[0.97] disabled:opacity-50 ${
                     settings.quality === q.value
-                      ? 'border-tungsten bg-tungsten/15 text-tungsten font-semibold'
-                      : 'border-white/10 bg-black/30 text-white/70 hover:border-white/30'
+                      ? 'border-[var(--accent)] bg-[var(--accent)]/15 font-semibold text-[var(--accent)]'
+                      : 'border-[color:var(--border-subtle)] bg-[var(--bg-surface)] text-white/75 hover:border-white/30'
                   }`}
                 >
                   {q.label}
@@ -172,16 +172,16 @@ export default function ExportModal({
 
         {/* İlerleme Çubuğu / Sonuç */}
         {(exporting || resultPath || error) && (
-          <div className="space-y-2 rounded-lg border border-white/10 bg-black/40 p-3">
+          <div className="soft-card space-y-2 p-3.5">
             {exporting && (
               <>
-                <div className="flex justify-between font-mono text-[11px] text-tungsten">
+                <div className="flex justify-between font-mono text-[11px] text-[var(--accent)]">
                   <span>İşleniyor…</span>
                   <span>%{progress}</span>
                 </div>
                 <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
                   <div
-                    className="h-full rounded-full bg-tungsten transition-all duration-200"
+                    className="h-full rounded-full bg-[var(--accent)] transition-all duration-200"
                     style={{ width: `${progress}%` }}
                   />
                 </div>
@@ -191,7 +191,7 @@ export default function ExportModal({
             {resultPath && !exporting && (
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-[11px] font-semibold text-emerald-400">
+                  <div className="text-[11px] font-semibold text-[var(--accent)]">
                     Dışa aktarma tamamlandı!
                   </div>
                   <div className="truncate font-mono text-[10px] text-white/50" title={resultPath}>
@@ -201,7 +201,7 @@ export default function ExportModal({
                 <button
                   data-testid="reveal-export-btn"
                   onClick={() => onReveal(resultPath)}
-                  className="shrink-0 rounded-full bg-tungsten px-3.5 py-1.5 text-[10px] font-bold text-black hover:brightness-110"
+                  className="shrink-0 rounded-full bg-[var(--accent)] px-3.5 py-1.5 text-[10px] font-bold text-[var(--accent-fg)] transition hover:bg-[var(--accent-hover)]"
                 >
                   Dosya Konumunu Aç
                 </button>
@@ -227,14 +227,14 @@ export default function ExportModal({
             <>
               <button
                 onClick={onClose}
-                className="rounded-full border border-white/15 px-4 py-2 text-[11px] text-white/70 hover:text-white"
+                className="rounded-full border border-[color:var(--border-subtle)] px-4 py-2 text-[11px] text-white/75 transition hover:border-white/30 hover:text-white"
               >
                 Kapat
               </button>
               <button
                 data-testid="start-export-btn"
                 onClick={onStart}
-                className="rounded-md bg-[var(--accent)] px-6 py-2 text-[11px] font-bold tracking-wider text-[var(--accent-fg)] ring-1 ring-[var(--accent-hover)] shadow-[0_0_18px_var(--accent-glow)] transition hover:bg-[var(--accent-hover)]"
+                className="rounded-full bg-[var(--accent)] px-6 py-2 text-[11px] font-bold tracking-wider text-[var(--accent-fg)] shadow-[0_2px_12px_rgba(183,227,106,0.24)] transition duration-150 hover:bg-[var(--accent-hover)] active:scale-[0.97]"
               >
                 Dışa Aktarmayı Başlat
               </button>

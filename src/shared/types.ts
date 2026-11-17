@@ -1,7 +1,9 @@
 /** Main <-> Renderer arasında paylaşılan tipler */
 import type { Lut3D } from './lut'
 import type { NoirCutProject } from './project'
-import type { ExportRequest } from './timeline'
+import type { ExportRequest, NoirSoundscapeId } from './timeline'
+
+export type VideoEncoderId = 'libx264' | 'h264_nvenc' | 'h264_vaapi' | 'h264_qsv' | 'h264_amf'
 
 export interface EngineInfo {
   /** Kullanılan ffmpeg yürütülebilir dosyasının yolu */
@@ -12,16 +14,23 @@ export interface EngineInfo {
   source: 'embedded' | 'system' | 'missing'
   version: string | null
   platform: NodeJS.Platform
+  /** Algılanan donanım / yazılım H.264 kodlayıcıları */
+  availableEncoders?: VideoEncoderId[]
+  /** Donanım kodlayıcı sağlayan sistem ffmpeg yolu (varsa) */
+  gpuFfmpegPath?: string | null
 }
 
 export type ProxyState = 'none' | 'building' | 'ready' | 'error'
+export type MediaKind = 'video' | 'audio' | 'image'
 
-/** İçe aktarılmış bir video dosyası */
+/** İçe aktarılmış bir video, ses veya görsel dosyası */
 export interface MediaItem {
   id: string
   /** Diskteki tam dosya yolu */
   path: string
   name: string
+  /** Medya türü ('video' varsayılan) */
+  mediaKind?: MediaKind
   /** saniye */
   duration: number
   width: number
@@ -92,6 +101,46 @@ export interface ProjectLoadResult {
   error?: string
 }
 
+export type UpdaterState =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error'
+
+export interface UpdateStatus {
+  state: UpdaterState
+  currentVersion: string
+  latestVersion?: string
+  progress?: number
+  releaseNotes?: string
+  message?: string
+  lastCheckedAt?: string
+  isSimulated?: boolean
+}
+
+export interface RecentProjectEntry {
+  name: string
+  path: string
+  openedAt: string
+}
+
+export interface AutosaveEntry {
+  id: string
+  savedAt: string
+  clipCount: number
+  duration: number
+  label: string
+}
+
+export interface AutosaveStatus {
+  hasUncleanExit: boolean
+  latest: AutosaveEntry | null
+  snapshots: AutosaveEntry[]
+}
+
 export interface NoirCutApi {
   getEngineInfo: () => Promise<EngineInfo>
   /** Dosya seçici açar, seçilen videoları analiz edip döndürür */
@@ -114,4 +163,43 @@ export interface NoirCutApi {
   saveProject: (project: NoirCutProject) => Promise<ProjectSaveResult>
   /** .noircut proje dosyasını açar ve medyaları geri yükler */
   loadProject: () => Promise<ProjectLoadResult>
+  /** Prosedürel sinematik ses efekti (Noir Soundscape) WAV üretir ve MediaItem olarak döndürür */
+  generateSoundscape: (presetId: NoirSoundscapeId) => Promise<MediaItem | null>
+  /** Metin dosyasını (.noirlook, .cube) kaydetme iletişim kutusu ile dışa aktarır */
+  saveTextFile: (
+    defaultName: string,
+    content: string,
+    filterName: string,
+    extension: string
+  ) => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>
+  /** .noirlook veya .cube dosyasını okur */
+  openLookFile: () => Promise<{
+    canceled?: boolean
+    ext?: 'noirlook' | 'cube'
+    name?: string
+    content?: string
+    error?: string
+  }>
+  /** Belirli dosya yolundan .noircut projesi açar (Son Projeler için) */
+  loadProjectByPath: (filePath: string) => Promise<ProjectLoadResult>
+  /** Uygulama güncelleme denetimi (electron-updater) */
+  checkForUpdates: () => Promise<UpdateStatus>
+  /** Güncellemeyi indirir */
+  downloadUpdate: () => Promise<{ ok: boolean; error?: string }>
+  /** İndirilen güncellemeyi kurup yeniden başlatır */
+  quitAndInstallUpdate: () => Promise<void>
+  /** Güncelleme durum olaylarını dinler */
+  onUpdateStatus: (cb: (status: UpdateStatus) => void) => () => void
+  /** Aktif uygulama sürümünü döndürür */
+  getAppVersion: () => Promise<string>
+  /** Kuyruklu dışa aktarma için hedef dosya yolu seçtirir */
+  selectExportPath: (format: 'mp4' | 'mov', defaultName?: string) => Promise<string | null>
+  /** Otomatik yedek (autosave) yazar */
+  writeAutosave: (project: NoirCutProject, label?: string) => Promise<{ ok: boolean }>
+  /** Kurtarma ve sürüm anlık görüntü durumunu sorgular */
+  getAutosaveStatus: () => Promise<AutosaveStatus>
+  /** Otomatik yedek anlık görüntüsünü geri yükler */
+  restoreAutosave: (snapshotId: string) => Promise<ProjectLoadResult>
+  /** Çökme kurtarma uyarısını yoksayar */
+  dismissAutosave: () => Promise<void>
 }
