@@ -169,7 +169,7 @@ export default function LeftPanel({
                   title={`${m.name}\n${m.width}×${m.height} · ${m.codec} · ${m.fps.toFixed(2)} fps`}
                   className={`case-file-card group relative cursor-pointer overflow-hidden rounded-[13px] border bg-[var(--bg-surface)] transition duration-150 ${
                     isActive
-                      ? 'border-[var(--accent)] shadow-[0_0_12px_rgba(183,227,106,0.18)]'
+                      ? 'border-[var(--accent)] shadow-[0_0_12px_var(--accent-glow)]'
                       : 'border-[color:var(--border-subtle)] hover:border-white/30'
                   }`}
                 >
@@ -230,7 +230,7 @@ export default function LeftPanel({
                   onClick={() => onSelectCreditTemplate(tpl.id)}
                   className={`flex flex-col gap-1 rounded-[13px] border bg-[var(--bg-surface)] p-3 text-left transition duration-150 ${
                     selected
-                      ? 'border-[var(--accent)] bg-[var(--accent)]/10 shadow-[0_0_12px_rgba(183,227,106,0.14)]'
+                      ? 'border-[var(--accent)] bg-[var(--accent-soft)] shadow-[0_0_12px_var(--accent-glow)]'
                       : 'border-[color:var(--border-subtle)] hover:border-white/25'
                   }`}
                 >

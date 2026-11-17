@@ -165,14 +165,14 @@ export default function LookPresetManager({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Yeni Noir Look adı..."
-          className="h-7 min-w-[160px] flex-1 rounded-full border border-[#343943] bg-[#1B1E24] px-3 text-[10.5px] text-[#F1F2EE] placeholder-[#9298A3] outline-none focus:border-[#B7E36A]"
+          className="h-7 min-w-[160px] flex-1 rounded-full border border-[#343943] bg-[#1B1E24] px-3 text-[10.5px] text-[#F1F2EE] placeholder-[#9298A3] outline-none focus:border-[var(--accent)]"
         />
         <input
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Kısa açıklama (opsiyonel)"
-          className="h-7 min-w-[160px] flex-1 rounded-full border border-[#343943] bg-[#1B1E24] px-3 text-[10.5px] text-[#F1F2EE] placeholder-[#9298A3] outline-none focus:border-[#B7E36A]"
+          className="h-7 min-w-[160px] flex-1 rounded-full border border-[#343943] bg-[#1B1E24] px-3 text-[10.5px] text-[#F1F2EE] placeholder-[#9298A3] outline-none focus:border-[var(--accent)]"
         />
         <select
           value={category}
@@ -188,7 +188,7 @@ export default function LookPresetManager({
         <button
           type="submit"
           data-testid="mylook-save-btn"
-          className="h-7 rounded-full bg-[#B7E36A] px-3.5 text-[10px] font-semibold text-[#101114] transition-transform hover:scale-[1.02] active:scale-95"
+          className="h-7 rounded-full bg-[var(--accent)] px-3.5 text-[10px] font-semibold text-[var(--accent-fg)] transition-transform hover:scale-[1.02] active:scale-95"
         >
           + Yeni Look Kaydet
         </button>
@@ -203,7 +203,7 @@ export default function LookPresetManager({
       </form>
 
       {statusMsg && (
-        <div className="rounded-full bg-[#B7E36A]/15 px-3 py-1 text-[10px] font-medium text-[#B7E36A]">
+        <div className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-[10px] font-medium text-[var(--accent)]">
           {statusMsg}
         </div>
       )}
@@ -229,7 +229,7 @@ export default function LookPresetManager({
                       value={renameText}
                       onChange={(e) => setRenameText(e.target.value)}
                       autoFocus
-                      className="h-6 flex-1 rounded-full border border-[#B7E36A] bg-[#1B1E24] px-2 text-[10px] text-[#F1F2EE] outline-none"
+                      className="h-6 flex-1 rounded-full border border-[var(--accent)] bg-[#1B1E24] px-2 text-[10px] text-[#F1F2EE] outline-none"
                     />
                     <button
                       type="button"
@@ -237,7 +237,7 @@ export default function LookPresetManager({
                         if (renameText.trim()) onRename(p.id, renameText.trim())
                         setEditingId(null)
                       }}
-                      className="rounded-full bg-[#B7E36A] px-2 py-0.5 text-[9px] font-semibold text-[#101114]"
+                      className="rounded-full bg-[var(--accent)] px-2 py-0.5 text-[9px] font-semibold text-[var(--accent-fg)]"
                     >
                       Kaydet
                     </button>
@@ -259,7 +259,7 @@ export default function LookPresetManager({
                 <button
                   type="button"
                   onClick={() => onToggleFavorite(p.id)}
-                  className={`text-[11px] ${p.favorite ? 'text-[#B7E36A]' : 'text-[#9298A3]'}`}
+                  className={`text-[11px] ${p.favorite ? 'text-[var(--accent)]' : 'text-[#9298A3]'}`}
                   title="Favori"
                 >
                   {p.favorite ? '★' : '☆'}
@@ -270,7 +270,7 @@ export default function LookPresetManager({
                 <button
                   type="button"
                   onClick={() => onApplyPreset(p)}
-                  className="rounded-full bg-[#B7E36A] px-2.5 py-0.5 text-[9px] font-semibold text-[#101114]"
+                  className="rounded-full bg-[var(--accent)] px-2.5 py-0.5 text-[9px] font-semibold text-[var(--accent-fg)]"
                 >
                   Uygula
                 </button>
@@ -313,14 +313,14 @@ export default function LookPresetManager({
                 <button
                   type="button"
                   onClick={() => handleExportNoirLook(p)}
-                  className="rounded-full bg-[#242830] px-2 py-0.5 text-[9px] text-[#9298A3] hover:text-[#B7E36A]"
+                  className="rounded-full bg-[#242830] px-2 py-0.5 text-[9px] text-[#9298A3] hover:text-[var(--accent)]"
                 >
                   .noirlook
                 </button>
                 <button
                   type="button"
                   onClick={() => handleExportCube(p)}
-                  className="rounded-full bg-[#242830] px-2 py-0.5 text-[9px] text-[#9298A3] hover:text-[#B7E36A]"
+                  className="rounded-full bg-[#242830] px-2 py-0.5 text-[9px] text-[#9298A3] hover:text-[var(--accent)]"
                 >
                   .cube
                 </button>

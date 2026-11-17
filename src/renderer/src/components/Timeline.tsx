@@ -584,7 +584,7 @@ export default function Timeline({
           data-testid="timeline-play-btn"
           onClick={onPlay}
           disabled={!canPlay}
-          className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent)] text-[10px] font-bold text-[var(--accent-fg)] shadow-[0_2px_10px_rgba(183,227,106,0.25)] transition duration-150 hover:bg-[var(--accent-hover)] active:scale-95 disabled:opacity-30"
+          className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent)] text-[10px] font-bold text-[var(--accent-fg)] shadow-[0_2px_10px_var(--accent-glow)] transition duration-150 hover:bg-[var(--accent-hover)] active:scale-95 disabled:opacity-30"
           title="Oynat / Durdur (Boşluk) · J/K/L Shuttle"
         >
           {playing ? '❚❚' : '▶'}

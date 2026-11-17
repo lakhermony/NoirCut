@@ -147,7 +147,7 @@ export default function ColorWheel({
             {/* Hedef İmleç (Puck / Crosshair) */}
             <span
               className={`pointer-events-none absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[var(--bg-app)]/90 transition-transform duration-150 ${
-                dragging ? 'scale-125 border-[var(--accent)] shadow-[0_0_8px_rgba(183,227,106,0.55)]' : ''
+                dragging ? 'scale-125 border-[var(--accent)] shadow-[0_0_8px_var(--accent-glow)]' : ''
               }`}
               style={{
                 left: `${(puckX * 0.5 + 0.5) * 100}%`,

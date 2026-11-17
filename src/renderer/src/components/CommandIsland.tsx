@@ -198,7 +198,7 @@ export default function CommandIsland({
             title="Jenerik ve Metin Editörü"
             className={`rounded-full px-3 py-1 text-[10px] font-semibold tracking-wide transition duration-150 active:scale-[0.97] ${
               tab === 'CREDITS'
-                ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow-[0_0_14px_rgba(183,227,106,0.3)]'
+                ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow-[0_0_14px_var(--accent-glow)]'
                 : 'bg-[var(--bg-elevated,#292E36)] text-[var(--text-muted)] hover:scale-[1.02] hover:bg-white/[0.12] hover:text-white'
             }`}
           >
@@ -217,7 +217,7 @@ export default function CommandIsland({
         {ind.visible && (
           <span
             data-testid="tab-underline-indicator"
-            className="pointer-events-none absolute top-1 h-[calc(100%-8px)] rounded-full bg-[var(--accent)] shadow-[0_2px_16px_rgba(183,227,106,0.34)] transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+            className="pointer-events-none absolute top-1 h-[calc(100%-8px)] rounded-full bg-[var(--accent)] shadow-[0_2px_16px_var(--accent-glow)] transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
             style={{ left: ind.left, width: ind.width }}
           />
         )}
@@ -312,7 +312,7 @@ export default function CommandIsland({
         <button
           data-testid="export-open-btn"
           onClick={onExport}
-          className="flex items-center gap-1 rounded-full bg-[var(--accent)] px-3.5 py-1 text-[10px] font-bold tracking-[0.16em] text-[var(--accent-fg)] shadow-[0_2px_12px_rgba(183,227,106,0.28)] transition duration-150 hover:scale-[1.02] hover:bg-[var(--accent-hover)] hover:shadow-[0_4px_18px_rgba(183,227,106,0.38)] active:scale-[0.97]"
+          className="flex items-center gap-1 rounded-full bg-[var(--accent)] px-3.5 py-1 text-[10px] font-bold tracking-[0.16em] text-[var(--accent-fg)] shadow-[0_2px_12px_var(--accent-glow)] transition duration-150 hover:scale-[1.02] hover:bg-[var(--accent-hover)] hover:shadow-[0_4px_18px_var(--accent-glow)] active:scale-[0.97]"
         >
           <span>EXPORT</span>
           <span className="text-[11px] leading-none">↗</span>

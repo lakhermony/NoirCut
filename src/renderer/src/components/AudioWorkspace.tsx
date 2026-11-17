@@ -105,8 +105,8 @@ export default function AudioWorkspace({
                           height: st.muted ? '14%' : `${pct}%`,
                           background: st.muted
                             ? 'rgba(255,255,255,0.16)'
-                            : 'linear-gradient(180deg, #c6ec82 0%, rgba(183,227,106,0.22) 100%)',
-                          boxShadow: st.muted ? 'none' : '0 0 8px rgba(183,227,106,0.28)'
+                            : 'linear-gradient(180deg, var(--accent-hover) 0%, var(--accent-soft) 100%)',
+                          boxShadow: st.muted ? 'none' : '0 0 8px var(--accent-glow)'
                         }}
                       />
                     ))}
@@ -159,7 +159,7 @@ export default function AudioWorkspace({
                       onClick={() => onSelectClip(c.id)}
                       className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-[10px] transition duration-150 ${
                         selected
-                          ? 'border-[var(--accent)] bg-[var(--accent)]/12 text-white shadow-[0_0_12px_rgba(183,227,106,0.16)]'
+                          ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-white shadow-[0_0_12px_var(--accent-glow)]'
                           : 'border-[color:var(--border-subtle)] bg-[var(--bg-panel)] text-white/75 hover:border-white/25'
                       }`}
                     >
@@ -328,7 +328,7 @@ export default function AudioWorkspace({
               <span
                 className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition duration-200 ${
                   autoDucking
-                    ? 'bg-[var(--accent)] shadow-[0_0_12px_rgba(183,227,106,0.4)]'
+                    ? 'bg-[var(--accent)] shadow-[0_0_12px_var(--accent-glow)]'
                     : 'bg-[#2a2f39]'
                 }`}
               >

@@ -921,7 +921,7 @@ export default function Monitor({
           onClick={onToggle}
           disabled={!media}
           title="Oynat / Durdur (Boşluk)"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[11px] font-bold text-[var(--accent-fg)] shadow-[0_2px_12px_rgba(183,227,106,0.28)] transition duration-150 hover:bg-[var(--accent-hover)] hover:shadow-[0_4px_16px_rgba(183,227,106,0.38)] active:scale-95 disabled:opacity-30"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[11px] font-bold text-[var(--accent-fg)] shadow-[0_2px_12px_var(--accent-glow)] transition duration-150 hover:bg-[var(--accent-hover)] hover:shadow-[0_4px_16px_var(--accent-glow)] active:scale-95 disabled:opacity-30"
         >
           {playing ? '❚❚' : '▶'}
         </button>

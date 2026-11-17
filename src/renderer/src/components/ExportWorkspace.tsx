@@ -149,7 +149,7 @@ export default function ExportWorkspace({
                     onClick={() => onSettings({ ...settings, ...p.patch })}
                     className={`rounded-2xl border px-3 py-2 text-left transition duration-150 active:scale-[0.98] disabled:opacity-45 ${
                       active
-                        ? 'border-[var(--accent)] bg-[var(--accent)]/15 text-white shadow-[0_0_10px_rgba(183,227,106,0.16)]'
+                        ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-white shadow-[0_0_10px_var(--accent-glow)]'
                         : 'border-[color:var(--border-subtle)] bg-[var(--bg-panel)] text-white/75 hover:border-white/25'
                     }`}
                   >
@@ -179,7 +179,7 @@ export default function ExportWorkspace({
                     onClick={() => onSettings({ ...settings, resolution: res })}
                     className={`rounded-2xl border px-3.5 py-2.5 text-left transition duration-150 active:scale-[0.98] disabled:opacity-45 ${
                       active
-                        ? 'border-[var(--accent)] bg-[var(--accent)]/15 text-white shadow-[0_0_12px_rgba(183,227,106,0.16)]'
+                        ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-white shadow-[0_0_12px_var(--accent-glow)]'
                         : 'border-[color:var(--border-subtle)] bg-[var(--bg-panel)] text-white/70 hover:border-white/25'
                     }`}
                   >
@@ -254,7 +254,7 @@ export default function ExportWorkspace({
                   onClick={() => onSettings({ ...settings, presetId: 'custom', quality: q.value })}
                   className={`rounded-2xl border px-3.5 py-2.5 text-left transition duration-150 active:scale-[0.98] disabled:opacity-45 ${
                     settings.quality === q.value
-                      ? 'border-[var(--accent)] bg-[var(--accent)]/15 text-white shadow-[0_0_12px_rgba(183,227,106,0.16)]'
+                      ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-white shadow-[0_0_12px_var(--accent-glow)]'
                       : 'border-[color:var(--border-subtle)] bg-[var(--bg-panel)] text-white/70 hover:border-white/25'
                   }`}
                 >
@@ -517,7 +517,7 @@ export default function ExportWorkspace({
               <button
                 type="button"
                 onClick={onStart}
-                className="w-full rounded-full bg-[var(--accent)] py-2.5 text-[11px] font-bold tracking-[0.16em] text-[var(--accent-fg)] shadow-[0_2px_14px_rgba(183,227,106,0.24)] transition duration-150 hover:bg-[var(--accent-hover)] hover:shadow-[0_4px_20px_rgba(183,227,106,0.36)] active:scale-[0.98]"
+                className="w-full rounded-full bg-[var(--accent)] py-2.5 text-[11px] font-bold tracking-[0.16em] text-[var(--accent-fg)] shadow-[0_2px_14px_var(--accent-glow)] transition duration-150 hover:bg-[var(--accent-hover)] hover:shadow-[0_4px_20px_var(--accent-glow)] active:scale-[0.98]"
               >
                 DIŞA AKTARMAYI BAŞLAT
               </button>

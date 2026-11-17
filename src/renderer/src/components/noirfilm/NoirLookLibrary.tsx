@@ -122,7 +122,7 @@ export default function NoirLookLibrary({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Sinematik görünüm ara (ör. 35mm, Noir, Teal, Vintage...)"
-            className="h-7 w-full max-w-[320px] rounded-full border border-[#343943] bg-[#1B1E24] px-3 text-[10.5px] text-[#F1F2EE] placeholder-[#9298A3] outline-none transition-colors focus:border-[#B7E36A]"
+            className="h-7 w-full max-w-[320px] rounded-full border border-[#343943] bg-[#1B1E24] px-3 text-[10.5px] text-[#F1F2EE] placeholder-[#9298A3] outline-none transition-colors focus:border-[var(--accent)]"
           />
           {previewingId && (
             <button
@@ -131,7 +131,7 @@ export default function NoirLookLibrary({
                 setPreviewingId(null)
                 onPreviewLook(null)
               }}
-              className="rounded-full bg-[#242830] px-2.5 py-1 text-[9.5px] font-medium text-[#B7E36A]"
+              className="rounded-full bg-[#242830] px-2.5 py-1 text-[9.5px] font-medium text-[var(--accent)]"
             >
               Önizlemeyi Kapat
             </button>
@@ -142,7 +142,7 @@ export default function NoirLookLibrary({
           type="button"
           data-testid="noirfilm-import-cube-btn"
           onClick={onImportLut}
-          className="rounded-full bg-[#242830] px-3 py-1 text-[10px] font-semibold text-[#F1F2EE] transition-colors hover:bg-[#292E36] hover:text-[#B7E36A]"
+          className="rounded-full bg-[#242830] px-3 py-1 text-[10px] font-semibold text-[#F1F2EE] transition-colors hover:bg-[#292E36] hover:text-[var(--accent)]"
         >
           + .cube LUT İçe Aktar
         </button>
@@ -155,7 +155,7 @@ export default function NoirLookLibrary({
           onClick={() => setSelectedCategory('ALL')}
           className={`shrink-0 rounded-full px-3 py-1 text-[9.5px] font-semibold transition-all ${
             selectedCategory === 'ALL'
-              ? 'bg-[#B7E36A] text-[#101114]'
+              ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
               : 'bg-[#242830] text-[#9298A3] hover:text-[#F1F2EE]'
           }`}
         >
@@ -166,7 +166,7 @@ export default function NoirLookLibrary({
           onClick={() => setSelectedCategory('FAVORITES')}
           className={`shrink-0 rounded-full px-3 py-1 text-[9.5px] font-semibold transition-all ${
             selectedCategory === 'FAVORITES'
-              ? 'bg-[#B7E36A] text-[#101114]'
+              ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
               : 'bg-[#242830] text-[#9298A3] hover:text-[#F1F2EE]'
           }`}
         >
@@ -181,7 +181,7 @@ export default function NoirLookLibrary({
               onClick={() => setSelectedCategory(cat)}
               className={`shrink-0 rounded-full px-3 py-1 text-[9.5px] font-medium transition-all ${
                 active
-                  ? 'bg-[#B7E36A] text-[#101114] font-semibold'
+                  ? 'bg-[var(--accent)] text-[var(--accent-fg)] font-semibold'
                   : 'bg-[#242830] text-[#9298A3] hover:bg-[#292E36] hover:text-[#F1F2EE]'
               }`}
             >
@@ -212,7 +212,7 @@ export default function NoirLookLibrary({
               }}
               className={`inner-card group flex flex-col justify-between gap-2 p-2.5 transition-all duration-150 ${
                 isActive
-                  ? 'border border-[#B7E36A] bg-[#292E36] shadow-[0_0_16px_rgba(183,227,106,0.14)]'
+                  ? 'border border-[var(--accent)] bg-[#292E36] shadow-[0_0_16px_var(--accent-glow)]'
                   : 'border border-[#343943]/60 bg-[#1B1E24] hover:border-[#9298A3]/40 hover:bg-[#242830]'
               }`}
             >
@@ -235,7 +235,7 @@ export default function NoirLookLibrary({
                     }}
                     title={isFav ? 'Favorilerden çıkar' : 'Favorilere ekle'}
                     className={`rounded-full bg-[#101114]/80 px-1.5 py-0.5 text-[10px] transition-transform hover:scale-110 ${
-                      isFav ? 'text-[#B7E36A]' : 'text-[#9298A3]'
+                      isFav ? 'text-[var(--accent)]' : 'text-[#9298A3]'
                     }`}
                   >
                     {isFav ? '★' : '☆'}
@@ -281,8 +281,8 @@ export default function NoirLookLibrary({
                   }}
                   className={`flex-1 rounded-full py-1 text-[9.5px] font-semibold transition-all ${
                     isActive
-                      ? 'bg-[#B7E36A] text-[#101114]'
-                      : 'bg-[#292E36] text-[#F1F2EE] hover:bg-[#B7E36A] hover:text-[#101114]'
+                      ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
+                      : 'bg-[#292E36] text-[#F1F2EE] hover:bg-[var(--accent)] hover:text-[var(--accent-fg)]'
                   }`}
                 >
                   {isActive ? 'Aktif Görünüm' : 'Klibe Uygula'}

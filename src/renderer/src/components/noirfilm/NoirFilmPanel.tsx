@@ -152,7 +152,7 @@ export default function NoirFilmPanel({
                 }}
                 className={`rounded-full px-3.5 py-1 text-[10px] font-semibold tracking-wider transition-all duration-200 ${
                   active
-                    ? 'scale-[1.02] bg-[#B7E36A] text-[#101114] shadow-[0_0_14px_rgba(183,227,106,0.32)]'
+                    ? 'scale-[1.02] bg-[var(--accent)] text-[var(--accent-fg)] shadow-[0_0_14px_var(--accent-glow)]'
                     : 'text-[#9298A3] hover:bg-[#242830] hover:text-[#F1F2EE]'
                 }`}
               >
@@ -176,7 +176,7 @@ export default function NoirFilmPanel({
               type="button"
               data-testid="noirfilm-apply-all-btn"
               onClick={() => onApplyToTimeline(grade)}
-              className="rounded-full bg-[#242830] px-3 py-1 text-[9.5px] font-semibold text-[#F1F2EE] transition-colors hover:bg-[#B7E36A] hover:text-[#101114]"
+              className="rounded-full bg-[#242830] px-3 py-1 text-[9.5px] font-semibold text-[#F1F2EE] transition-colors hover:bg-[var(--accent)] hover:text-[var(--accent-fg)]"
               title="Aktif NoirFilm görünümünü timeline'daki tüm kliplere uygular"
             >
               Timeline&apos;a Uygula
@@ -219,19 +219,19 @@ export default function NoirFilmPanel({
           <div className="text-[8.5px] font-semibold tracking-wider text-[#9298A3]">
             FILM GRAIN
           </div>
-          <div className="font-mono text-[13px] font-bold text-[#B7E36A]">{grainPct}%</div>
+          <div className="font-mono text-[13px] font-bold text-[var(--accent)]">{grainPct}%</div>
         </div>
         <div className="col-span-2 rounded-[13px] bg-[#242830] px-3 py-1.5">
           <div className="text-[8.5px] font-semibold tracking-wider text-[#9298A3]">
             HALATION
           </div>
-          <div className="font-mono text-[13px] font-bold text-[#B7E36A]">{halationPct}%</div>
+          <div className="font-mono text-[13px] font-bold text-[var(--accent)]">{halationPct}%</div>
         </div>
         <div className="col-span-2 rounded-[13px] bg-[#242830] px-3 py-1.5">
           <div className="text-[8.5px] font-semibold tracking-wider text-[#9298A3]">
             BLOOM
           </div>
-          <div className="font-mono text-[13px] font-bold text-[#B7E36A]">{bloomPct}%</div>
+          <div className="font-mono text-[13px] font-bold text-[var(--accent)]">{bloomPct}%</div>
         </div>
       </div>
 

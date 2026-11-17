@@ -14,7 +14,7 @@ import {
 type EditorSubTab = 'curves' | 'hueVsSat' | 'hueVsHue'
 
 const CHANNEL_META: Array<{ id: CurveChannelId; label: string; color: string }> = [
-  { id: 'master', label: 'MASTER', color: '#F4F4F5' },
+  { id: 'master', label: 'MASTER', color: 'var(--accent)' },
   { id: 'red', label: 'RED', color: '#EF4444' },
   { id: 'green', label: 'GREEN', color: '#22C55E' },
   { id: 'blue', label: 'BLUE', color: '#38BDF8' }
@@ -334,7 +334,7 @@ export default function ColorCurvesEditor({
                     cx={cx}
                     cy={cy}
                     r={dragIdx === idx ? 5.2 : 4}
-                    fill="#09090b"
+                    fill={dragIdx === idx ? 'var(--accent)' : '#09090b'}
                     stroke={activeMeta.color}
                     strokeWidth="2"
                     onContextMenu={(e) => {

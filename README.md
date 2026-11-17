@@ -6,7 +6,7 @@
 
 **Sinema Karanlık Odası & Masaüstü Video Kurgu / Renk Laboratuvarı**
 
-[![Sürüm](https://img.shields.io/badge/sürüm-v1.0.0_Studio-B7E36A?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
+[![Sürüm](https://img.shields.io/badge/sürüm-v1.0.1_Studio-B7E36A?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
 [![Platform](https://img.shields.io/badge/platform-Linux_AppImage_%7C_Windows_x64-1B1E24?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
 [![Teknoloji](https://img.shields.io/badge/Electron_45-React_19_%7C_WebGL2_%7C_FFmpeg-242830?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
 
@@ -24,7 +24,7 @@
 
 - **Tamamen Yerel ve Çevrimdışı:** Videolarınız ve sesleriniz hiçbir uzak sunucuya yüklenmez; medya analizi, renk işleme ve dışa aktarma tamamen kendi bilgisayarınızda gerçekleşir.
 - **Önizleme = Çıktı Tutarlılığı:** Monitörde WebGL2 GPU ile gördüğünüz renk derecelendirme, 3D LUT, transform keyframe ve ses karışımı; dışa aktarmada aynı matematikle FFmpeg'e (`bakeColorGradeToCube` + `filter_complex`) işlenir.
-- **Karanlık Oda Estetiği:** 4 yerleşik tema (**NoirCut Lime `#B7E36A`**, **Saf Monokrom**, **Gece Mavisi**, **Sıcak Tungsten**) ile göz yormayan yüzen panel (floating UI) mimarisi.
+- **Karanlık Oda Estetiği:** 5 yerleşik tema (**NoirCut Lime `#B7E36A`**, **Saf Monokrom**, **Gece Mavisi**, **Sıcak Tungsten**, **NoirCut Kırmızısı `#E11D48`**) ile göz yormayan yüzen panel (floating UI) mimarisi.
 
 ---
 
@@ -82,8 +82,8 @@ flowchart LR
 ### Son Kullanıcı Kurulumu
 - **Linux (x64):** [Releases](https://github.com/lakhermony/NoirCut/releases) sayfasından `.AppImage` dosyasını indirin (veya kaynak koddan üretin), çalıştırma izni verin ve başlatın:
   ```bash
-  chmod +x NoirCut-1.0.0.AppImage
-  ./NoirCut-1.0.0.AppImage
+  chmod +x NoirCut-1.0.1.AppImage
+  ./NoirCut-1.0.1.AppImage
   ```
 - **Windows (x64):** Taşınabilir `.exe` (portable) veya NSIS kurulum sihirbazı ile kurulumsuz ya da klasik Windows uygulaması olarak çalıştırılabilir *(paketleme sırasında `resources/bin/win/ffmpeg.exe` gerektirir)*.
 
@@ -109,7 +109,7 @@ npm run build
 
 ### Masaüstü Paketi Oluşturma
 ```bash
-# Linux AppImage (dist/NoirCut-1.0.0.AppImage)
+# Linux AppImage (dist/NoirCut-1.0.1.AppImage)
 npm run dist:linux
 
 # Windows Portable & NSIS Setup (resources/bin/win/ffmpeg.exe mevcutsa)

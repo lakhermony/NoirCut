@@ -159,7 +159,7 @@ export function NoirCircularDial({
             cy={cy}
             r={r}
             fill="none"
-            stroke="#B7E36A"
+            stroke="var(--accent)"
             strokeWidth="3.5"
             strokeDasharray={`${activeLen} ${circum}`}
             strokeLinecap="round"
@@ -197,16 +197,16 @@ export function NoirToggle({
     >
       <span
         className={`relative h-3.5 w-6 rounded-full transition-colors duration-200 ${
-          checked ? 'bg-[#B7E36A]' : 'bg-[#343943]'
+          checked ? 'bg-[var(--accent)]' : 'bg-[#343943]'
         }`}
       >
         <span
-          className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-[#101114] transition-transform duration-200 ${
-            checked ? 'left-3' : 'left-0.5'
+          className={`absolute top-0.5 h-2.5 w-2.5 rounded-full transition-transform duration-200 ${
+            checked ? 'left-3 bg-[var(--accent-fg)]' : 'left-0.5 bg-[#101114]'
           }`}
         />
       </span>
-      {label && <span className={checked ? 'text-[#B7E36A]' : 'text-[#9298A3]'}>{label}</span>}
+      {label && <span className={checked ? 'text-[var(--accent)]' : 'text-[#9298A3]'}>{label}</span>}
     </button>
   )
 }
@@ -247,7 +247,7 @@ export function NoirColorSwatchInput({
               title={p}
               className={`h-4 w-4 rounded-full border transition-transform hover:scale-110 ${
                 value.toLowerCase() === p.toLowerCase()
-                  ? 'border-[#B7E36A] scale-110'
+                  ? 'border-[var(--accent)] scale-110'
                   : 'border-[#343943]'
               }`}
               style={{ backgroundColor: p }}

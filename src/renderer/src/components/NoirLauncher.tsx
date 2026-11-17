@@ -8,10 +8,10 @@ import type {
 } from '../../../shared/types'
 
 const DEFAULT_CHANGELOG = [
+  'NoirCut Kırmızısı (NoirCut Crimson): karanlık oda safelight estetiğine uygun 5. stüdyo teması.',
   'NoirFilm Studio: 12 kategoride sinematik LUT kütüphanesi, 35mm/16mm/8mm dijital film emülasyonu, organik film greni ve yığılabilir Halation / Bloom / Diffusion / Mist ışık motorları.',
-  'Soft Cinematic UI: Yüzen hap navigasyon, akıcı kapsül sürgüler ve 4 tema desteği.',
-  'Gerçek zamanlı WebGL2 GPU renk motoru ve donanım uyumlu FFmpeg 3D LUT dışa aktarma boru hattı.',
-  'Electron Auto-Updater ve AppImage / NSIS masaüstü paketleme altyapısı.'
+  'Soft Cinematic UI: Yüzen hap navigasyon, akıcı kapsül sürgüler ve 5 tema desteği.',
+  'Gerçek zamanlı WebGL2 GPU renk motoru ve donanım uyumlu FFmpeg 3D LUT dışa aktarma boru hattı.'
 ]
 
 function detectWebGL2(): { ok: boolean; renderer: string } {
@@ -57,8 +57,8 @@ export default function NoirLauncher({
   const gpu = useMemo(() => detectWebGL2(), [])
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
     state: 'idle',
-    currentVersion: appVersion || '1.0.0',
-    message: `NoirCut v${appVersion || '1.0.0'} — En güncel sürümü kullanıyorsunuz`
+    currentVersion: appVersion || '1.0.1',
+    message: `NoirCut v${appVersion || '1.0.1'} — En güncel sürümü kullanıyorsunuz`
   })
 
   useEffect(() => {
@@ -77,7 +77,7 @@ export default function NoirLauncher({
 
   if (!open) return null
 
-  const versionLabel = `v${updateStatus.currentVersion || appVersion || '1.0.0'} Studio`
+  const versionLabel = `v${updateStatus.currentVersion || appVersion || '1.0.1'} Studio`
   const ffmpegReady = engine && engine.source !== 'missing'
 
   const handleCheckUpdates = async () => {
@@ -159,7 +159,7 @@ export default function NoirLauncher({
                   <span>WEBGL2 GPU</span>
                   <span
                     className={`h-2 w-2 rounded-full ${
-                      gpu.ok ? 'bg-[#B7E36A] shadow-[0_0_8px_#B7E36A]' : 'bg-rose-400'
+                      gpu.ok ? 'bg-[var(--accent)] shadow-[0_0_8px_var(--accent-glow)]' : 'bg-rose-400'
                     }`}
                   />
                 </div>
@@ -179,7 +179,7 @@ export default function NoirLauncher({
                   <span>FFMPEG MOTORU</span>
                   <span
                     className={`h-2 w-2 rounded-full ${
-                      ffmpegReady ? 'bg-[#B7E36A] shadow-[0_0_8px_#B7E36A]' : 'bg-amber-400'
+                      ffmpegReady ? 'bg-[var(--accent)] shadow-[0_0_8px_var(--accent-glow)]' : 'bg-amber-400'
                     }`}
                   />
                 </div>
@@ -280,7 +280,7 @@ export default function NoirLauncher({
                   data-testid="launcher-download-install-btn"
                   disabled={updateStatus.state === 'downloading'}
                   onClick={handleDownloadAndInstall}
-                  className="rounded-full bg-[var(--accent)] px-4 py-2 text-[10.5px] font-semibold text-[var(--accent-fg)] shadow-[0_0_14px_rgba(183,227,106,0.3)] transition-transform hover:scale-[1.02] disabled:opacity-50"
+                  className="rounded-full bg-[var(--accent)] px-4 py-2 text-[10.5px] font-semibold text-[var(--accent-fg)] shadow-[0_0_14px_var(--accent-glow)] transition-transform hover:scale-[1.02] disabled:opacity-50"
                 >
                   {updateStatus.state === 'downloaded'
                     ? 'Yeniden Başlat ve Kur'
@@ -316,7 +316,7 @@ export default function NoirLauncher({
             {autosaveStatus?.hasUncleanExit && autosaveStatus.latest && onRestoreAutosave && (
               <div
                 data-testid="autosave-recovery-banner"
-                className="flex flex-wrap items-center justify-between gap-2.5 rounded-[16px] border border-[var(--accent)]/50 bg-[var(--accent)]/12 px-3.5 py-2.5"
+                className="flex flex-wrap items-center justify-between gap-2.5 rounded-[16px] border border-[var(--accent)]/50 bg-[var(--accent-soft)] px-3.5 py-2.5"
               >
                 <div className="min-w-0">
                   <div className="text-[11px] font-bold text-[var(--accent)]">
@@ -354,7 +354,7 @@ export default function NoirLauncher({
                 type="button"
                 data-testid="launcher-enter-studio-btn"
                 onClick={hasActiveWork ? onStartFreshStudio : onEnterStudio}
-                className="group flex flex-col items-start justify-between gap-3 rounded-[16px] bg-[var(--accent)] p-4 text-left text-[var(--accent-fg)] shadow-[0_10px_30px_rgba(183,227,106,0.22)] transition-all duration-150 hover:scale-[1.01] active:scale-[0.99]"
+                className="group flex flex-col items-start justify-between gap-3 rounded-[16px] bg-[var(--accent)] p-4 text-left text-[var(--accent-fg)] shadow-[0_10px_30px_var(--accent-glow)] transition-all duration-150 hover:scale-[1.01] active:scale-[0.99]"
               >
                 <div className="flex w-full items-center justify-between">
                   <span className="rounded-full bg-[#101114]/15 px-2.5 py-0.5 font-mono text-[9px] font-bold">

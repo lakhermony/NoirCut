@@ -59,7 +59,7 @@ function SoftToggle({
     <span
       className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition duration-200 ${
         checked
-          ? 'bg-[var(--accent)] shadow-[0_0_12px_rgba(183,227,106,0.4)]'
+          ? 'bg-[var(--accent)] shadow-[0_0_12px_var(--accent-glow)]'
           : 'bg-[#2a2f39]'
       }`}
     >
@@ -964,7 +964,7 @@ export default function RightPanel({
             <button
               data-testid="add-credit-btn"
               onClick={onAddCreditToTimeline}
-              className="rounded-full bg-[var(--accent)] px-3.5 py-1.5 text-[10px] font-bold text-[var(--accent-fg)] shadow-[0_2px_10px_rgba(183,227,106,0.2)] transition duration-150 hover:bg-[var(--accent-hover)] active:scale-95"
+              className="rounded-full bg-[var(--accent)] px-3.5 py-1.5 text-[10px] font-bold text-[var(--accent-fg)] shadow-[0_2px_10px_var(--accent-glow)] transition duration-150 hover:bg-[var(--accent-hover)] active:scale-95"
             >
               + Timeline'a Ekle
             </button>
@@ -1306,7 +1306,7 @@ export default function RightPanel({
                             title={`${f.label} — ${f.role}`}
                             className={`flex flex-col items-start rounded-xl border px-2.5 py-1.5 text-left transition duration-150 ${
                               active
-                                ? 'border-[var(--accent)] bg-[var(--accent)]/15 text-white shadow-[0_0_10px_rgba(183,227,106,0.18)]'
+                                ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-white shadow-[0_0_10px_var(--accent-glow)]'
                                 : 'border-[color:var(--border-subtle)] bg-black/25 text-white/75 hover:border-white/30 hover:text-white'
                             }`}
                           >

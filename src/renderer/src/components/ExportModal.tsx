@@ -234,7 +234,7 @@ export default function ExportModal({
               <button
                 data-testid="start-export-btn"
                 onClick={onStart}
-                className="rounded-full bg-[var(--accent)] px-6 py-2 text-[11px] font-bold tracking-wider text-[var(--accent-fg)] shadow-[0_2px_12px_rgba(183,227,106,0.24)] transition duration-150 hover:bg-[var(--accent-hover)] active:scale-[0.97]"
+                className="rounded-full bg-[var(--accent)] px-6 py-2 text-[11px] font-bold tracking-wider text-[var(--accent-fg)] shadow-[0_2px_12px_var(--accent-glow)] transition duration-150 hover:bg-[var(--accent-hover)] active:scale-[0.97]"
               >
                 Dışa Aktarmayı Başlat
               </button>

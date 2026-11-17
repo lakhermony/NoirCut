@@ -41,7 +41,7 @@ export default function FilmGrainPanel({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-col gap-0.5">
           <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-[#B7E36A]" />
+            <span className="h-2 w-2 rounded-full bg-[var(--accent)]" />
             <span className="text-[11px] font-semibold tracking-wider text-[#F1F2EE] uppercase">
               Film Texture & Organic Grain Engine
             </span>
@@ -86,7 +86,7 @@ export default function FilmGrainPanel({
               onClick={() => applyProfile(p.id)}
               className={`rounded-full px-3.5 py-1 text-[10px] font-semibold transition-all duration-150 ${
                 active
-                  ? 'bg-[#B7E36A] text-[#101114] shadow-[0_0_12px_rgba(183,227,106,0.25)]'
+                  ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow-[0_0_12px_var(--accent-glow)]'
                   : 'bg-[#242830] text-[#9298A3] hover:bg-[#292E36] hover:text-[#F1F2EE]'
               }`}
             >

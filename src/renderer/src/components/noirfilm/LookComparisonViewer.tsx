@@ -40,7 +40,7 @@ export function LookComparisonBar({
             onClick={() => onMode(m.id)}
             className={`rounded-full px-2.5 py-0.5 text-[9.5px] font-medium transition-all ${
               mode === m.id
-                ? 'bg-[#B7E36A] text-[#101114] font-semibold'
+                ? 'bg-[var(--accent)] text-[var(--accent-fg)] font-semibold'
                 : 'text-[#9298A3] hover:bg-[#242830] hover:text-[#F1F2EE]'
             }`}
           >
@@ -67,7 +67,7 @@ export function LookComparisonBar({
           type="button"
           data-testid="compare-fullscreen-btn"
           onClick={onOpenFullscreen}
-          className="rounded-full bg-[#242830] px-2.5 py-0.5 text-[9.5px] font-medium text-[#F1F2EE] transition-colors hover:bg-[#292E36] hover:text-[#B7E36A]"
+          className="rounded-full bg-[#242830] px-2.5 py-0.5 text-[9.5px] font-medium text-[#F1F2EE] transition-colors hover:bg-[#292E36] hover:text-[var(--accent)]"
         >
           Tam Ekran Karşılaştır
         </button>
@@ -146,7 +146,7 @@ export function LookComparisonFullscreenModal({
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#B7E36A]" />
+          <span className="h-2.5 w-2.5 rounded-full bg-[var(--accent)]" />
           <span className="text-[12px] font-semibold tracking-wider text-[#F1F2EE] uppercase">
             NoirFilm · Tam Ekran Görünüm Karşılaştırma
           </span>
@@ -171,7 +171,7 @@ export function LookComparisonFullscreenModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full bg-[#B7E36A] px-3.5 py-1 text-[10.5px] font-semibold text-[#101114]"
+            className="rounded-full bg-[var(--accent)] px-3.5 py-1 text-[10.5px] font-semibold text-[var(--accent-fg)]"
           >
             Kapat
           </button>
@@ -186,7 +186,7 @@ export function LookComparisonFullscreenModal({
         <div className="pointer-events-none absolute left-4 top-4 rounded-full bg-[#101114]/80 px-3 py-1 text-[10px] font-medium text-[#9298A3]">
           ORİJİNAL
         </div>
-        <div className="pointer-events-none absolute right-4 top-4 rounded-full bg-[#B7E36A]/90 px-3 py-1 text-[10px] font-semibold text-[#101114]">
+        <div className="pointer-events-none absolute right-4 top-4 rounded-full bg-[var(--accent)]/90 px-3 py-1 text-[10px] font-semibold text-[var(--accent-fg)]">
           NOIRFILM GRADED
         </div>
       </div>
