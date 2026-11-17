@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="tr" data-theme="noir-green">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NoirCut Studio — Karanlık Oda Video Kurgu ve Renk Laboratuvarı</title>
+  <meta name="description" content="Yerel WebGL2 renk motoru ve gömülü FFmpeg dışa aktarma mimarisiyle Linux ve Windows için geliştirilen çevrimdışı NLE video düzenleyici." />
+  <link rel="icon" type="image/png" href="assets/icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Nosifer&family=Playfair+Display:wght@600&family=Special+Elite&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a href="#top" class="brand">
+        <img src="assets/icon.png" alt="NoirCut logosu" />
+        <div class="brand-meta">
+          <span class="brand-name">NoirCut</span>
+          <span class="brand-ver mono">v1.0.0</span>
+        </div>
+      </a>
+
+      <nav class="nav-links" aria-label="Sayfa içi menü">
+        <a href="#calisma-alanlari">Çalışma Alanları</a>
+        <a href="#renk-motoru">Renk &amp; Film Motoru</a>
+        <a href="#ses-tipografi">Ses &amp; Tipografi</a>
+        <a href="#kurulum">Kurulum</a>
+      </nav>
+
+      <div class="topbar-right">
+        <div class="theme-switch" role="group" aria-label="Arayüz teması seç">
+          <button class="theme-dot is-active" data-theme="noir-green" title="NoirCut Lime (#B7E36A)" style="background:#b7e36a"></button>
+          <button class="theme-dot" data-theme="monochrome" title="Saf Monokrom (#E5E5E5)" style="background:#e5e5e5"></button>
+          <button class="theme-dot" data-theme="midnight-blue" title="Gece Mavisi (#38BDF8)" style="background:#38bdf8"></button>
+          <button class="theme-dot" data-theme="tungsten" title="Sıcak Tungsten (#D97706)" style="background:#d97706"></button>
+        </div>
+        <a href="https://github.com/lakhermony/NoirCut" class="btn" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- Hero + Canli Karanlik Oda Konsolu -->
+    <section class="hero">
+      <div class="container">
+        <div class="hero-top">
+          <div>
+            <div class="kicker-row mono">
+              <span class="kicker-dot"></span>
+              <span>Masaüstü NLE / Linux AppImage &amp; Windows x64</span>
+            </div>
+            <h1>Kurgu masası ve karanlık oda tek pencerede.</h1>
+          </div>
+
+          <div class="hero-side">
+            <p class="hero-desc">
+              NoirCut, bulut sunucusu veya aylık abonelik gerektirmeden kendi bilgisayarınızda çalışan bir video kurgu, renk derecelendirme ve miksaj aracıdır. Ekranda gördüğünüz her ayar, çıkış alırken aynı matematikle FFmpeg'e yazılır.
+            </p>
+            <div class="hero-actions">
+              <a href="https://github.com/lakhermony/NoirCut/releases" class="btn btn-primary btn-lg" target="_blank" rel="noopener">Sürümü İndir</a>
+              <a href="#kurulum" class="btn btn-lg">Kaynak Koddan Derle</a>
+              <a href="https://github.com/lakhermony/NoirCut/blob/main/docs/KULLANIM_KILAVUZU.md" class="btn btn-lg" target="_blank" rel="noopener">Kullanım Kılavuzu</a>
+            </div>
+            <div class="hero-specs mono">
+              <span>Electron 45</span>
+              <span>React 19</span>
+              <span>WebGL2 Shader</span>
+              <span>FFmpeg + HTTP 206 Akış</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Etkilesimli WebGL Tarzi Onizleme Konsolu -->
+        <div class="console-shell" aria-label="NoirCut etkileşimli önizleme konsolu">
+          <div class="console-bar">
+            <div class="console-tabs" role="tablist">
+              <button class="console-tab" data-ws="EDIT">EDIT</button>
+              <button class="console-tab is-active" data-ws="GRADE">GRADE</button>
+              <button class="console-tab" data-ws="AUDIO">AUDIO</button>
+              <button class="console-tab" data-ws="TEXT">TEXT / CREDITS</button>
+              <button class="console-tab" data-ws="EXPORT">EXPORT</button>
+            </div>
+            <div class="console-status mono">
+              <span id="activeModeBadge">Obsidian Nocturne · WebGL2</span>
+              <span id="timecodeDisplay">00:00:12:08</span>
+            </div>
+          </div>
+
+          <div class="console-body">
+            <div class="monitor-stage">
+              <div class="monitor-viewport" id="monitorViewport" title="Öncesi / Sonrası çizgisini sağa sola sürükleyin">
+                <canvas id="monitorCanvas"></canvas>
+                <div class="wipe-line" id="wipeLine"></div>
+                <div class="wipe-handle mono" id="wipeHandle">&lt;&gt;</div>
+                <div class="monitor-osd mono">
+                  <div class="osd-top">
+                    <span class="osd-pill">HAM / LOG</span>
+                    <span class="osd-pill">REC.709 + NOIRFILM 35MM</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="monitor-transport mono">
+                <div class="transport-left">
+                  <button class="mini-btn is-on" id="playToggleBtn" type="button">Durdur</button>
+                  <button class="mini-btn is-on" id="wipeToggleBtn" type="button">Before / After</button>
+                  <button class="mini-btn is-on" id="safeFrameBtn" type="button">2.39:1 Maske</button>
+                </div>
+                <div class="transport-right">
+                  <span>24 fps</span>
+                  <span>·</span>
+                  <span>Çizgiyi sürükleyip kıyaslayın</span>
+                </div>
+              </div>
+            </div>
+
+            <aside class="inspector-pane">
+              <div>
+                <div class="inspector-head">
+                  <span class="inspector-title">NoirFilm &amp; LUT Önizleyici</span>
+                  <span class="mono" style="font-size:11px; color:var(--text-muted)">Canlı Çizim</span>
+                </div>
+
+                <div class="look-grid" style="margin-top:10px">
+                  <button class="look-chip" data-preset="raw" type="button">
+                    <span class="look-swatch" style="background:linear-gradient(135deg,#2a2f38,#8b93a0)"></span>
+                    <span>Log / Ham</span>
+                  </button>
+                  <button class="look-chip is-active" data-preset="obsidian" type="button">
+                    <span class="look-swatch" style="background:linear-gradient(135deg,#0c1824,#b8834a)"></span>
+                    <span>Obsidian Nocturne</span>
+                  </button>
+                  <button class="look-chip" data-preset="vintage74" type="button">
+                    <span class="look-swatch" style="background:linear-gradient(135deg,#2c221b,#dfc29d)"></span>
+                    <span>Vintage 1974</span>
+                  </button>
+                  <button class="look-chip" data-preset="bleach" type="button">
+                    <span class="look-swatch" style="background:linear-gradient(135deg,#181b20,#b9bcc2)"></span>
+                    <span>Bleach Bypass</span>
+                  </button>
+                  <button class="look-chip" data-preset="nordic" type="button">
+                    <span class="look-swatch" style="background:linear-gradient(135deg,#101a24,#8fb1c9)"></span>
+                    <span>Nordic Thriller</span>
+                  </button>
+                  <button class="look-chip" data-preset="trix400" type="button">
+                    <span class="look-swatch" style="background:linear-gradient(135deg,#0c0c0e,#d4d4d8)"></span>
+                    <span>Tri-X 400 Mono</span>
+                  </button>
+                </div>
+
+                <div class="slider-list" style="margin-top:14px">
+                  <div class="slider-row">
+                    <div class="slider-meta">
+                      <span>Pozlama (EV)</span>
+                      <span class="mono" id="valExposure">-0.08 EV</span>
+                    </div>
+                    <input class="studio-range" id="ctrlExposure" type="range" min="-1" max="1" step="0.02" value="-0.08" />
+                  </div>
+                  <div class="slider-row">
+                    <div class="slider-meta">
+                      <span>Film Kontrastı</span>
+                      <span class="mono" id="valContrast">+32</span>
+                    </div>
+                    <input class="studio-range" id="ctrlContrast" type="range" min="-40" max="75" step="1" value="32" />
+                  </div>
+                  <div class="slider-row">
+                    <div class="slider-meta">
+                      <span>35mm Film Greni</span>
+                      <span class="mono" id="valGrain">24%</span>
+                    </div>
+                    <input class="studio-range" id="ctrlGrain" type="range" min="0" max="100" step="1" value="24" />
+                  </div>
+                  <div class="slider-row">
+                    <div class="slider-meta">
+                      <span>Halation (Işık Halesi)</span>
+                      <span class="mono" id="valHalation">36%</span>
+                    </div>
+                    <input class="studio-range" id="ctrlHalation" type="range" min="0" max="100" step="1" value="36" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="scope-box">
+                <div class="scope-header mono">
+                  <span>CANLI RGB HISTOGRAM</span>
+                  <span>25 / 50 / 75 IRE</span>
+                </div>
+                <canvas id="scopeCanvas"></canvas>
+              </div>
+            </aside>
+          </div>
+
+          <div class="timeline-strip mono">
+            <div class="track-row">
+              <div class="track-label">V2 TXT</div>
+              <div class="track-lane">
+                <div class="clip-block clip-v2" style="margin-left:18%; width:34%">BOLUM 03 · GECE YARISI DOSYASI</div>
+              </div>
+            </div>
+            <div class="track-row">
+              <div class="track-label">V1 VID</div>
+              <div class="track-lane">
+                <div class="clip-block clip-v1" style="width:48%">CAM_A_004_SOKAK_YAGMURU.MP4 [24p]</div>
+                <div class="clip-block clip-v1" style="width:36%">CAM_A_007_KORIDOR.MOV [S-Log3]</div>
+                <div class="clip-block clip-v1" style="width:14%">STILL_NOT.PNG</div>
+              </div>
+            </div>
+            <div class="track-row">
+              <div class="track-label">A1 / A2</div>
+              <div class="track-lane">
+                <div class="clip-block clip-a1" style="width:34%">DIYALOG_MIKROFON.WAV [Ducking Aktif]</div>
+                <div class="clip-block clip-a1" style="width:48%">AMBIYANS_35MM_PROJEKTOR + YAGMUR [-11 dB]</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bolum 01: Calisma Alanlari -->
+    <section id="calisma-alanlari" class="section">
+      <div class="container">
+        <div class="section-head">
+          <div>
+            <div class="section-index mono">01 / ÇALIŞMA ALANLARI</div>
+            <div class="section-label">Beş çalışma sekmesi ve başlatıcı</div>
+          </div>
+          <div>
+            <h2 class="section-title">Her aşama kendi odasında.</h2>
+            <p class="section-lead">
+              Arayüz, kurgu sırasında kalabalık araç çubukları göstermemek için beş net sekmeye ayrılmıştır. Sağ üstteki tema düğmelerinden stüdyonun dört yerleşik renk paletini doğrudan bu sayfada da deneyebilirsiniz.
+            </p>
+          </div>
+        </div>
+
+        <div class="workspace-list">
+          <div class="ws-row">
+            <div class="ws-name">
+              <span class="ws-code mono">00 / LAUNCHER</span>
+              <span class="ws-sub">Başlangıç &amp; Kurtarma</span>
+            </div>
+            <p class="ws-copy">
+              Açılışta sistemdeki FFmpeg ikili dosyalarını ve GPU donanım hızlandırıcısını yoklar. Son .noircut projelerini listeler; program beklenmedik şekilde kapanırsa 8 saniye aralıklarla tutulan son 10 yedek arasından oturumu kurtarır.
+            </p>
+            <div class="ws-tags mono">
+              <span class="tag">8sn Autosave</span>
+              <span class="tag">Crash Recovery</span>
+              <span class="tag">.noircut</span>
+            </div>
+          </div>
+
+          <div class="ws-row">
+            <div class="ws-name">
+              <span class="ws-code mono">01 / EDIT</span>
+              <span class="ws-sub">Zaman Çizelgesi &amp; Kurgu</span>
+            </div>
+            <p class="ws-copy">
+              V2, V1, A1 ve A2 kanalları üzerinde mıknatıs kılavuzlu taşıma, kenar kırpma, Razor (C) ile bölme, Ripple silme, 50 adımlı geri alma ve In/Out işaretleme. Oynatıcının doğrudan açamadığı HEVC veya ProRes dosyalar için arka planda H.264 proxy üretir.
+            </p>
+            <div class="ws-tags mono">
+              <span class="tag">Keyframe Transform</span>
+              <span class="tag">Reverse</span>
+              <span class="tag">5 Renkli İşaretçi</span>
+            </div>
+          </div>
+
+          <div class="ws-row">
+            <div class="ws-name">
+              <span class="ws-code mono">02 / GRADE</span>
+              <span class="ws-sub">Color Deck, NoirFilm &amp; LUT</span>
+            </div>
+            <p class="ws-copy">
+              Alt panel üç geniş alt sekmeden oluşur: Color Deck &amp; Scopes (Lift/Gamma/Gain/Offset tekerlekleri, Eğriler, False Color), NoirFilm Studio (35mm/16mm/8mm emülasyon, Halation, Bloom, Mist) ve tam genişlikte filtrelenebilir LUT Kütüphanesi.
+            </p>
+            <div class="ws-tags mono">
+              <span class="tag">19 Dahili 3D LUT</span>
+              <span class="tag">.cube İçe Aktar</span>
+              <span class="tag">Wipe Kıyaslama</span>
+            </div>
+          </div>
+
+          <div class="ws-row">
+            <div class="ws-name">
+              <span class="ws-code mono">03 / AUDIO</span>
+              <span class="ws-sub">Mikser &amp; Foley Üretici</span>
+            </div>
+            <p class="ws-copy">
+              FFprobe ile 4000 Hz PCM üzerinden gerçek dalga formu çizer. Diyalog kanalı (V1/A1) devredeyken A2 müzik kanalını -11 dB aşağı çeken Auto-Ducking ve doğrudan zaman çizelgesine atılabilen dört prosedürel Noir Soundscape ses üreteci barındırır.
+            </p>
+            <div class="ws-tags mono">
+              <span class="tag">Auto-Ducking</span>
+              <span class="tag">Fade Tutamaçları</span>
+              <span class="tag">Soundscape</span>
+            </div>
+          </div>
+
+          <div class="ws-row">
+            <div class="ws-name">
+              <span class="ws-code mono">04 / CREDITS &amp; EXPORT</span>
+              <span class="ws-sub">Tipografi &amp; FFmpeg Çıktı</span>
+            </div>
+            <p class="ws-copy">
+              Kült sinema ve daktilo odaklı 20 font, özel .ttf/.otf yükleyici, tek tıkla TR-EN harf uyarlama ve Neon Glow desteği sunar. Çıkış aşamasında In-Out aralığı veya çoklu render kuyruğuyla donanım kodlayıcı üzerinden MP4/MOV yazar.
+            </p>
+            <div class="ws-tags mono">
+              <span class="tag">1080p / 4K / Dikey</span>
+              <span class="tag">Render Kuyruğu</span>
+              <span class="tag">NVENC / VAAPI / x264</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bolum 02: Renk Motoru ve Mimari -->
+    <section id="renk-motoru" class="section">
+      <div class="container">
+        <div class="section-head">
+          <div>
+            <div class="section-index mono">02 / RENK &amp; RENDER MİMARİSİ</div>
+            <div class="section-label">Önizleme ile dışa aktarma tutarlılığı</div>
+          </div>
+          <div>
+            <h2 class="section-title">Ekranda gördüğünüz renk, render dosyasında da birebir aynı.</h2>
+            <p class="section-lead">
+              Birçok düzenleyicide GPU önizlemesi ile FFmpeg çıktısı arasında ton farkı oluşur. NoirCut, renk matematiğini renderer ve main süreçler arasında paylaşır; render başlarken tüm grade ve 3D LUT yığınını geçici bir .cube dosyasına pişirir.
+            </p>
+          </div>
+        </div>
+
+        <div class="two-col">
+          <div class="panel-card">
+            <h3>Color Deck &amp; Canlı Skoplar</h3>
+            <p>
+              Kamera profillerinden başlayarak monitör üstü beyaz ayarı damlalığına, üç yönlü renk tekerleklerinden Hue-vs-Hue eğrilerine kadar her adım WebGL2 üzerinde gecikmesiz çalışır.
+            </p>
+            <ul class="spec-list">
+              <li>
+                <span class="spec-key">Giriş Profilleri</span>
+                <span class="spec-val mono">Rec.709 · S-Log3 · C-Log · V-Log · Log-C</span>
+              </li>
+              <li>
+                <span class="spec-key">Canlı Analiz Skopları</span>
+                <span class="spec-val mono">RGB Parade · Waveform · Vectorscope · Histogram</span>
+              </li>
+              <li>
+                <span class="spec-key">Pozlama Yardımcıları</span>
+                <span class="spec-val mono">False Color · 2.39:1 / 16:9 / 9:16 Safe Frames</span>
+              </li>
+              <li>
+                <span class="spec-key">Referans Araçları</span>
+                <span class="spec-val mono">Grab Still · Wipe Bölme · Klip Arası Kopyala</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="panel-card">
+            <h3>NoirFilm Studio &amp; LUT Kütüphanesi</h3>
+            <p>
+              Organik pelikül dokusunu yapay filtre gibi üste yapıştırmak yerine highlight roll-off, gölge tepkisi ve renk yoğunluğunu optik olarak modeller. Beğendiğiniz kombinasyonları .noirlook olarak saklayabilirsiniz.
+            </p>
+            <ul class="spec-list">
+              <li>
+                <span class="spec-key">Film Formatları</span>
+                <span class="spec-val mono">35mm · 16mm · 8mm (6 Gren Profili)</span>
+              </li>
+              <li>
+                <span class="spec-key">Işık Motorları</span>
+                <span class="spec-val mono">Halation · Bloom · Diffusion · Mist</span>
+              </li>
+              <li>
+                <span class="spec-key">Hazır Koleksiyon</span>
+                <span class="spec-val mono">18 Renk Şablonu · 19 Dahili 3D LUT</span>
+              </li>
+              <li>
+                <span class="spec-key">Özel Dosya Desteği</span>
+                <span class="spec-val mono">Trilineer .cube (2..128) · .noirlook</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="pipeline-box">
+          <div class="pipe-step">
+            <div class="pipe-step-num mono">ADIM 01</div>
+            <div class="pipe-step-title">HTTP 206 Akış</div>
+            <p class="pipe-step-desc">Medya dosyaları belleğe kopyalanmaz; Electron yerel sunucusundan byte-range ile doğrudan okunur.</p>
+          </div>
+          <div class="pipe-step">
+            <div class="pipe-step-num mono">ADIM 02</div>
+            <div class="pipe-step-title">WebGL2 Şeyderi</div>
+            <p class="pipe-step-desc">3D LUT, Lift/Gamma/Gain, eğriler ve film dokusu oynatma sırasında GPU'da hesaplanır.</p>
+          </div>
+          <div class="pipe-step">
+            <div class="pipe-step-num mono">ADIM 03</div>
+            <div class="pipe-step-title">LUT Pişirme (.cube)</div>
+            <p class="pipe-step-desc">Dışa aktarma başlatıldığında aktif renk grade ve LUT katmanı tek bir 3D LUT tablosuna dökülür.</p>
+          </div>
+          <div class="pipe-step">
+            <div class="pipe-step-num mono">ADIM 04</div>
+            <div class="pipe-step-title">FFmpeg filter_complex</div>
+            <p class="pipe-step-desc">Ses miksajı, Auto-Ducking, metin katmanı ve lut3d grafiği tek geçişte kodlanır.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bolum 03: Ses ve Tipografi -->
+    <section id="ses-tipografi" class="section">
+      <div class="container">
+        <div class="section-head">
+          <div>
+            <div class="section-index mono">03 / SES &amp; TİPOGRAFİ</div>
+            <div class="section-label">Harici yazılım gerektirmeyen son rötuşlar</div>
+          </div>
+          <div>
+            <h2 class="section-title">Pelikül başlıkları ve diyalog öncelikli ses miksajı.</h2>
+            <p class="section-lead">
+              Basit alt yazıların ötesinde sinema jenerikleri, bölüm kartları ve dahili ses efektleri aynı proje dosyasının içinde tutulur.
+            </p>
+          </div>
+        </div>
+
+        <div class="two-col">
+          <div class="panel-card">
+            <h3>Ses Stüdyosu &amp; Prosedürel Soundscape</h3>
+            <p>
+              Kanal bazlı Mute/Solo, klip bazlı -60 dB .. +12 dB kazanç, pan ayarı, sürüklenebilir fade eğrileri ve hazır Denoise / Sinematik Bas zinciri doğrudan zaman çizelgesi üzerinde çalışır.
+            </p>
+            <ul class="spec-list">
+              <li>
+                <span class="spec-key">Dalga Formu Çözünürlüğü</span>
+                <span class="spec-val mono">4000 Hz PCM</span>
+              </li>
+              <li>
+                <span class="spec-key">Diyalog Önceliği</span>
+                <span class="spec-val mono">A2 üzerinde otomatik -11 dB Auto-Ducking</span>
+              </li>
+              <li>
+                <span class="spec-key">Dahili Ses Üreticileri</span>
+                <span class="spec-val mono">Gerilim Riser · Sub Drop · 35mm Projektör · Gece Yağmuru</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="panel-card">
+            <h3>Jenerik &amp; Özel Font Motoru</h3>
+            <p>
+              5 hazır jenerik şablonuna ek olarak özel .ttf, .otf ve .woff2 fontları yükleyebilir; daktilo efekti, 35mm Gate Weave titreşimi ve Türkçe harf uyarlama (Auto-ASCII) araçlarını kullanabilirsiniz.
+            </p>
+            <div class="font-specimen-grid">
+              <div class="font-card">
+                <div class="font-card-sample" style="font-family:'Playfair Display', serif">SON PERDE</div>
+                <div class="font-card-meta mono">Playfair Display · Klasik</div>
+              </div>
+              <div class="font-card">
+                <div class="font-card-sample" style="font-family:'Bebas Neue', sans-serif; letter-spacing:0.06em">NOIR BÖLÜM IV</div>
+                <div class="font-card-meta mono">Bebas Neue · Afiş</div>
+              </div>
+              <div class="font-card">
+                <div class="font-card-sample" style="font-family:'Special Elite', monospace">OLAY YERİ #09</div>
+                <div class="font-card-meta mono">Special Elite · Daktilo</div>
+              </div>
+              <div class="font-card">
+                <div class="font-card-sample" style="font-family:'Nosifer', cursive; font-size:13px">KARANLIK</div>
+                <div class="font-card-meta mono">Nosifer · Slasher</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bolum 04: Kurulum & Kisayollar -->
+    <section id="kurulum" class="section">
+      <div class="container">
+        <div class="section-head">
+          <div>
+            <div class="section-index mono">04 / KURULUM &amp; KISAYOLLAR</div>
+            <div class="section-label">Linux AppImage, Windows x64 ve geliştirici ortamı</div>
+          </div>
+          <div>
+            <h2 class="section-title">İndirip çalıştırın veya doğrudan kaynak koddan derleyin.</h2>
+            <p class="section-lead">
+              Derleme için Node.js 20 ve üzeri yeterlidir. Paketleme adımında FFmpeg ve FFprobe ikili dosyaları otomatik olarak uygulamayla birlikte toplanır.
+            </p>
+          </div>
+        </div>
+
+        <div class="two-col">
+          <div class="code-card">
+            <div class="code-head mono">
+              <span>GELİŞTİRME ORTAMI VE ÇALIŞTIRMA</span>
+              <button class="copy-btn mono" data-copy-target="cmdDev" type="button">Kopyala</button>
+            </div>
+            <pre class="mono" id="cmdDev">git clone https://github.com/lakhermony/NoirCut.git
+cd NoirCut
+npm install
+npm run dev</pre>
+          </div>
+
+          <div class="code-card">
+            <div class="code-head mono">
+              <span>PAKETLEME (APPIMAGE / WINDOWS X64)</span>
+              <button class="copy-btn mono" data-copy-target="cmdBuild" type="button">Kopyala</button>
+            </div>
+            <pre class="mono" id="cmdBuild">npm run typecheck
+npm run dist:linux   # dist/NoirCut-1.0.0.AppImage
+npm run dist:win     # Windows Portable &amp; NSIS (.exe)</pre>
+          </div>
+        </div>
+
+        <div class="kbd-grid">
+          <div class="kbd-item">
+            <span>Oynat / Duraklat</span>
+            <kbd>Space</kbd>
+          </div>
+          <div class="kbd-item">
+            <span>Geri / Dur / İleri Sar</span>
+            <kbd>J / K / L</kbd>
+          </div>
+          <div class="kbd-item">
+            <span>Aralık İşaretle (In / Out)</span>
+            <kbd>I / O</kbd>
+          </div>
+          <div class="kbd-item">
+            <span>Seçim / Jilet (Razor)</span>
+            <kbd>V / C</kbd>
+          </div>
+          <div class="kbd-item">
+            <span>Ripple Silme &amp; İşaretçi</span>
+            <kbd>Shift+Del / M</kbd>
+          </div>
+          <div class="kbd-item">
+            <span>Geri Al / Projeyi Kaydet</span>
+            <kbd>Ctrl+Z / Ctrl+S</kbd>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div class="mono">NoirCut Studio v1.0.0 · Electron + React + WebGL2 + FFmpeg</div>
+      <div class="footer-links mono">
+        <a href="https://github.com/lakhermony/NoirCut" target="_blank" rel="noopener">Kaynak Kod</a>
+        <a href="https://github.com/lakhermony/NoirCut/blob/main/README.md" target="_blank" rel="noopener">README</a>
+        <a href="https://github.com/lakhermony/NoirCut/blob/main/docs/KULLANIM_KILAVUZU.md" target="_blank" rel="noopener">Kullanım Kılavuzu</a>
+        <a href="https://github.com/lakhermony/NoirCut/releases" target="_blank" rel="noopener">Sürümler</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
