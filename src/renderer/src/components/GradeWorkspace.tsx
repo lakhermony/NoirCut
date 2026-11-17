@@ -18,6 +18,7 @@ import type { MediaItem } from '../../../shared/types'
 import { fmtDuration } from '../lib/format'
 import ColorCurvesEditor from './ColorCurvesEditor'
 import { HoneycombColorWheels } from './ColorWheel'
+import type { OverlayVisualLayer } from '../hooks/usePlayer'
 import Monitor from './Monitor'
 import NoirFilmPanel from './noirfilm/NoirFilmPanel'
 import {
@@ -115,6 +116,8 @@ export default function GradeWorkspace({
   mediaMap,
   v1Clips,
   activeClip,
+  overlayLayers = [],
+  registerOverlayVideoEl,
   selectedClipId,
   onSelectClip,
   onImportMedia,
@@ -154,6 +157,8 @@ export default function GradeWorkspace({
   mediaMap: Map<string, MediaItem>
   v1Clips: TimelineClip[]
   activeClip: TimelineClip | null
+  overlayLayers?: OverlayVisualLayer[]
+  registerOverlayVideoEl?: (clipId: string, el: HTMLVideoElement | null) => void
   selectedClipId: string | null
   onSelectClip: (clipId: string, seekTime?: number) => void
   onImportMedia: () => void
@@ -219,6 +224,8 @@ export default function GradeWorkspace({
         <Monitor
           media={media}
           activeClip={activeClip}
+          overlayLayers={overlayLayers}
+          registerOverlayVideoEl={registerOverlayVideoEl}
           videoProps={videoProps}
           videoRef={videoRef}
           error={error}

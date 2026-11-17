@@ -1,7 +1,7 @@
 {
   "name": "noircut",
   "productName": "NoirCut",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "NoirCut - Cinema Darkroom video editor (Linux & Windows)",
   "main": "./out/main/index.js",
   "private": true,

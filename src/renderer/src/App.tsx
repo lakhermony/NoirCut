@@ -23,7 +23,16 @@ import {
   defaultClipTransform,
   defaultExportSettings,
   defaultLanes,
+  getOrderedAudioLanes,
+  getOrderedVideoLanesAsc,
+  isAudioLane,
+  isCreditClip,
   isLaneAudible,
+  isVideoLane,
+  laneNumber,
+  nextAudioLaneId,
+  nextVideoLaneId,
+  normalizeLanesMap,
   projectEnd,
   type CaseMarker,
   type CaseMarkerColor,
@@ -244,7 +253,7 @@ export default function App() {
   const [statusToast, setStatusToast] = useState<string | null>(null)
   const [wbPickerActive, setWbPickerActive] = useState(false)
   const [showLauncher, setShowLauncher] = useState(true)
-  const [appVersion, setAppVersion] = useState('1.0.1')
+  const [appVersion, setAppVersion] = useState('1.0.2')
   const [recentProjects, setRecentProjects] = useState<RecentProjectEntry[]>(() => {
     try {
       const raw = window.localStorage.getItem('noircut.recentProjects.v1')
@@ -306,8 +315,8 @@ export default function App() {
       fadeIn: 0,
       fadeOut: 0,
       audioDetached: false,
-      grade: lane === 'V1' ? defaultColorGrade() : undefined,
-      transform: lane === 'V1' ? defaultClipTransform() : undefined,
+      grade: isVideoLane(lane) ? defaultColorGrade() : undefined,
+      transform: isVideoLane(lane) ? defaultClipTransform() : undefined,
       speed: 100,
       reverse: false,
       transitionType: 'none',
@@ -364,26 +373,33 @@ export default function App() {
     return end > 0 ? end : (lib.active?.duration ?? 0)
   }, [clips, lib.active])
 
-  // Renk düzenleme hedef klibi: seçili V1 klibi -> playhead'deki V1 klibi -> ilk V1 klibi
+  // Renk düzenleme hedef klibi: seçili video/görsel klibi -> playhead'deki aktif video klibi -> ilk video klibi
   const targetGradeClip = useMemo(() => {
     if (selectedClipId) {
-      const sel = clips.find((c) => c.id === selectedClipId && c.lane === 'V1')
+      const sel = clips.find((c) => c.id === selectedClipId && isVideoLane(c.lane) && !isCreditClip(c))
       if (sel) return sel
     }
-    return clipAt(clips, 'V1', player.time) ?? clips.find((c) => c.lane === 'V1') ?? null
-  }, [clips, selectedClipId, player.time])
+    return (
+      player.activePrimaryClip ??
+      clips.find((c) => isVideoLane(c.lane) && !isCreditClip(c)) ??
+      null
+    )
+  }, [clips, selectedClipId, player.activePrimaryClip])
 
-  // Kurgu (EDIT) hedef klibi: seçili herhangi bir klip -> playhead'deki V1 klibi -> ilk klip
+  // Kurgu (EDIT) hedef klibi: seçili herhangi bir klip -> playhead'deki aktif video klibi -> ilk klip
   const targetEditClip = useMemo(() => {
     if (selectedClipId) {
       const sel = clips.find((c) => c.id === selectedClipId)
       if (sel) return sel
     }
-    return clipAt(clips, 'V1', player.time) ?? clips[0] ?? null
-  }, [clips, selectedClipId, player.time])
+    return player.activePrimaryClip ?? clips[0] ?? null
+  }, [clips, selectedClipId, player.activePrimaryClip])
 
   const v1Clips = useMemo(
-    () => clips.filter((c) => c.lane === 'V1').sort((a, b) => a.start - b.start),
+    () =>
+      clips
+        .filter((c) => isVideoLane(c.lane) && !isCreditClip(c))
+        .sort((a, b) => a.start - b.start || laneNumber(a.lane) - laneNumber(b.lane)),
     [clips]
   )
 
@@ -457,7 +473,9 @@ export default function App() {
     (next: ColorGrade) => {
       recordHistory('Tüm Kliplere Noir Look Uygula')
       setClips((cs) =>
-        cs.map((c) => (c.lane === 'V1' ? { ...c, grade: cloneColorGrade(next) } : c))
+        cs.map((c) =>
+          isVideoLane(c.lane) && !isCreditClip(c) ? { ...c, grade: cloneColorGrade(next) } : c
+        )
       )
     },
     [recordHistory]
@@ -602,11 +620,13 @@ export default function App() {
   const detachSelected = useCallback(() => {
     if (!selectedClipId) return
     const target = stateSnapshotRef.current.clips.find((c) => c.id === selectedClipId)
-    if (!target || target.lane !== 'V1' || target.audioDetached) return
+    if (!target || !isVideoLane(target.lane) || isCreditClip(target) || target.audioDetached) return
     recordHistory('Sesi Ayırma')
     setClips((cs) => {
       const curTarget = cs.find((c) => c.id === selectedClipId)
-      if (!curTarget || curTarget.lane !== 'V1' || curTarget.audioDetached) return cs
+      if (!curTarget || !isVideoLane(curTarget.lane) || isCreditClip(curTarget) || curTarget.audioDetached) {
+        return cs
+      }
       const audioClip: TimelineClip = {
         ...curTarget,
         id: `clip-${nextId.current++}`,
@@ -628,7 +648,17 @@ export default function App() {
         isKeyframeToggle ? 'Keyframe Güncelleme' : 'Klip Ayarı',
         isKeyframeToggle ? undefined : `clip-${id}`
       )
-      setClips((cs) => cs.map((c) => (c.id === id ? { ...c, ...patch } : c)))
+      setClips((cs) =>
+        cs.map((c) => {
+          if (c.id !== id) return c
+          const next = { ...c, ...patch }
+          if (patch.lane && isVideoLane(patch.lane) && !isCreditClip(next)) {
+            if (!next.grade) next.grade = defaultColorGrade()
+            if (!next.transform) next.transform = defaultClipTransform()
+          }
+          return next
+        })
+      )
     },
     [recordHistory]
   )
@@ -636,7 +666,10 @@ export default function App() {
   const toggleMute = useCallback(
     (lane: LaneId) => {
       recordHistory(`${lane} Mute`)
-      setLanes((ls) => ({ ...ls, [lane]: { ...ls[lane], muted: !ls[lane].muted } }))
+      setLanes((ls) => {
+        const cur = ls[lane] ?? { muted: false, solo: false }
+        return { ...ls, [lane]: { ...cur, muted: !cur.muted } }
+      })
     },
     [recordHistory]
   )
@@ -644,9 +677,47 @@ export default function App() {
   const toggleSolo = useCallback(
     (lane: LaneId) => {
       recordHistory(`${lane} Solo`)
-      setLanes((ls) => ({ ...ls, [lane]: { ...ls[lane], solo: !ls[lane].solo } }))
+      setLanes((ls) => {
+        const cur = ls[lane] ?? { muted: false, solo: false }
+        return { ...ls, [lane]: { ...cur, solo: !cur.solo } }
+      })
     },
     [recordHistory]
+  )
+
+  const addVideoLane = useCallback(() => {
+    const newLane = nextVideoLaneId(stateSnapshotRef.current.lanes)
+    recordHistory(`Video Kanalı Ekle (${newLane})`)
+    setLanes((ls) => ({
+      ...ls,
+      [newLane]: { muted: false, solo: false }
+    }))
+    showToast(`${newLane} video kanalı eklendi`)
+  }, [recordHistory, showToast])
+
+  const addAudioLane = useCallback(() => {
+    const newLane = nextAudioLaneId(stateSnapshotRef.current.lanes)
+    recordHistory(`Ses Kanalı Ekle (${newLane})`)
+    setLanes((ls) => ({
+      ...ls,
+      [newLane]: { muted: false, solo: false }
+    }))
+    showToast(`${newLane} ses kanalı eklendi`)
+  }, [recordHistory, showToast])
+
+  const removeLane = useCallback(
+    (lane: LaneId) => {
+      if (laneNumber(lane) <= 2) return
+      if (stateSnapshotRef.current.clips.some((c) => c.lane === lane)) return
+      recordHistory(`Kanal Kaldır (${lane})`)
+      setLanes((ls) => {
+        const next = { ...ls }
+        delete next[lane]
+        return next
+      })
+      showToast(`${lane} kanalı kaldırıldı`)
+    },
+    [recordHistory, showToast]
   )
 
   const dropMediaToLane = useCallback(
@@ -655,12 +726,12 @@ export default function App() {
       if (!m) return
       const targetLane: LaneId =
         m.mediaKind === 'audio'
-          ? lane === 'A2'
-            ? 'A2'
+          ? isAudioLane(lane)
+            ? lane
             : 'A1'
-          : lane === 'A1' || lane === 'A2'
-            ? 'V1'
-            : lane
+          : isVideoLane(lane)
+            ? lane
+            : 'V1'
       recordHistory('Klip Ekleme')
       setClips((cs) => {
         const laneEnd = cs
@@ -673,7 +744,7 @@ export default function App() {
   )
 
   const selectedV2Clip = useMemo(
-    () => (selectedClipId ? clips.find((c) => c.id === selectedClipId && c.lane === 'V2') ?? null : null),
+    () => (selectedClipId ? clips.find((c) => c.id === selectedClipId && isCreditClip(c)) ?? null : null),
     [clips, selectedClipId]
   )
 
@@ -1226,7 +1297,7 @@ export default function App() {
       skipNextAutoPlaceRef.current = true
       lib.replaceAll(res.mediaItems ?? [], proj.activeMediaId ?? null)
       setClips(proj.clips ?? [])
-      setLanes(proj.lanes ?? defaultLanes())
+      setLanes(normalizeLanesMap(proj.lanes, proj.clips))
       setMarkers(proj.markers ?? [])
       setActiveMarkerId(null)
       setStills(proj.stills ?? [])
@@ -1304,16 +1375,16 @@ export default function App() {
 
   const buildCreditOverlays = useCallback(
     async (resKey: ExportSettings['resolution']) => {
-      const v2Credits = clips
-        .filter((c) => c.lane === 'V2' && c.credit)
+      const creditList = clips
+        .filter((c) => isCreditClip(c) && c.credit)
         .map((c) => c.credit!)
-      if (v2Credits.length > 0) {
-        await ensureCreditFontsReady(v2Credits)
+      if (creditList.length > 0) {
+        await ensureCreditFontsReady(creditList)
       }
       const { width, height } = EXPORT_RESOLUTION_DIM[resKey]
       const creditOverlays: Record<string, CreditExportOverlay> = {}
       for (const c of clips) {
-        if (c.lane === 'V2' && c.credit) {
+        if (isCreditClip(c) && c.credit) {
           creditOverlays[c.id] = renderCreditToPng(c.credit, width, height)
         }
       }
@@ -1535,12 +1606,17 @@ export default function App() {
 
   const monitorMedia = player.currentMedia ?? lib.active
 
-  const activeV2Clip = useMemo(
-    () => (isLaneAudible(lanes, 'V2') ? clipAt(clips, 'V2', player.time) : undefined),
-    [clips, lanes, player.time]
-  )
+  const activeV2Clip = useMemo(() => {
+    const vLanesTopDown = [...getOrderedVideoLanesAsc(lanes, clips)].reverse()
+    for (const laneId of vLanesTopDown) {
+      if (!isLaneAudible(lanes, laneId)) continue
+      const c = clipAt(clips, laneId, player.time)
+      if (c && isCreditClip(c)) return c
+    }
+    return undefined
+  }, [clips, lanes, player.time])
 
-  const hasV2Clips = useMemo(() => clips.some((c) => c.lane === 'V2'), [clips])
+  const hasV2Clips = useMemo(() => clips.some((c) => isCreditClip(c)), [clips])
 
   const monitorCreditOverlay = useMemo(() => {
     if (activeV2Clip?.credit) {
@@ -1622,8 +1698,14 @@ export default function App() {
         onReveal={(p) => window.noircut?.revealInFolder(p)}
       />
 
-      <audio ref={player.audioA1Ref} className="hidden" preload="auto" />
-      <audio ref={player.audioA2Ref} className="hidden" preload="auto" />
+      {player.orderedAudioLanes.map((laneId) => (
+        <audio
+          key={laneId}
+          ref={(el) => player.registerAudioEl(laneId, el)}
+          className="hidden"
+          preload="auto"
+        />
+      ))}
 
       {tab === 'GRADE' ? (
         <div key="grade-ws" className="workspace-enter flex min-h-0 flex-1 flex-col">
@@ -1632,7 +1714,9 @@ export default function App() {
           mediaItems={lib.items}
           mediaMap={mediaMap}
           v1Clips={v1Clips}
-          activeClip={targetGradeClip}
+          activeClip={player.activePrimaryClip ?? targetGradeClip}
+          overlayLayers={player.overlayVisualClips}
+          registerOverlayVideoEl={player.registerOverlayVideoEl}
           selectedClipId={selectedClipId}
           onSelectClip={(clipId, seekTime) => {
             setSelectedClipId(clipId)
@@ -1744,7 +1828,9 @@ export default function App() {
             </div>
             <Monitor
               media={monitorMedia}
-              activeClip={targetGradeClip}
+              activeClip={player.activePrimaryClip ?? targetGradeClip}
+              overlayLayers={player.overlayVisualClips}
+              registerOverlayVideoEl={player.registerOverlayVideoEl}
               videoProps={player.videoProps}
               videoRef={player.videoRef}
               error={player.error}
@@ -1868,6 +1954,9 @@ export default function App() {
             onUpdateClip={updateClip}
             onToggleMute={toggleMute}
             onToggleSolo={toggleSolo}
+            onAddVideoLane={addVideoLane}
+            onAddAudioLane={addAudioLane}
+            onRemoveLane={removeLane}
             onDropMediaToLane={dropMediaToLane}
           />
         </>

@@ -2,6 +2,11 @@ import {
   MAX_DB,
   MIN_DB,
   NOIR_SOUNDSCAPE_PRESETS,
+  getOrderedAudioLanes,
+  getOrderedVideoLanesAsc,
+  isAudioLane,
+  isCreditClip,
+  isVideoLane,
   type AudioFxPreset,
   type LaneId,
   type LaneState,
@@ -36,8 +41,12 @@ export default function AudioWorkspace({
   onSelectClip: (clipId: string) => void
 }) {
   const audioClips = clips.filter(
-    (c) => c.lane === 'A1' || c.lane === 'A2' || c.lane === 'V1'
+    (c) => isAudioLane(c.lane) || (isVideoLane(c.lane) && !isCreditClip(c))
   )
+  const mixerLanes: LaneId[] = [
+    ...getOrderedVideoLanesAsc(lanes, clips),
+    ...getOrderedAudioLanes(lanes, clips)
+  ].filter((laneId) => laneId === 'V1' || isAudioLane(laneId) || clips.some((c) => c.lane === laneId && !isCreditClip(c)))
 
   const patchClip = (patch: Partial<TimelineClip>) => {
     if (!activeClip) return
@@ -82,8 +91,8 @@ export default function AudioWorkspace({
           </div>
 
           <div className="grid grid-cols-3 gap-2">
-            {(['V1', 'A1', 'A2'] as LaneId[]).map((laneId) => {
-              const st = lanes[laneId]
+            {mixerLanes.map((laneId) => {
+              const st = lanes[laneId] ?? { muted: false, solo: false }
               const laneClips = clips.filter((c) => c.lane === laneId)
               return (
                 <div

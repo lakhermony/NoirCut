@@ -3,8 +3,14 @@ import {
   clipAt,
   clipGainAt,
   computeAutoDuckMultiplierAt,
+  getOrderedAudioLanes,
+  getOrderedVideoLanesAsc,
+  isAudioLane,
+  isCreditClip,
   isLaneAudible,
+  isVideoLane,
   projectEnd,
+  type LaneId,
   type LaneMap,
   type TimelineClip
 } from '../../../shared/timeline'
@@ -16,8 +22,13 @@ export function getPlayableUrl(m: MediaItem | undefined | null): string | null {
   return m.url
 }
 
+export interface OverlayVisualLayer {
+  clip: TimelineClip
+  media: MediaItem
+}
+
 /**
- * Sade, doğrudan ve kilitsiz Timeline Oynatıcı (V1, A1, A2).
+ * Çok kanallı Timeline Oynatıcı (V1..Vn, A1..An).
  */
 export function usePlayer(
   clips: TimelineClip[],
@@ -28,6 +39,8 @@ export function usePlayer(
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const audioA1Ref = useRef<HTMLAudioElement | null>(null)
   const audioA2Ref = useRef<HTMLAudioElement | null>(null)
+  const extraAudioElsRef = useRef<Map<LaneId, HTMLAudioElement>>(new Map())
+  const overlayVideoElsRef = useRef<Map<string, HTMLVideoElement>>(new Map())
 
   const [playing, setPlaying] = useState(false)
   const [shuttleRate, setShuttleRate] = useState<number>(0)
@@ -99,19 +112,77 @@ export function usePlayer(
     return map
   }, [mediaItems])
 
+  const orderedVideoLanesAsc = useMemo(
+    () => getOrderedVideoLanesAsc(lanes, clips),
+    [lanes, clips]
+  )
+  const orderedAudioLanes = useMemo(
+    () => getOrderedAudioLanes(lanes, clips),
+    [lanes, clips]
+  )
+
+  const getVisualStackAt = useCallback(
+    (t: number): TimelineClip[] => {
+      const stack: TimelineClip[] = []
+      for (const laneId of orderedVideoLanesAsc) {
+        if (!isLaneAudible(lanes, laneId)) continue
+        const c = clipAt(clips, laneId, t)
+        if (c && !isCreditClip(c)) {
+          stack.push(c)
+        }
+      }
+      return stack
+    },
+    [clips, lanes, orderedVideoLanesAsc]
+  )
+
   const total = useMemo(() => projectEnd(clips), [clips])
 
-  const activeVClip = useMemo(() => clipAt(clips, 'V1', time), [clips, time])
-  const fallbackVClip = useMemo(
-    () => clips.find((c) => c.lane === 'V1') ?? clips[0] ?? null,
-    [clips]
-  )
+  const activeVisualStack = useMemo(() => getVisualStackAt(time), [getVisualStackAt, time])
+  const activeVClip = activeVisualStack[0]
+  const overlayVisualClips = useMemo<OverlayVisualLayer[]>(() => {
+    const out: OverlayVisualLayer[] = []
+    for (let i = 1; i < activeVisualStack.length; i++) {
+      const c = activeVisualStack[i]
+      const m = mediaMap.get(c.mediaId)
+      if (m && m.mediaKind !== 'audio') {
+        out.push({ clip: c, media: m })
+      }
+    }
+    return out
+  }, [activeVisualStack, mediaMap])
+
+  const fallbackVClip = useMemo(() => {
+    for (const laneId of orderedVideoLanesAsc) {
+      const found = clips.find((c) => c.lane === laneId && !isCreditClip(c))
+      if (found) return found
+    }
+    return clips.find((c) => !isCreditClip(c)) ?? clips[0] ?? null
+  }, [clips, orderedVideoLanesAsc])
   const currentMedia = useMemo(() => {
     const c = activeVClip ?? fallbackVClip
     return c ? (mediaMap.get(c.mediaId) ?? null) : null
   }, [activeVClip, fallbackVClip, mediaMap])
 
   const videoSrc = getPlayableUrl(currentMedia)
+
+  const registerAudioEl = useCallback((laneId: LaneId, el: HTMLAudioElement | null) => {
+    if (laneId === 'A1') audioA1Ref.current = el
+    else if (laneId === 'A2') audioA2Ref.current = el
+    if (el) {
+      extraAudioElsRef.current.set(laneId, el)
+    } else {
+      extraAudioElsRef.current.delete(laneId)
+    }
+  }, [])
+
+  const registerOverlayVideoEl = useCallback((clipId: string, el: HTMLVideoElement | null) => {
+    if (el) {
+      overlayVideoElsRef.current.set(clipId, el)
+    } else {
+      overlayVideoElsRef.current.delete(clipId)
+    }
+  }, [])
 
   const syncElement = useCallback(
     (
@@ -172,7 +243,7 @@ export function usePlayer(
         isReverseShuttle ||
         (isPlaying
           ? drift > Math.max(0.45, 0.45 * effectiveRate)
-          : !scrubbingRef.current && el === videoRef.current
+          : !scrubbingRef.current && el.tagName === 'VIDEO'
             ? drift > 0.25
             : drift > 0.04)
 
@@ -182,9 +253,9 @@ export function usePlayer(
         }
       }
 
-      const embeddedMuted = clip.lane === 'V1' && clip.audioDetached
+      const embeddedMuted = isVideoLane(clip.lane) && clip.audioDetached
       const duckMult =
-        clip.lane === 'A2' && autoDucking
+        isAudioLane(clip.lane) && clip.lane !== 'A1' && autoDucking
           ? computeAutoDuckMultiplierAt(clips, lanes, t, autoDucking)
           : 1
       const effectiveGain =
@@ -210,15 +281,43 @@ export function usePlayer(
 
   const syncAllAt = useCallback(
     (t: number, isPlaying: boolean, forceSeek = false) => {
-      const vClip = clipAt(clips, 'V1', t)
-      const a1Clip = clipAt(clips, 'A1', t)
-      const a2Clip = clipAt(clips, 'A2', t)
+      const stack = getVisualStackAt(t)
+      const baseVClip = stack[0]
+      syncElement(
+        videoRef.current,
+        baseVClip,
+        baseVClip ? isLaneAudible(lanes, baseVClip.lane) : true,
+        t,
+        isPlaying,
+        forceSeek
+      )
 
-      syncElement(videoRef.current, vClip, isLaneAudible(lanes, 'V1'), t, isPlaying, forceSeek)
-      syncElement(audioA1Ref.current, a1Clip, isLaneAudible(lanes, 'A1'), t, isPlaying, forceSeek)
-      syncElement(audioA2Ref.current, a2Clip, isLaneAudible(lanes, 'A2'), t, isPlaying, forceSeek)
+      const activeOverlayIds = new Set<string>()
+      for (let i = 1; i < stack.length; i++) {
+        const oc = stack[i]
+        activeOverlayIds.add(oc.id)
+        const ovEl = overlayVideoElsRef.current.get(oc.id) ?? null
+        if (ovEl) {
+          syncElement(ovEl, oc, isLaneAudible(lanes, oc.lane), t, isPlaying, forceSeek)
+        }
+      }
+      for (const [cid, ovEl] of overlayVideoElsRef.current.entries()) {
+        if (!activeOverlayIds.has(cid)) {
+          syncElement(ovEl, undefined, false, t, false, false)
+        }
+      }
+
+      for (const aLane of orderedAudioLanes) {
+        const aClip = clipAt(clips, aLane, t)
+        const aEl =
+          extraAudioElsRef.current.get(aLane) ??
+          (aLane === 'A1' ? audioA1Ref.current : aLane === 'A2' ? audioA2Ref.current : null)
+        if (aEl) {
+          syncElement(aEl, aClip, isLaneAudible(lanes, aLane), t, isPlaying, forceSeek)
+        }
+      }
     },
-    [clips, lanes, syncElement]
+    [clips, getVisualStackAt, lanes, orderedAudioLanes, syncElement]
   )
 
   useEffect(() => {
@@ -243,9 +342,9 @@ export function usePlayer(
       const rate = shuttleRateRef.current || 1
       let nextT = anchorTimeRef.current + ((now - anchorWallRef.current) / 1000) * rate
 
-      // Normal ileri oynatmada V1 video saatini ana referans kabul et (duraklatmada kare atlaması önlenir)
+      // Normal ileri oynatmada alt video saatini ana referans kabul et (duraklatmada kare atlaması önlenir)
       const vEl = videoRef.current
-      const curVClip = rate > 0 ? clipAt(clips, 'V1', timeRef.current) : undefined
+      const curVClip = rate > 0 ? getVisualStackAt(timeRef.current)[0] : undefined
       if (
         rate > 0 &&
         curVClip &&
@@ -307,7 +406,7 @@ export function usePlayer(
   }, [playing, total, syncAllAt])
 
   const snapPlayheadToCurrentVideoFrame = useCallback(() => {
-    const curVClip = clipAt(clips, 'V1', timeRef.current)
+    const curVClip = getVisualStackAt(timeRef.current)[0]
     const vEl = videoRef.current
     if (curVClip && !curVClip.reverse && vEl && vEl.readyState >= 2) {
       const vm = mediaMap.get(curVClip.mediaId)
@@ -326,7 +425,7 @@ export function usePlayer(
         }
       }
     }
-  }, [clips, mediaMap])
+  }, [getVisualStackAt, mediaMap])
 
   const toggle = useCallback(() => {
     if (total <= 0) return
@@ -469,9 +568,14 @@ export function usePlayer(
     videoRef,
     audioA1Ref,
     audioA2Ref,
+    orderedAudioLanes,
+    overlayVisualClips,
+    registerAudioEl,
+    registerOverlayVideoEl,
     videoProps,
     videoSrc,
     currentMedia,
+    activePrimaryClip: activeVClip ?? null,
     hasActiveVideoClip: Boolean(activeVClip),
     playing,
     shuttleRate,

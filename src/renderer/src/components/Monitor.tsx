@@ -10,10 +10,45 @@ import {
 import type { MediaItem } from '../../../shared/types'
 import { fmt } from '../lib/format'
 import { WebGLColorEngine } from '../lib/webgl-grade'
-import { getPlayableUrl } from '../hooks/usePlayer'
+import { getPlayableUrl, type OverlayVisualLayer } from '../hooks/usePlayer'
 import CreditOverlay from './CreditOverlay'
 import { MEDIA_DRAG_TYPE } from './LeftPanel'
 import type { ComparisonMode } from './noirfilm/LookComparisonViewer'
+
+function computeClipTransformStyle(
+  clip: TimelineClip | null | undefined,
+  time: number
+): React.CSSProperties {
+  const tf = clip ? evaluateClipTransformAt(clip, time) : defaultClipTransform()
+  const scale = Math.max(0.1, Math.min(4, (tf.scale ?? 100) / 100))
+  const tx = tf.posX ?? 0
+  const ty = tf.posY ?? 0
+  const rot = tf.rotation ?? 0
+  let opacity = Math.max(0, Math.min(1, (tf.opacity ?? 100) / 100))
+
+  if (
+    clip &&
+    clip.transitionType &&
+    clip.transitionType !== 'none' &&
+    (clip.transitionDuration ?? 0) > 0.05
+  ) {
+    const trDur = Math.min(clip.duration * 0.5, clip.transitionDuration ?? 0.8)
+    const local = Math.max(0, Math.min(clip.duration, time - clip.start))
+    let f = 1
+    if (local < trDur) {
+      f = local / trDur
+    } else if (clip.duration - local < trDur) {
+      f = (clip.duration - local) / trDur
+    }
+    opacity *= Math.max(0, Math.min(1, f))
+  }
+
+  return {
+    transform: `translate(${tx}%, ${ty}%) scale(${scale}) rotate(${rot}deg)`,
+    opacity,
+    transformOrigin: 'center center'
+  }
+}
 
 /** Video seçilmemişken gösterilen yer tutucu kare */
 function Scene() {
@@ -42,6 +77,8 @@ function Scene() {
 export default function Monitor({
   media,
   activeClip,
+  overlayLayers = [],
+  registerOverlayVideoEl,
   videoProps,
   videoRef,
   error,
@@ -72,6 +109,8 @@ export default function Monitor({
 }: {
   media: MediaItem | null
   activeClip?: TimelineClip | null
+  overlayLayers?: OverlayVisualLayer[]
+  registerOverlayVideoEl?: (clipId: string, el: HTMLVideoElement | null) => void
   videoProps: React.VideoHTMLAttributes<HTMLVideoElement>
   videoRef: React.MutableRefObject<HTMLVideoElement | null>
   error: string | null
@@ -138,37 +177,10 @@ export default function Monitor({
   latestRef.current = { grade, activeLut, time, falseColor, effCompareMode, effWipe, playing }
 
   // Klip Transform + Keyframe Interpolasyonu + Geçiş (Transition) hesaplaması
-  const clipTransformStyle = useMemo<React.CSSProperties>(() => {
-    const tf = activeClip ? evaluateClipTransformAt(activeClip, time) : defaultClipTransform()
-    const scale = Math.max(0.1, Math.min(4, (tf.scale ?? 100) / 100))
-    const tx = tf.posX ?? 0
-    const ty = tf.posY ?? 0
-    const rot = tf.rotation ?? 0
-    let opacity = Math.max(0, Math.min(1, (tf.opacity ?? 100) / 100))
-
-    if (
-      activeClip &&
-      activeClip.transitionType &&
-      activeClip.transitionType !== 'none' &&
-      (activeClip.transitionDuration ?? 0) > 0.05
-    ) {
-      const trDur = Math.min(activeClip.duration * 0.5, activeClip.transitionDuration ?? 0.8)
-      const local = Math.max(0, Math.min(activeClip.duration, time - activeClip.start))
-      let f = 1
-      if (local < trDur) {
-        f = local / trDur
-      } else if (activeClip.duration - local < trDur) {
-        f = (activeClip.duration - local) / trDur
-      }
-      opacity *= Math.max(0, Math.min(1, f))
-    }
-
-    return {
-      transform: `translate(${tx}%, ${ty}%) scale(${scale}) rotate(${rot}deg)`,
-      opacity,
-      transformOrigin: 'center center'
-    }
-  }, [activeClip, time])
+  const clipTransformStyle = useMemo<React.CSSProperties>(
+    () => computeClipTransformStyle(activeClip, time),
+    [activeClip, time]
+  )
 
   useEffect(() => {
     if (!isFullscreen) return
@@ -771,6 +783,39 @@ export default function Monitor({
               />
             )}
           </div>
+
+          {/* Üst Video Kanalları (V2, V3...) Eşzamanlı Bindirme / PiP Katmanları */}
+          {overlayLayers.map((layer) => {
+            const ovUrl = getPlayableUrl(layer.media)
+            if (!ovUrl) return null
+            const ovStyle = computeClipTransformStyle(layer.clip, time)
+            const isOvImage = layer.media.mediaKind === 'image'
+            return (
+              <div
+                key={layer.clip.id}
+                data-testid={`overlay-layer-${layer.clip.lane}`}
+                className="pointer-events-none absolute inset-0 z-10"
+                style={ovStyle}
+              >
+                {isOvImage ? (
+                  <img
+                    src={ovUrl}
+                    alt={layer.clip.name}
+                    className="h-full w-full object-contain"
+                  />
+                ) : (
+                  <video
+                    ref={(el) => registerOverlayVideoEl?.(layer.clip.id, el)}
+                    src={ovUrl}
+                    crossOrigin="anonymous"
+                    playsInline
+                    preload="auto"
+                    className="h-full w-full object-contain"
+                  />
+                )}
+              </div>
+            )
+          })}
 
           {!media && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/45">

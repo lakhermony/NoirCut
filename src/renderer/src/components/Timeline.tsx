@@ -1,9 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   CASE_MARKER_COLOR_META,
-  LANES,
   formatDb,
+  isAudioLane,
+  isCreditClip,
   isLaneAudible,
+  isVideoLane,
+  laneNumber,
+  orderLanes,
   type CaseMarker,
   type CaseMarkerColor,
   type LaneId,
@@ -109,6 +113,9 @@ export default function Timeline({
   onUpdateClip,
   onToggleMute,
   onToggleSolo,
+  onAddVideoLane,
+  onAddAudioLane,
+  onRemoveLane,
   onDropMediaToLane,
   height = 252
 }: {
@@ -154,10 +161,15 @@ export default function Timeline({
   onUpdateClip: (id: string, patch: Partial<TimelineClip>) => void
   onToggleMute: (lane: LaneId) => void
   onToggleSolo: (lane: LaneId) => void
+  onAddVideoLane?: () => void
+  onAddAudioLane?: () => void
+  onRemoveLane?: (lane: LaneId) => void
   onDropMediaToLane: (mediaId: string, lane: LaneId) => void
   height?: number
 }) {
   const area = useRef<HTMLDivElement>(null)
+  const clipsRef = useRef(clips)
+  clipsRef.current = clips
   const [width, setWidth] = useState(800)
   const [zoom, setZoom] = useState(1)
   const [snap, setSnap] = useState(true)
@@ -165,6 +177,9 @@ export default function Timeline({
   const [selectedKeyframeId, setSelectedKeyframeId] = useState<string | null>(null)
   const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null)
   const [draggingClipId, setDraggingClipId] = useState<string | null>(null)
+  const [dropTargetLane, setDropTargetLane] = useState<LaneId | null>(null)
+
+  const orderedLanes = orderLanes(lanes, clips)
 
   useEffect(() => {
     const el = area.current
@@ -248,8 +263,12 @@ export default function Timeline({
   const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null
   const activeMarker = markers.find((m) => m.id === activeMarkerId) ?? null
   const canDetach =
-    Boolean(selectedClip && selectedClip.lane === 'V1' && !selectedClip.audioDetached) &&
-    Boolean(selectedClip && mediaMap.get(selectedClip.mediaId)?.hasAudio)
+    Boolean(
+      selectedClip &&
+        isVideoLane(selectedClip.lane) &&
+        !isCreditClip(selectedClip) &&
+        !selectedClip.audioDetached
+    ) && Boolean(selectedClip && mediaMap.get(selectedClip.mediaId)?.hasAudio)
 
   // Köşe tutamaçlarından Fade In / Fade Out sürükleme
   const startFadeDrag = (
@@ -288,11 +307,13 @@ export default function Timeline({
     e.stopPropagation()
     onSelectClip(clip.id)
 
-    const target = e.currentTarget as HTMLElement
-    try {
-      target.setPointerCapture(e.pointerId)
-    } catch {
-      // yoksay
+    if (mode !== 'move') {
+      const target = e.currentTarget as HTMLElement
+      try {
+        target.setPointerCapture(e.pointerId)
+      } catch {
+        // yoksay
+      }
     }
 
     const startX = e.clientX
@@ -303,13 +324,20 @@ export default function Timeline({
     const initKeyframes = clip.keyframes ? clip.keyframes.map((k) => ({ ...k })) : undefined
     const spd = Math.max(0.25, Math.min(4.0, (clip.speed ?? 100) / 100))
     const m = mediaMap.get(clip.mediaId)
-    const isUnbounded = clip.lane === 'V2' || m?.mediaKind === 'image'
+    const isClipCredit = isCreditClip(clip)
+    const isUnbounded = isClipCredit || m?.mediaKind === 'image'
+    const isClipAudioOnly = !isClipCredit && (m?.mediaKind === 'audio' || isAudioLane(clip.lane))
+    const canMoveToLane = (targetLane: LaneId): boolean =>
+      isClipAudioOnly ? isAudioLane(targetLane) : isVideoLane(targetLane)
     const mediaDur = m?.duration ?? initIn + initDur * spd + 120
 
-    const lanePeers = clips
-      .filter((o) => o.lane === clip.lane && o.id !== clip.id)
-      .slice()
-      .sort((a, b) => a.start - b.start)
+    const getLanePeers = (targetLane: LaneId) =>
+      clipsRef.current
+        .filter((o) => o.lane === targetLane && o.id !== clip.id)
+        .slice()
+        .sort((a, b) => a.start - b.start)
+
+    const lanePeers = getLanePeers(clip.lane)
 
     const prevNeighbor = [...lanePeers].reverse().find((o) => o.start + o.duration <= initStart + 0.02)
     const nextNeighbor = lanePeers.find((o) => o.start >= initEnd - 0.02)
@@ -338,15 +366,15 @@ export default function Timeline({
       return best
     }
 
-    const clampNonOverlapMove = (candStart: number): number => {
+    const clampNonOverlapMove = (candStart: number, peers: TimelineClip[]): number => {
       let s = Math.max(0, candStart)
-      for (const o of lanePeers) {
+      for (const o of peers) {
         const oEnd = o.start + o.duration
         if (s < oEnd && s + initDur > o.start) {
           const leftPos = Math.max(0, o.start - initDur)
           const rightPos = oEnd
-          const leftFree = !lanePeers.some((p) => p !== o && leftPos < p.start + p.duration && leftPos + initDur > p.start)
-          const rightFree = !lanePeers.some((p) => p !== o && rightPos < p.start + p.duration && rightPos + initDur > p.start)
+          const leftFree = !peers.some((p) => p !== o && leftPos < p.start + p.duration && leftPos + initDur > p.start)
+          const rightFree = !peers.some((p) => p !== o && rightPos < p.start + p.duration && rightPos + initDur > p.start)
           if (Math.abs(s - leftPos) <= Math.abs(s - rightPos) && leftFree) {
             s = leftPos
           } else if (rightFree) {
@@ -359,16 +387,47 @@ export default function Timeline({
       return s
     }
 
+    const detectTargetLane = (clientY: number, fallbackLane: LaneId): LaneId => {
+      const container = area.current
+      if (!container) return fallbackLane
+      const rows = container.querySelectorAll<HTMLElement>('[data-lane-row]')
+      let bestLane = fallbackLane
+      let bestDist = Infinity
+      rows.forEach((rowEl) => {
+        const lid = rowEl.dataset.laneRow
+        if (!lid || !canMoveToLane(lid)) return
+        const rect = rowEl.getBoundingClientRect()
+        if (clientY >= rect.top && clientY <= rect.bottom) {
+          bestLane = lid
+          bestDist = 0
+        } else {
+          const dist = clientY < rect.top ? rect.top - clientY : clientY - rect.bottom
+          if (dist < bestDist && dist < 36) {
+            bestDist = dist
+            bestLane = lid
+          }
+        }
+      })
+      return bestLane
+    }
+
+    const startY = e.clientY
     let moved = false
+    let activeLane: LaneId = clip.lane
     setDraggingClipId(clip.id)
 
     const onMove = (ev: PointerEvent) => {
       const dx = ev.clientX - startX
-      if (!moved && Math.abs(dx) < 3) return
+      const dy = ev.clientY - startY
+      if (!moved && Math.abs(dx) < 3 && (mode !== 'move' || Math.abs(dy) < 6)) return
       moved = true
       const deltaSec = dx / Math.max(1, pps)
 
       if (mode === 'move') {
+        const targetLane = detectTargetLane(ev.clientY, activeLane)
+        activeLane = targetLane
+        setDropTargetLane(targetLane !== clip.lane ? targetLane : null)
+
         let nextStart = Math.max(0, initStart + deltaSec)
         const sStart = findSnap(nextStart)
         const sEnd = findSnap(nextStart + initDur)
@@ -381,8 +440,11 @@ export default function Timeline({
         } else {
           setSnapGuideTime(null)
         }
-        nextStart = clampNonOverlapMove(nextStart)
-        onUpdateClip(clip.id, { start: Number(nextStart.toFixed(3)) })
+        nextStart = clampNonOverlapMove(nextStart, getLanePeers(targetLane))
+        onUpdateClip(clip.id, {
+          lane: targetLane,
+          start: Number(nextStart.toFixed(3))
+        })
         return
       }
 
@@ -450,6 +512,7 @@ export default function Timeline({
 
     const onUp = () => {
       setDraggingClipId(null)
+      setDropTargetLane(null)
       setSnapGuideTime(null)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
@@ -882,29 +945,66 @@ export default function Timeline({
 
       {/* Gövde: Sol Kanal Mikseri + Sağ Zaman Çizelgesi */}
       <div className="flex min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-        {/* Sol: Track Mixer (V1, A1, A2 Mute/Solo) */}
-        <div className="flex w-[116px] shrink-0 flex-col border-r border-white/[0.06] bg-white/[0.015]">
-          <div className="flex h-6 items-center justify-between border-b border-white/[0.06] px-2.5 text-[9px] font-semibold tracking-wider text-white/35">
+        {/* Sol: Track Mixer (V1..Vn, A1..An Mute/Solo + Kanal Ekle) */}
+        <div className="flex w-[132px] shrink-0 flex-col border-r border-white/[0.06] bg-white/[0.015]">
+          <div className="flex h-6 items-center justify-between border-b border-white/[0.06] px-2 text-[9px] font-semibold tracking-wider text-white/45">
             <span>KANALLAR</span>
+            <div className="flex items-center gap-1">
+              {onAddVideoLane && (
+                <button
+                  type="button"
+                  data-testid="add-video-lane-btn"
+                  onClick={onAddVideoLane}
+                  title="Yeni Video Kanalı Ekle (V3, V4...)"
+                  className="rounded border border-white/15 bg-white/[0.05] px-1.5 py-px font-mono text-[8.5px] font-bold text-[var(--accent)] transition hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] active:scale-95"
+                >
+                  +V
+                </button>
+              )}
+              {onAddAudioLane && (
+                <button
+                  type="button"
+                  data-testid="add-audio-lane-btn"
+                  onClick={onAddAudioLane}
+                  title="Yeni Ses Kanalı Ekle (A3, A4...)"
+                  className="rounded border border-white/15 bg-white/[0.05] px-1.5 py-px font-mono text-[8.5px] font-bold text-cyan-400 transition hover:border-cyan-400 hover:bg-cyan-400/15 active:scale-95"
+                >
+                  +A
+                </button>
+              )}
+            </div>
           </div>
-          {LANES.map((lane) => {
-            const st = lanes[lane]
+          {orderedLanes.map((lane) => {
+            const st = lanes[lane] ?? { muted: false, solo: false }
             const audible = isLaneAudible(lanes, lane)
-            const rowH = lane === 'V1' ? 'h-[60px]' : lane === 'V2' ? 'h-[36px]' : 'h-[44px]'
+            const isVideo = isVideoLane(lane)
+            const n = laneNumber(lane)
+            const rowH = lane === 'V1' ? 58 : isVideo ? 50 : 44
             const laneSub =
-              lane === 'V2' ? 'Metin' : lane === 'V1' ? 'Video' : lane === 'A1' ? 'Ses 1' : 'Ses 2'
+              lane === 'V1'
+                ? 'Video 1'
+                : lane === 'V2'
+                  ? 'Video 2'
+                  : isVideo
+                    ? `Video ${n}`
+                    : `Ses ${n}`
             const laneColor =
-              lane === 'V1' ? 'var(--accent)' : lane === 'V2' ? '#8B5CF6' : '#06B6D4'
+              lane === 'V1' ? 'var(--accent)' : isVideo ? '#8B5CF6' : '#06B6D4'
+            const isExtraEmpty =
+              n > 2 && onRemoveLane && clips.every((c) => c.lane !== lane)
             return (
               <div
                 key={lane}
-                className={`relative flex ${rowH} items-center justify-between border-b border-white/[0.05] pl-3.5 pr-2.5`}
+                style={{ height: rowH }}
+                className={`relative flex items-center justify-between border-b border-white/[0.05] pl-3 pr-2 ${
+                  dropTargetLane === lane ? 'bg-[var(--accent-soft)]' : ''
+                }`}
               >
                 <span
                   className="absolute inset-y-1 left-0 w-[3px] rounded-r"
                   style={{ backgroundColor: laneColor }}
                 />
-                <div className="flex flex-col">
+                <div className="flex min-w-0 flex-col">
                   <span
                     className={`font-mono text-[11px] font-bold ${
                       audible ? 'text-white/85' : 'text-white/35 line-through'
@@ -912,9 +1012,20 @@ export default function Timeline({
                   >
                     {lane}
                   </span>
-                  <span className="text-[9px] text-white/35">{laneSub}</span>
+                  <span className="truncate text-[8.5px] text-white/35">{laneSub}</span>
                 </div>
                 <div className="flex items-center gap-1">
+                  {isExtraEmpty && (
+                    <button
+                      type="button"
+                      data-testid={`remove-${lane}`}
+                      onClick={() => onRemoveLane(lane)}
+                      title={`${lane} Boş Kanalını Kaldır`}
+                      className="h-5 w-4 rounded text-[10px] text-white/40 transition hover:bg-rose-500/20 hover:text-rose-300"
+                    >
+                      ×
+                    </button>
+                  )}
                   <button
                     data-testid={`mute-${lane}`}
                     onClick={() => onToggleMute(lane)}
@@ -1097,31 +1208,34 @@ export default function Timeline({
               </div>
             )}
 
-            {/* Kanal Satırları: V2, V1, A1, A2 */}
-            {LANES.map((lane) => {
+            {/* Kanal Satırları: Dinamik V* ve A* kanalları */}
+            {orderedLanes.map((lane) => {
               const laneClips = clips.filter((c) => c.lane === lane)
               const laneAudible = isLaneAudible(lanes, lane)
-              const isVideo = lane === 'V1'
-              const isCredit = lane === 'V2'
-              const rowH = isVideo ? 60 : isCredit ? 36 : 44
+              const isVideo = isVideoLane(lane)
+              const rowH = lane === 'V1' ? 58 : isVideo ? 50 : 44
 
               return (
                 <div
                   key={lane}
                   data-testid={`lane-${lane}`}
+                  data-lane-row={lane}
                   style={{ height: rowH }}
                   onDragOver={(e) => {
-                    if (!isCredit && e.dataTransfer.types.includes(MEDIA_DRAG_TYPE)) {
+                    if (e.dataTransfer.types.includes(MEDIA_DRAG_TYPE)) {
                       e.preventDefault()
                     }
                   }}
                   onDrop={(e) => {
-                    if (isCredit) return
                     e.preventDefault()
                     const mediaId = e.dataTransfer.getData(MEDIA_DRAG_TYPE)
                     if (mediaId) onDropMediaToLane(mediaId, lane)
                   }}
-                  className="relative border-b border-white/[0.05]"
+                  className={`relative border-b border-white/[0.05] transition-colors ${
+                    dropTargetLane === lane
+                      ? 'bg-[var(--accent-soft)] ring-1 ring-inset ring-[var(--accent)]/60'
+                      : ''
+                  }`}
                 >
                   {laneClips.map((c) => {
                     const m = mediaMap.get(c.mediaId)
@@ -1129,10 +1243,11 @@ export default function Timeline({
                     const clipW = Math.max(6, c.duration * pps - 2)
                     const isSelected = c.id === selectedClipId
                     const cell = 88
-                    const showWaveform = isVideo
-                      ? !c.audioDetached && Boolean(m?.hasAudio)
-                      : isCredit
-                        ? false
+                    const isCredit = isCreditClip(c)
+                    const showWaveform = isCredit
+                      ? false
+                      : isVideo
+                        ? !c.audioDetached && Boolean(m?.hasAudio)
                         : Boolean(m?.hasAudio ?? true)
 
                     return (
@@ -1247,9 +1362,9 @@ export default function Timeline({
                             {c.name}
                           </span>
                           <span className="shrink-0 rounded-full bg-black/75 px-2 py-0.5 font-mono text-[8px] text-[var(--accent)]">
-                            {c.lane === 'V2'
+                            {isCredit
                               ? `${c.duration.toFixed(1)}s`
-                              : c.lane === 'V1' && c.audioDetached
+                              : isVideo && c.audioDetached
                                 ? 'Sessiz'
                                 : formatDb(c.gainDb)}
                           </span>

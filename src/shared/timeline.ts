@@ -10,9 +10,99 @@ import type { ColorGrade } from './color'
 import type { CreditConfig } from './credits'
 import type { Lut3D } from './lut'
 
-export type LaneId = 'V2' | 'V1' | 'A1' | 'A2'
+export type LaneId = string
+export const DEFAULT_VIDEO_LANES: LaneId[] = ['V2', 'V1']
+export const DEFAULT_AUDIO_LANES: LaneId[] = ['A1', 'A2']
 export const LANES: LaneId[] = ['V2', 'V1', 'A1', 'A2']
 export const AUDIO_LANES: LaneId[] = ['A1', 'A2']
+
+export function isVideoLane(id: LaneId): boolean {
+  return /^V\d+$/i.test(id)
+}
+
+export function isAudioLane(id: LaneId): boolean {
+  return /^A\d+$/i.test(id)
+}
+
+export function laneNumber(id: LaneId): number {
+  const n = parseInt(id.slice(1), 10)
+  return Number.isFinite(n) && n > 0 ? n : 1
+}
+
+export function isCreditClip(c: { mediaId: string; credit?: unknown }): boolean {
+  return c.mediaId === '__credit__' || Boolean(c.credit)
+}
+
+export function normalizeLanesMap(
+  lanes?: LaneMap | null,
+  clips?: Array<{ lane: LaneId }>
+): LaneMap {
+  const result: LaneMap = {}
+  for (const defId of LANES) {
+    result[defId] = lanes?.[defId] ? { ...lanes[defId] } : { muted: false, solo: false }
+  }
+  if (lanes) {
+    for (const [k, v] of Object.entries(lanes)) {
+      if (isVideoLane(k) || isAudioLane(k)) {
+        result[k.toUpperCase()] = { muted: Boolean(v?.muted), solo: Boolean(v?.solo) }
+      }
+    }
+  }
+  if (clips) {
+    for (const c of clips) {
+      const k = c.lane?.toUpperCase()
+      if (k && (isVideoLane(k) || isAudioLane(k)) && !result[k]) {
+        result[k] = { muted: false, solo: false }
+      }
+    }
+  }
+  return result
+}
+
+/**
+ * Kanalları profesyonel NLE sırasına dizer:
+ * Video kanalları yukarısı üstte olacak şekilde azalan (V3, V2, V1),
+ * Ses kanalları artan (A1, A2, A3) sıradadır.
+ */
+export function orderLanes(lanes: LaneMap, clips?: Array<{ lane: LaneId }>): LaneId[] {
+  const norm = normalizeLanesMap(lanes, clips)
+  const vLanes = Object.keys(norm)
+    .filter(isVideoLane)
+    .sort((a, b) => laneNumber(b) - laneNumber(a))
+  const aLanes = Object.keys(norm)
+    .filter(isAudioLane)
+    .sort((a, b) => laneNumber(a) - laneNumber(b))
+  return [...vLanes, ...aLanes]
+}
+
+/** Video kompozisyon sırası: alt kattan üst kata (V1, V2, V3...). */
+export function getOrderedVideoLanesAsc(lanes: LaneMap, clips?: Array<{ lane: LaneId }>): LaneId[] {
+  const norm = normalizeLanesMap(lanes, clips)
+  return Object.keys(norm)
+    .filter(isVideoLane)
+    .sort((a, b) => laneNumber(a) - laneNumber(b))
+}
+
+export function getOrderedAudioLanes(lanes: LaneMap, clips?: Array<{ lane: LaneId }>): LaneId[] {
+  const norm = normalizeLanesMap(lanes, clips)
+  return Object.keys(norm)
+    .filter(isAudioLane)
+    .sort((a, b) => laneNumber(a) - laneNumber(b))
+}
+
+export function nextVideoLaneId(lanes: LaneMap): LaneId {
+  const maxN = Object.keys(lanes)
+    .filter(isVideoLane)
+    .reduce((m, id) => Math.max(m, laneNumber(id)), 2)
+  return `V${maxN + 1}`
+}
+
+export function nextAudioLaneId(lanes: LaneMap): LaneId {
+  const maxN = Object.keys(lanes)
+    .filter(isAudioLane)
+    .reduce((m, id) => Math.max(m, laneNumber(id)), 2)
+  return `A${maxN + 1}`
+}
 
 /** Kaydırıcı alt sınırı: bu değer ve altı "-∞ dB" (sessiz) demektir. */
 export const MIN_DB = -60
@@ -457,8 +547,8 @@ export function computeAutoDuckMultiplierAt(
   let maxDuckDepth = 0
 
   for (const c of clips) {
-    if (c.lane !== 'V1' && c.lane !== 'A1') continue
-    if (c.lane === 'V1' && c.audioDetached) continue
+    if (!isVideoLane(c.lane) && c.lane !== 'A1') continue
+    if (isVideoLane(c.lane) && (c.audioDetached || isCreditClip(c))) continue
     if (!isLaneAudible(lanes, c.lane)) continue
     if (c.gainDb <= MIN_DB) continue
 
@@ -487,9 +577,10 @@ export function computeAutoDuckMultiplierAt(
  * Herhangi bir kanalda Solo açıksa yalnızca Solo kanallar duyulur.
  */
 export function isLaneAudible(lanes: LaneMap, id: LaneId): boolean {
-  if (lanes[id].muted) return false
-  const anySolo = LANES.some((l) => lanes[l].solo)
-  return !anySolo || lanes[id].solo
+  const st = lanes[id]
+  if (st?.muted) return false
+  const anySolo = Object.values(lanes).some((s) => Boolean(s?.solo))
+  return !anySolo || Boolean(st?.solo)
 }
 
 export function projectEnd(clips: TimelineClip[]): number {

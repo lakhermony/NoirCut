@@ -37,8 +37,13 @@ import {
   buildFfmpegKeyframeExpr,
   dbToGain,
   defaultExportSettings,
+  getOrderedVideoLanesAsc,
   getParamKeyframes,
+  isAudioLane,
+  isCreditClip,
   isLaneAudible,
+  isVideoLane,
+  laneNumber,
   projectEnd,
   type ExportRequest
 } from '../../shared/timeline'
@@ -144,10 +149,10 @@ export async function exportTimeline(
     outPath = resolve(res.filePath)
   }
 
-  // Kullanılan medya dosyalarını tekilleştirerek FFmpeg -i indekslerini ata (V2 metin klipleri hariç)
+  // Kullanılan medya dosyalarını tekilleştirerek FFmpeg -i indekslerini ata (metin/jenerik klipleri hariç)
   const imageMaxDur = new Map<string, number>()
   for (const c of clips) {
-    if (c.lane === 'V2') continue
+    if (isCreditClip(c)) continue
     const m = getMediaItem(c.mediaId)
     if (m?.mediaKind === 'image') {
       const speedFactor = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
@@ -160,7 +165,7 @@ export async function exportTimeline(
   const mediaInputIdx = new Map<string, number>()
   let nextInputIdx = 0
   for (const c of clips) {
-    if (c.lane === 'V2') continue
+    if (isCreditClip(c)) continue
     if (!mediaInputIdx.has(c.mediaId)) {
       const m = getMediaItem(c.mediaId)
       if (!m) return { ok: false, error: `Medya bulunamadı: ${c.name}` }
@@ -176,32 +181,17 @@ export async function exportTimeline(
 
   const filterParts: string[] = []
 
-  // 1) V1 Video akışı
-  const vClips = clips
-    .filter((c) => c.lane === 'V1' && c.duration > 0.02)
-    .sort((a, b) => a.start - b.start)
-
-  const vSegLabels: string[] = []
-  let cursor = 0
-  let segCounter = 0
   let tempLutDir: string | null = null
-
   const escapeFilterPath = (p: string): string =>
     p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'")
 
-  for (const c of vClips) {
+  /** Trim, hız, LUT renk derecelendirme, Halation/Mist/NoirFilm ve grain katmanını oluşturan ortak yardımcı. */
+  const buildClipGradedVideoStream = (
+    c: TimelineClip,
+    segId: number
+  ): { streamLabel: string; pendingChain: string[] } => {
     const mediaItem = getMediaItem(c.mediaId)
-    if (c.start > cursor + 0.02) {
-      const gap = c.start - cursor
-      const lbl = `vseg${segCounter++}`
-      filterParts.push(
-        `color=c=black:s=${width}x${height}:r=${fps}:d=${gap.toFixed(4)},format=yuv420p[${lbl}]`
-      )
-      vSegLabels.push(`[${lbl}]`)
-      cursor = c.start
-    }
     const inIdx = mediaInputIdx.get(c.mediaId)!
-    const lbl = `vseg${segCounter++}`
     const speedFactor = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
     const srcDur = Math.max(0.05, c.duration * speedFactor)
     const clipIn = mediaItem?.mediaKind === 'image' ? 0 : c.in
@@ -220,11 +210,10 @@ export async function exportTimeline(
       `setsar=1`
     )
 
-    // Renk Düzenleme (Kamera Profili + 3D LUT + Auto WB + Highlights/Shadows) + Halation/Mist + Vignette + Film Grain
     let fxOutLabel: string | null = null
     if (c.grade && !isNeutralGrade(c.grade)) {
       if (!tempLutDir) tempLutDir = mkdtempSync(join(tmpdir(), 'noircut-lut-'))
-      const cubePath = join(tempLutDir, `grade-${segCounter}.cube`)
+      const cubePath = join(tempLutDir, `grade-${segId}.cube`)
       const hasLogProfile = !!c.grade.cameraProfile && c.grade.cameraProfile !== 'rec709'
       writeFileSync(
         cubePath,
@@ -233,7 +222,6 @@ export async function exportTimeline(
       )
       vChain.push(`format=rgb24`, `lut3d=file='${escapeFilterPath(cubePath)}':interp=trilinear`)
 
-      // Halation + Mist + NoirFilm Işık Efektleri (Halation, Bloom, Diffusion, Mist)
       const nf = c.grade.noirFilm
       const nfInt = Math.min(1, Math.max(0, (nf?.lookIntensity ?? 100) / 100))
       const halation = Math.min(100, Math.max(0, c.grade.halation ?? 0))
@@ -248,14 +236,14 @@ export async function exportTimeline(
       const hasNfMst = Boolean(nfMst?.enabled && (nfMst.intensity ?? 0) > 0.5 && nfInt > 0.01)
 
       if (halation > 0.5 || mist > 0.5 || hasNfHal || hasNfBlm || hasNfDif || hasNfMst) {
-        let cur = `fxin${segCounter}`
+        let cur = `fxin${segId}`
         filterParts.push(`[${inIdx}:v]${vChain.join(',')}[${cur}]`)
         vChain.length = 0
         if (halation > 0.5) {
-          const a = `hal_a${segCounter}`
-          const b = `hal_b${segCounter}`
-          const g = `hal_g${segCounter}`
-          const out = `hal_o${segCounter}`
+          const a = `hal_a${segId}`
+          const b = `hal_b${segId}`
+          const g = `hal_g${segId}`
+          const out = `hal_o${segId}`
           const sigma = (height * (0.008 + 0.014 * (halation / 100))).toFixed(2)
           const opacity = (0.15 + 0.85 * (halation / 100) * 0.8).toFixed(3)
           filterParts.push(`[${cur}]split=2[${a}][${b}]`)
@@ -268,10 +256,10 @@ export async function exportTimeline(
           cur = out
         }
         if (mist > 0.5) {
-          const a = `mist_a${segCounter}`
-          const b = `mist_b${segCounter}`
-          const g = `mist_g${segCounter}`
-          const out = `mist_o${segCounter}`
+          const a = `mist_a${segId}`
+          const b = `mist_b${segId}`
+          const g = `mist_g${segId}`
+          const out = `mist_o${segId}`
           const sigma = (height * (0.006 + 0.012 * (mist / 100))).toFixed(2)
           const opacity = (0.5 * (mist / 100)).toFixed(3)
           filterParts.push(`[${cur}]split=2[${a}][${b}]`)
@@ -282,10 +270,10 @@ export async function exportTimeline(
           cur = out
         }
         if (hasNfHal && nfHal) {
-          const a = `nfhal_a${segCounter}`
-          const b = `nfhal_b${segCounter}`
-          const g = `nfhal_g${segCounter}`
-          const out = `nfhal_o${segCounter}`
+          const a = `nfhal_a${segId}`
+          const b = `nfhal_b${segId}`
+          const g = `nfhal_g${segId}`
+          const out = `nfhal_o${segId}`
           const [hr, hg, hb] = hexToRgb01(nfHal.color)
           const thresh = Math.min(0.9, Math.max(0.1, nfHal.threshold / 100)).toFixed(2)
           const sigma = (height * (0.006 + 0.022 * (nfHal.radius / 100))).toFixed(2)
@@ -300,10 +288,10 @@ export async function exportTimeline(
           cur = out
         }
         if (hasNfBlm && nfBlm) {
-          const a = `nfblm_a${segCounter}`
-          const b = `nfblm_b${segCounter}`
-          const g = `nfblm_g${segCounter}`
-          const out = `nfblm_o${segCounter}`
+          const a = `nfblm_a${segId}`
+          const b = `nfblm_b${segId}`
+          const g = `nfblm_g${segId}`
+          const out = `nfblm_o${segId}`
           const thresh = Math.min(0.9, Math.max(0.15, nfBlm.threshold / 100)).toFixed(2)
           const sigma = (height * (0.005 + 0.02 * (nfBlm.radius / 100))).toFixed(2)
           const opacity = Math.min(1, (nfBlm.intensity / 100) * (0.5 + 0.5 * (nfBlm.highlightStrength / 100)) * nfInt).toFixed(3)
@@ -315,10 +303,10 @@ export async function exportTimeline(
           cur = out
         }
         if (hasNfDif && nfDif) {
-          const a = `nfdif_a${segCounter}`
-          const b = `nfdif_b${segCounter}`
-          const g = `nfdif_g${segCounter}`
-          const out = `nfdif_o${segCounter}`
+          const a = `nfdif_a${segId}`
+          const b = `nfdif_b${segId}`
+          const g = `nfdif_g${segId}`
+          const out = `nfdif_o${segId}`
           const sigma = (height * (0.004 + 0.014 * (nfDif.softness / 100))).toFixed(2)
           const opacity = Math.min(0.85, (nfDif.strength / 100) * nfInt * 0.55).toFixed(3)
           filterParts.push(`[${cur}]split=2[${a}][${b}]`)
@@ -329,10 +317,10 @@ export async function exportTimeline(
           cur = out
         }
         if (hasNfMst && nfMst) {
-          const a = `nfmst_a${segCounter}`
-          const b = `nfmst_b${segCounter}`
-          const g = `nfmst_g${segCounter}`
-          const out = `nfmst_o${segCounter}`
+          const a = `nfmst_a${segId}`
+          const b = `nfmst_b${segId}`
+          const g = `nfmst_g${segId}`
+          const out = `nfmst_o${segId}`
           const sigma = (height * (0.006 + 0.018 * (nfMst.highlightSpread / 100))).toFixed(2)
           const opacity = Math.min(0.85, (nfMst.intensity / 100) * nfInt * 0.6).toFixed(3)
           filterParts.push(`[${cur}]split=2[${a}][${b}]`)
@@ -366,21 +354,53 @@ export async function exportTimeline(
       }
     }
 
+    return {
+      streamLabel: fxOutLabel ? `[${fxOutLabel}]` : `[${inIdx}:v]`,
+      pendingChain: vChain
+    }
+  }
+
+  // 1) V1 Ana Video akışı (sıralı taban katmanı)
+  const v1Audible = isLaneAudible(lanes, 'V1')
+  const vClips = v1Audible
+    ? clips
+        .filter((c) => c.lane === 'V1' && !isCreditClip(c) && c.duration > 0.02)
+        .sort((a, b) => a.start - b.start)
+    : []
+
+  const vSegLabels: string[] = []
+  let cursor = 0
+  let segCounter = 0
+
+  for (const c of vClips) {
+    if (c.start > cursor + 0.02) {
+      const gap = c.start - cursor
+      const lbl = `vseg${segCounter++}`
+      filterParts.push(
+        `color=c=black:s=${width}x${height}:r=${fps}:d=${gap.toFixed(4)},format=yuv420p[${lbl}]`
+      )
+      vSegLabels.push(`[${lbl}]`)
+      cursor = c.start
+    }
+    const segId = segCounter++
+    const lbl = `vseg${segId}`
+    const { streamLabel: initialLabel, pendingChain: vChain } = buildClipGradedVideoStream(c, segId)
+
     // Transform & Keyframe Animasyonu (Scale, Position X/Y, Rotation, Opacity)
     const hasKeyframes = (c.keyframes?.length ?? 0) > 0
     const tf = c.transform
-    let streamLabel = fxOutLabel ? `[${fxOutLabel}]` : `[${inIdx}:v]`
+    let streamLabel = initialLabel
 
     if (hasKeyframes) {
-      const preLbl = `vpre${segCounter}`
+      const preLbl = `vpre${segId}`
       filterParts.push(`${streamLabel}${vChain.length ? vChain.join(',') : 'null'}[${preLbl}]`)
       vChain.length = 0
 
-      const bg0Lbl = `vbg0_${segCounter}`
-      const fg0Lbl = `vfg0_${segCounter}`
-      const bgLbl = `vbg_${segCounter}`
-      const fgLbl = `vfg_${segCounter}`
-      const ovLbl = `vov_kf_${segCounter}`
+      const bg0Lbl = `vbg0_${segId}`
+      const fg0Lbl = `vfg0_${segId}`
+      const bgLbl = `vbg_${segId}`
+      const fgLbl = `vfg_${segId}`
+      const ovLbl = `vov_kf_${segId}`
 
       filterParts.push(`[${preLbl}]split=2[${bg0Lbl}][${fg0Lbl}]`)
       filterParts.push(
@@ -410,10 +430,10 @@ export async function exportTimeline(
       const hasOpKf = getParamKeyframes(c, 'opacity').length > 0
       if (hasOpKf) {
         const opExprT = buildFfmpegKeyframeExpr(c, 'opacity', 'T')
-        const opA = `vopa_${segCounter}`
-        const opB0 = `vopb0_${segCounter}`
-        const opB = `vopb_${segCounter}`
-        const opOut = `vopout_${segCounter}`
+        const opA = `vopa_${segId}`
+        const opB0 = `vopb0_${segId}`
+        const opB = `vopb_${segId}`
+        const opOut = `vopout_${segId}`
         filterParts.push(`${streamLabel}format=rgb24,split=2[${opA}][${opB0}]`)
         filterParts.push(`[${opB0}]drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill[${opB}]`)
         filterParts.push(
@@ -484,14 +504,97 @@ export async function exportTimeline(
     filterParts.push(`${vSegLabels.join('')}concat=n=${vSegLabels.length}:v=1:a=0[vbase]`)
   }
 
-  // 1b) V2 Jenerik / Metin Overlay katmanı
-  const v2Clips = isLaneAudible(lanes, 'V2')
-    ? clips
-        .filter((c) => c.lane === 'V2' && c.duration > 0.02 && creditOverlays?.[c.id])
-        .sort((a, b) => a.start - b.start)
-    : []
-
+  // 1a-b) Üst Video Kanalları (V2, V3...) Video/Görsel Bindirme (Overlay & PiP)
+  const upperVideoLanes = getOrderedVideoLanesAsc(lanes, clips).filter((l) => l !== 'V1')
   let currentVLabel = '[vbase]'
+  let ovCounter = 0
+
+  for (const laneId of upperVideoLanes) {
+    if (!isLaneAudible(lanes, laneId)) continue
+    const laneClips = clips
+      .filter((c) => c.lane === laneId && !isCreditClip(c) && c.duration > 0.02)
+      .sort((a, b) => a.start - b.start)
+
+    for (const c of laneClips) {
+      const segId = segCounter++
+      const { streamLabel, pendingChain } = buildClipGradedVideoStream(c, segId)
+      const ovIdx = ovCounter++
+      const fgLbl = `vupper${ovIdx}`
+      const nextVLabel = `[vcomp${ovIdx}]`
+
+      const hasKeyframes = (c.keyframes?.length ?? 0) > 0
+      const tf = c.transform
+      const chain: string[] = [...pendingChain, `trim=duration=${c.duration.toFixed(4)}`, `format=rgba`]
+
+      if (hasKeyframes) {
+        const scaleExpr = buildFfmpegKeyframeExpr(c, 'scale', 't')
+        const rotExpr = buildFfmpegKeyframeExpr(c, 'rotation', 't')
+        chain.push(
+          `scale=w='max(16,trunc(${width}*clip((${scaleExpr})/100,0.1,4.0)/2)*2)':h='max(16,trunc(${height}*clip((${scaleExpr})/100,0.1,4.0)/2)*2)':eval=frame`
+        )
+        if (getParamKeyframes(c, 'rotation').length > 0 || Math.abs(tf?.rotation ?? 0) > 0.25) {
+          chain.push(`rotate=a='((${rotExpr})*PI/180)':ow=iw:oh=ih:c=0x00000000`)
+        }
+      } else if (tf) {
+        const sc = Math.max(0.1, Math.min(4.0, (tf.scale ?? 100) / 100))
+        if (Math.abs(sc - 1) > 0.01) {
+          const sw = Math.max(16, Math.round((width * sc) / 2) * 2)
+          const sh = Math.max(16, Math.round((height * sc) / 2) * 2)
+          chain.push(`scale=${sw}:${sh}`)
+        }
+        const rotRad = ((tf.rotation ?? 0) * Math.PI) / 180
+        if (Math.abs(rotRad) > 0.005) {
+          chain.push(`rotate=${rotRad.toFixed(4)}:ow=iw:oh=ih:c=0x00000000`)
+        }
+        const op = Math.max(0, Math.min(1, (tf.opacity ?? 100) / 100))
+        if (op < 0.995) {
+          chain.push(`colorchannelmixer=aa=${op.toFixed(3)}`)
+        }
+      }
+
+      if (c.transitionType && c.transitionType !== 'none' && (c.transitionDuration ?? 0) > 0.05) {
+        const trDur = Math.min(c.duration * 0.48, c.transitionDuration ?? 0.8)
+        const foStart = Math.max(0, c.duration - trDur)
+        chain.push(
+          `fade=t=in:st=0:d=${trDur.toFixed(4)}:alpha=1`,
+          `fade=t=out:st=${foStart.toFixed(4)}:d=${trDur.toFixed(4)}:alpha=1`
+        )
+      }
+
+      chain.push(`setpts=PTS-STARTPTS+${c.start.toFixed(4)}/TB`)
+      filterParts.push(`${streamLabel}${chain.join(',')}[${fgLbl}]`)
+
+      const start = c.start.toFixed(4)
+      const end = (c.start + c.duration).toFixed(4)
+      if (hasKeyframes) {
+        const posXExpr = buildFfmpegKeyframeExpr(c, 'posX', `(t-${start})`)
+        const posYExpr = buildFfmpegKeyframeExpr(c, 'posY', `(t-${start})`)
+        filterParts.push(
+          `${currentVLabel}[${fgLbl}]overlay=x='(W-w)/2+(W*(${posXExpr})/100)':y='(H-h)/2+(H*(${posYExpr})/100)':eof_action=pass:enable='between(t,${start},${end})':format=auto${nextVLabel}`
+        )
+      } else {
+        const px = (((tf?.posX ?? 0) / 100) * width).toFixed(2)
+        const py = (((tf?.posY ?? 0) / 100) * height).toFixed(2)
+        filterParts.push(
+          `${currentVLabel}[${fgLbl}]overlay=x='(W-w)/2+(${px})':y='(H-h)/2+(${py})':eof_action=pass:enable='between(t,${start},${end})':format=auto${nextVLabel}`
+        )
+      }
+      currentVLabel = nextVLabel
+    }
+  }
+
+  // 1b) Jenerik / Metin Overlay katmanı (tüm duyulabilir V* kanallarındaki metin klipleri)
+  const v2Clips = clips
+    .filter(
+      (c) =>
+        isVideoLane(c.lane) &&
+        isCreditClip(c) &&
+        isLaneAudible(lanes, c.lane) &&
+        c.duration > 0.02 &&
+        creditOverlays?.[c.id]
+    )
+    .sort((a, b) => laneNumber(a.lane) - laneNumber(b.lane) || a.start - b.start)
+
   v2Clips.forEach((c, idx) => {
     const ov = creditOverlays![c.id]
     const b64 = ov.pngDataUrl.replace(/^data:image\/png;base64,/, '')
@@ -528,17 +631,17 @@ export async function exportTimeline(
 
   filterParts.push(`${currentVLabel}format=yuv420p[vout]`)
 
-  // 2) Ses akışı (V1 gömülü + A1 + A2) + Auto-Ducking (Diyalog Önceliği)
+  // 2) Ses akışı (V* gömülü + A1..An) + Auto-Ducking (Diyalog Önceliği)
   const audibleClips: TimelineClip[] = clips.filter((c) => {
-    if (c.duration <= 0.02 || c.gainDb <= MIN_DB) return false
-    if (c.lane === 'V1' && c.audioDetached) return false
+    if (isCreditClip(c) || c.duration <= 0.02 || c.gainDb <= MIN_DB) return false
+    if (isVideoLane(c.lane) && c.audioDetached) return false
     if (!isLaneAudible(lanes, c.lane)) return false
     const m = getMediaItem(c.mediaId)
     return Boolean(m?.hasAudio)
   })
 
   const dialogClips = req.autoDucking
-    ? audibleClips.filter((c) => c.lane === 'V1' || c.lane === 'A1')
+    ? audibleClips.filter((c) => isVideoLane(c.lane) || c.lane === 'A1')
     : []
 
   filterParts.push(
@@ -611,8 +714,8 @@ export async function exportTimeline(
     }
     chain.push(`apad=whole_dur=${total.toFixed(4)}`)
 
-    // Auto-Ducking: V1/A1 aktifken A2 müziğini yumuşat (%28 = -11 dB)
-    if (c.lane === 'A2' && dialogClips.length > 0) {
+    // Auto-Ducking: V*/A1 aktifken diğer ses kanallarını (A2+) yumuşat (%28 = -11 dB)
+    if (isAudioLane(c.lane) && c.lane !== 'A1' && dialogClips.length > 0) {
       const betweenTerms = dialogClips
         .map((dc) => `between(t,${dc.start.toFixed(4)},${(dc.start + dc.duration).toFixed(4)})`)
         .join('+')

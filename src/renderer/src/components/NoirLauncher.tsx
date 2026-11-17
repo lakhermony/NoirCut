@@ -8,9 +8,9 @@ import type {
 } from '../../../shared/types'
 
 const DEFAULT_CHANGELOG = [
+  'Çoklu Video & Ses Kanalları (V1..Vn, A1..An): kanallar arası sürükle-bırak geçişi, +V / +A dinamik kanal ekleme ve eşzamanlı üst video kompozisyonu.',
   'NoirCut Kırmızısı (NoirCut Crimson): karanlık oda safelight estetiğine uygun 5. stüdyo teması.',
   'NoirFilm Studio: 12 kategoride sinematik LUT kütüphanesi, 35mm/16mm/8mm dijital film emülasyonu, organik film greni ve yığılabilir Halation / Bloom / Diffusion / Mist ışık motorları.',
-  'Soft Cinematic UI: Yüzen hap navigasyon, akıcı kapsül sürgüler ve 5 tema desteği.',
   'Gerçek zamanlı WebGL2 GPU renk motoru ve donanım uyumlu FFmpeg 3D LUT dışa aktarma boru hattı.'
 ]
 
@@ -57,8 +57,8 @@ export default function NoirLauncher({
   const gpu = useMemo(() => detectWebGL2(), [])
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
     state: 'idle',
-    currentVersion: appVersion || '1.0.1',
-    message: `NoirCut v${appVersion || '1.0.1'} — En güncel sürümü kullanıyorsunuz`
+    currentVersion: appVersion || '1.0.2',
+    message: `NoirCut v${appVersion || '1.0.2'} — En güncel sürümü kullanıyorsunuz`
   })
 
   useEffect(() => {
@@ -77,7 +77,7 @@ export default function NoirLauncher({
 
   if (!open) return null
 
-  const versionLabel = `v${updateStatus.currentVersion || appVersion || '1.0.1'} Studio`
+  const versionLabel = `v${updateStatus.currentVersion || appVersion || '1.0.2'} Studio`
   const ffmpegReady = engine && engine.source !== 'missing'
 
   const handleCheckUpdates = async () => {
