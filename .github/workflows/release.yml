@@ -108,8 +108,8 @@ jobs:
           $portable = Get-Item "dist/NoirCut *.exe" | Where-Object { $_.Name -notlike "*Setup*" }
           $setup = Get-Item "dist/NoirCut Setup *.exe"
           if (!$portable -or !$setup) { throw "Portable or Setup EXE missing" }
-          Write-Host "Portable:" $portable.Name ($portable.Length bytes)
-          Write-Host "Setup:" $setup.Name ($setup.Length bytes)
+          Write-Host "Portable: $($portable.Name) ($($portable.Length) bytes)"
+          Write-Host "Setup: $($setup.Name) ($($setup.Length) bytes)"
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
