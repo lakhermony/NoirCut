@@ -99,12 +99,15 @@ jobs:
         run: |
           Get-ChildItem dist
           if (!(Test-Path "dist/win-unpacked/NoirCut.exe")) { throw "NoirCut.exe missing" }
-          & "dist/win-unpacked/resources/bin/win/ffmpeg.exe" -version | Select-Object -First 2
+          $ffOut = & "dist/win-unpacked/resources/bin/win/ffmpeg.exe" -version
           if ($LASTEXITCODE -ne 0) { throw "Bundled ffmpeg.exe failed" }
-          & "dist/win-unpacked/resources/bin/win/ffprobe.exe" -version | Select-Object -First 2
+          $ffOut | Select-Object -First 2
+          $fpOut = & "dist/win-unpacked/resources/bin/win/ffprobe.exe" -version
           if ($LASTEXITCODE -ne 0) { throw "Bundled ffprobe.exe failed" }
-          & "dist/win-unpacked/resources/app.asar.unpacked/node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe" -version | Select-Object -First 2
+          $fpOut | Select-Object -First 2
+          $asarFpOut = & "dist/win-unpacked/resources/app.asar.unpacked/node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe" -version
           if ($LASTEXITCODE -ne 0) { throw "ASAR ffprobe.exe failed" }
+          $asarFpOut | Select-Object -First 2
           $portable = Get-Item "dist/NoirCut *.exe" | Where-Object { $_.Name -notlike "*Setup*" }
           $setup = Get-Item "dist/NoirCut Setup *.exe"
           if (!$portable -or !$setup) { throw "Portable or Setup EXE missing" }
@@ -117,6 +120,7 @@ jobs:
           name: windows-releases
           path: |
             dist/NoirCut*.exe
+            dist/NoirCut*.blockmap
             dist/latest.yml
           if-no-files-found: error
 
