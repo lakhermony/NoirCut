@@ -213,14 +213,16 @@ export async function exportTimeline(
     let fxOutLabel: string | null = null
     if (c.grade && !isNeutralGrade(c.grade)) {
       if (!tempLutDir) tempLutDir = mkdtempSync(join(tmpdir(), 'noircut-lut-'))
-      const cubePath = join(tempLutDir, `grade-${segId}.cube`)
+      const cubeFileName = `grade-${segId}.cube`
+      const cubePath = join(tempLutDir, cubeFileName)
       const hasLogProfile = !!c.grade.cameraProfile && c.grade.cameraProfile !== 'rec709'
       writeFileSync(
         cubePath,
         bakeColorGradeToCube(c.grade, customLuts, hasLogProfile ? 65 : 33),
         'utf-8'
       )
-      vChain.push(`format=rgb24`, `lut3d=file='${escapeFilterPath(cubePath)}':interp=trilinear`)
+      // tempLutDir çalışma dizini olarak verildiği için göreli dosya adı Windows/ASCII-dışı yollardaki ':' sorununu önler
+      vChain.push(`format=rgb24`, `lut3d=file='${escapeFilterPath(cubeFileName)}':interp=trilinear`)
 
       const nf = c.grade.noirFilm
       const nfInt = Math.min(1, Math.max(0, (nf?.lookIntensity ?? 100) / 100))
@@ -830,7 +832,10 @@ export async function exportTimeline(
 
   const runSpawn = (bin: string, args: string[]): Promise<ExportResult> =>
     new Promise((resolvePromise) => {
-      const proc = spawn(bin, args)
+      const proc = spawn(bin, args, {
+        ...(tempLutDir ? { cwd: tempLutDir } : {}),
+        windowsHide: true
+      })
       activeProc = proc
       let stderr = ''
 

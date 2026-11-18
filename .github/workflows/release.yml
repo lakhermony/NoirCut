@@ -1,0 +1,153 @@
+name: Build & Publish NoirCut Releases (Windows, AppImage, DEB, RPM)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag name (e.g. v1.0.2)'
+        required: true
+        default: 'v1.0.2'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Linux (AppImage, DEB, RPM)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install RPM builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck & Build
+        run: |
+          npm run typecheck
+          npm run build
+
+      - name: Package AppImage, DEB, RPM
+        run: npx electron-builder --linux AppImage deb rpm --x64 --publish never
+
+      - name: Verify Linux artifacts
+        run: |
+          ls -lh dist/
+          test -f dist/NoirCut-*.AppImage
+          test -f dist/noircut_*_amd64.deb
+          test -f dist/noircut-*.x86_64.rpm
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-releases
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            dist/latest-linux.yml
+          if-no-files-found: error
+
+  build-windows:
+    name: Windows (NSIS Setup & Portable x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Stage native Windows FFmpeg & FFprobe binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path resources/bin/win | Out-Null
+          Copy-Item -Force node_modules/ffmpeg-static/ffmpeg.exe resources/bin/win/ffmpeg.exe
+          Copy-Item -Force node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe resources/bin/win/ffprobe.exe
+          Get-ChildItem resources/bin/win
+
+      - name: Typecheck & Build
+        run: |
+          npm run typecheck
+          npm run build
+
+      - name: Package Windows Portable & NSIS
+        run: npx electron-builder --win portable nsis --x64 --publish never
+
+      - name: Verify Windows binaries & installers
+        shell: pwsh
+        run: |
+          Get-ChildItem dist
+          if (!(Test-Path "dist/win-unpacked/NoirCut.exe")) { throw "NoirCut.exe missing" }
+          & "dist/win-unpacked/resources/bin/win/ffmpeg.exe" -version | Select-Object -First 2
+          if ($LASTEXITCODE -ne 0) { throw "Bundled ffmpeg.exe failed" }
+          & "dist/win-unpacked/resources/bin/win/ffprobe.exe" -version | Select-Object -First 2
+          if ($LASTEXITCODE -ne 0) { throw "Bundled ffprobe.exe failed" }
+          & "dist/win-unpacked/resources/app.asar.unpacked/node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe" -version | Select-Object -First 2
+          if ($LASTEXITCODE -ne 0) { throw "ASAR ffprobe.exe failed" }
+          $portable = Get-Item "dist/NoirCut *.exe" | Where-Object { $_.Name -notlike "*Setup*" }
+          $setup = Get-Item "dist/NoirCut Setup *.exe"
+          if (!$portable -or !$setup) { throw "Portable or Setup EXE missing" }
+          Write-Host "Portable:" $portable.Name ($portable.Length bytes)
+          Write-Host "Setup:" $setup.Name ($setup.Length bytes)
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-releases
+          path: |
+            dist/NoirCut*.exe
+            dist/latest.yml
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish Assets to GitHub Release
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Flatten asset files
+        run: |
+          mkdir -p upload-files
+          find release-assets -type f -exec cp -v {} upload-files/ \;
+          ls -lh upload-files/
+
+      - name: Resolve tag name
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          overwrite_files: true
+          files: upload-files/*

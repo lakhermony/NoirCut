@@ -3,6 +3,8 @@
   "productName": "NoirCut",
   "version": "1.0.2",
   "description": "NoirCut - Cinema Darkroom video editor (Linux & Windows)",
+  "author": "NoirCut Studio <lakhermony@users.noreply.github.com>",
+  "homepage": "https://lakhermony.github.io/NoirCut/",
   "main": "./out/main/index.js",
   "private": true,
   "scripts": {
@@ -11,6 +13,7 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "dist:linux": "npm run build && electron-builder --linux AppImage",
+    "dist:linux:all": "npm run build && electron-builder --linux AppImage deb rpm",
     "dist:win": "npm run build && LANG=C.UTF-8 LC_ALL=C.UTF-8 electron-builder --win portable nsis --x64",
     "dist": "npm run build && electron-builder"
   },
@@ -39,14 +42,26 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "noircut",
-        "repo": "noircut"
+        "owner": "lakhermony",
+        "repo": "NoirCut"
       }
     ],
     "linux": {
       "target": [
         {
           "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "rpm",
           "arch": [
             "x64"
           ]
@@ -91,7 +106,7 @@
         }
       ],
       "icon": "build/icon.ico",
-      "signAndEditExecutable": false
+      "signExecutable": false
     },
     "nsis": {
       "oneClick": false,

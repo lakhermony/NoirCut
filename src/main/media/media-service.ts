@@ -317,7 +317,7 @@ export function startProxyGeneration(item: MediaItem): Promise<void> {
         }
         args.push('-movflags', '+faststart', outPath)
 
-        const proc = spawn(engine.ffmpegPath, args)
+        const proc = spawn(engine.ffmpegPath, args, { windowsHide: true })
         let stderr = ''
         proc.stdout.on('data', (chunk: Buffer) => {
           const text = chunk.toString()

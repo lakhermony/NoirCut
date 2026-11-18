@@ -131,20 +131,24 @@ export async function extractPeaks(
 
   const engine = await getEngineInfo()
   return new Promise((resolve) => {
-    const proc = spawn(engine.ffmpegPath, [
-      '-v',
-      'error',
-      '-i',
-      filePath,
-      '-vn',
-      '-ac',
-      '1',
-      '-ar',
-      String(sampleRate),
-      '-f',
-      's16le',
-      'pipe:1'
-    ])
+    const proc = spawn(
+      engine.ffmpegPath,
+      [
+        '-v',
+        'error',
+        '-i',
+        filePath,
+        '-vn',
+        '-ac',
+        '1',
+        '-ar',
+        String(sampleRate),
+        '-f',
+        's16le',
+        'pipe:1'
+      ],
+      { windowsHide: true }
+    )
 
     let bucketIdx = 0
     let sampleInBucket = 0

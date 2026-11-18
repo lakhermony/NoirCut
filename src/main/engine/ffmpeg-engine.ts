@@ -38,9 +38,23 @@ function resolveWinBundledFfmpeg(): string | null {
   return candidates.find((p) => existsSync(p)) ?? null
 }
 
+function resolveWinBundledFfprobe(): string | null {
+  if (process.platform !== 'win32') return null
+  const arch = process.arch === 'ia32' ? 'ia32' : 'x64'
+  const candidates = [
+    join(process.resourcesPath, 'bin', 'win', 'ffprobe.exe'),
+    join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'ffprobe-static', 'bin', 'win32', arch, 'ffprobe.exe'),
+    resolve(app.getAppPath(), '..', 'app.asar.unpacked', 'node_modules', 'ffprobe-static', 'bin', 'win32', arch, 'ffprobe.exe'),
+    resolve(process.cwd(), 'node_modules', 'ffprobe-static', 'bin', 'win32', arch, 'ffprobe.exe')
+  ]
+  return candidates.find((p) => existsSync(p)) ?? null
+}
+
 function run(bin: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
-    execFile(bin, args, { timeout: 5000 }, (err, stdout) => resolve(err ? null : stdout))
+    execFile(bin, args, { timeout: 5000, windowsHide: true }, (err, stdout) =>
+      resolve(err ? null : stdout)
+    )
   })
 }
 
@@ -103,7 +117,8 @@ let cached: EngineInfo | null = null
 export async function initEngine(): Promise<EngineInfo> {
   const winFfmpeg = resolveWinBundledFfmpeg()
   const embeddedFfmpeg = winFfmpeg ?? resolveEmbedded(ffmpegStatic as unknown as string)
-  const embeddedFfprobe = resolveEmbedded((ffprobeStatic as { path: string }).path)
+  const embeddedFfprobe =
+    resolveWinBundledFfprobe() ?? resolveEmbedded((ffprobeStatic as { path: string }).path)
 
   let ffmpegPath = 'ffmpeg'
   let ffprobePath = 'ffprobe'

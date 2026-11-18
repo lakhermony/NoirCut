@@ -31,6 +31,9 @@ import {
 
 // Özel protokol 'ready' öncesi kaydedilmek zorunda
 registerMediaScheme()
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.noircut.studio')
+}
 
 function resolveWindowIcon() {
   const candidates = [
