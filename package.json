@@ -2,8 +2,11 @@
   "name": "noircut",
   "productName": "NoirCut",
   "version": "1.0.2",
-  "description": "NoirCut - Cinema Darkroom video editor (Linux & Windows)",
-  "author": "NoirCut Studio <lakhermony@users.noreply.github.com>",
+  "description": "NoirCut - Cinema Darkroom Video Editor for Linux and Windows",
+  "author": {
+    "name": "NoirCut Studio",
+    "email": "lakhermony@users.noreply.github.com"
+  },
   "homepage": "https://lakhermony.github.io/NoirCut/",
   "main": "./out/main/index.js",
   "private": true,
