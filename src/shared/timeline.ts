@@ -595,3 +595,182 @@ export function clipAt(clips: TimelineClip[], lane: LaneId, t: number): Timeline
 export function formatDb(db: number): string {
   return db <= MIN_DB ? '-∞ dB' : `${db > 0 ? '+' : ''}${db.toFixed(1)} dB`
 }
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * Kesintisiz (gapless) geçiş, hassas mıknatıs (snap) ve boşluk kapatma yardımcıları.
+ * Saf fonksiyonlardır; hem renderer (önizleme/timeline) hem main (export) kullanabilir.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/** Milisaniye hassasiyetinde yuvarlama: 5.300000000000001 gibi kayan nokta hatalarını yok eder. */
+export const round3 = (n: number): number => Math.round(n * 1000) / 1000
+
+/** Klibin bitiş zamanı (ms hassasiyetinde; bitişik klibin `start` değeriyle birebir aynı çıkar). */
+export const clipEndExact = (c: Pick<TimelineClip, 'start' | 'duration'>): number =>
+  round3(c.start + c.duration)
+
+/** Playhead mevcut klibin bitimine bu kadar yaklaşınca sıradaki klip gizli tampona önceden yüklenir. */
+export const GAPLESS_PRELOAD_SECONDS = 1.5
+/** Mıknatıs (snap) yakalama mesafesi (piksel). */
+export const SNAP_THRESHOLD_PX = 12
+const TIME_EPS = 1e-4
+
+export function clipSpeedFactor(c: Pick<TimelineClip, 'speed'>): number {
+  return Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
+}
+
+/** Timeline zamanı `t`'nin klibin kaynak dosyasındaki karşılığı (hız ve ters oynatma dahil). */
+export function clipSourceTimeAt(c: TimelineClip, t: number): number {
+  const spd = clipSpeedFactor(c)
+  const local = Math.max(0, Math.min(c.duration, t - c.start))
+  return c.reverse ? Math.max(0, c.in + Math.max(0, c.duration - local) * spd) : c.in + local * spd
+}
+
+/**
+ * `next`, `prev` klibinin kaynak dosyadaki birebir devamı mı?
+ * Evet ise (ör. Razor ile bölünmüş klip) aynı <video> elementi seek/yükleme yapmadan oynamaya devam eder.
+ */
+export function isSeamlessContinuation(prev: TimelineClip, next: TimelineClip): boolean {
+  if (prev.id === next.id) return true
+  if (prev.mediaId !== next.mediaId) return false
+  if (prev.reverse || next.reverse) return false
+  if (Math.abs(clipSpeedFactor(prev) - clipSpeedFactor(next)) > 1e-3) return false
+  if (Math.abs(clipEndExact(prev) - next.start) > 0.002) return false
+  const expectedIn = prev.in + prev.duration * clipSpeedFactor(prev)
+  return Math.abs(next.in - expectedIn) <= 0.02
+}
+
+/**
+ * `t` anından itibaren `lookahead` saniye içinde ekranda gösterilecek taban klibin DEĞİŞTİĞİ
+ * ilk geçişi bulur. `getBaseAt` zamana göre taban (en alttaki duyulur video) klibini döndürmelidir.
+ */
+export function findNextBaseClip(
+  clips: TimelineClip[],
+  getBaseAt: (t: number) => TimelineClip | undefined,
+  t: number,
+  lookahead = GAPLESS_PRELOAD_SECONDS
+): { clip: TimelineClip; at: number } | null {
+  const cur = getBaseAt(t)
+  const bounds = new Set<number>()
+  for (const c of clips) {
+    if (isCreditClip(c) || !isVideoLane(c.lane)) continue
+    const s = round3(c.start)
+    const e = clipEndExact(c)
+    if (s > t + TIME_EPS && s <= t + lookahead) bounds.add(s)
+    if (e > t + TIME_EPS && e <= t + lookahead) bounds.add(e)
+  }
+  const sorted = [...bounds].sort((a, b) => a - b)
+  for (const b of sorted) {
+    const nxt = getBaseAt(b + TIME_EPS)
+    if (nxt && nxt.id !== cur?.id) return { clip: nxt, at: b }
+  }
+  return null
+}
+
+export interface SnapTarget {
+  time: number
+  /** 0 = aynı kanaldaki bitişik klip ucu (en güçlü), 1 = diğer klip uçları / playhead / işaretçi */
+  priority: number
+}
+
+/**
+ * Sıkı mıknatıs: `threshold` içindeki hedefler arasında önce en güçlü öncelik, sonra en yakın seçilir.
+ * Sonuç ms'ye yuvarlanır → bitişik klibin bitişiyle birebir aynı zaman damgası.
+ */
+export function findStrictSnap(t: number, targets: SnapTarget[], threshold: number): number | null {
+  let best: SnapTarget | null = null
+  let bestDist = Infinity
+  for (const tg of targets) {
+    const d = Math.abs(t - tg.time)
+    if (d > threshold) continue
+    if (!best || tg.priority < best.priority || (tg.priority === best.priority && d < bestDist)) {
+      best = tg
+      bestDist = d
+    }
+  }
+  return best ? round3(best.time) : null
+}
+
+/**
+ * Taşıma sırasında klibin başı VEYA sonu bir hedefe yakalanır.
+ * `start` = kilitlenen yeni başlangıç, `guide` = gösterilecek kılavuz çizgisi zamanı.
+ */
+export function findStrictSnapForSpan(
+  start: number,
+  duration: number,
+  targets: SnapTarget[],
+  threshold: number
+): { start: number; guide: number } | null {
+  let best: { start: number; guide: number; priority: number; dist: number } | null = null
+  for (const tg of targets) {
+    const candidates: Array<{ start: number; dist: number }> = [
+      { start: tg.time, dist: Math.abs(start - tg.time) },
+      { start: tg.time - duration, dist: Math.abs(start + duration - tg.time) }
+    ]
+    for (const c of candidates) {
+      if (c.dist > threshold) continue
+      if (
+        !best ||
+        tg.priority < best.priority ||
+        (tg.priority === best.priority && c.dist < best.dist)
+      ) {
+        best = { start: c.start, guide: tg.time, priority: tg.priority, dist: c.dist }
+      }
+    }
+  }
+  return best ? { start: Math.max(0, round3(best.start)), guide: round3(best.guide) } : null
+}
+
+/** Kanalda `t` zamanının düştüğü boşluk (iki klip arası veya ilk klipten önce). Boşluk yoksa null. */
+export function findLaneGapAt(
+  clips: TimelineClip[],
+  lane: LaneId,
+  t: number
+): { start: number; end: number } | null {
+  const laneClips = clips
+    .filter((c) => c.lane === lane && c.duration > 0)
+    .sort((a, b) => a.start - b.start)
+  let cursor = 0
+  for (const c of laneClips) {
+    const s = round3(c.start)
+    if (t >= cursor && t < s && s - cursor > 0.002) return { start: cursor, end: s }
+    cursor = Math.max(cursor, clipEndExact(c))
+  }
+  return null
+}
+
+/**
+ * "Boşluğu Kapat (Ripple Delete Gap)": boşluğun sağındaki tüm klipleri boşluk kadar sola kaydırır.
+ * Tıklanan kanal her zaman kayar; diğer kanallar yalnızca boşluk aralığında klipleri YOKSA
+ * (çakışma / senkron kaybı olmasın diye) birlikte kayar.
+ */
+export function rippleCloseGap(
+  clips: TimelineClip[],
+  lane: LaneId,
+  gapStart: number,
+  gapEnd: number
+): { clips: TimelineClip[]; shiftedLanes: LaneId[] } {
+  const shift = gapEnd - gapStart
+  if (shift <= 0.0005) return { clips, shiftedLanes: [] }
+
+  const lanesInUse = [...new Set(clips.map((c) => c.lane))]
+  const shifting = new Set<LaneId>([lane])
+  for (const l of lanesInUse) {
+    if (l === lane) continue
+    const blocked = clips.some(
+      (c) => c.lane === l && c.start < gapEnd - 0.002 && clipEndExact(c) > gapStart + 0.002
+    )
+    const hasRight = clips.some((c) => c.lane === l && c.start >= gapEnd - 0.002)
+    if (!blocked && hasRight) shifting.add(l)
+  }
+
+  const next = clips.map((c) => {
+    if (!shifting.has(c.lane) || c.start < gapEnd - 0.002) return c
+    const moved =
+      Math.abs(c.start - gapEnd) <= 0.002 ? round3(gapStart) : Math.max(0, round3(c.start - shift))
+    return { ...c, start: moved }
+  })
+  const shiftedLanes = [...shifting].filter((l) =>
+    clips.some((c) => c.lane === l && c.start >= gapEnd - 0.002)
+  )
+  return { clips: next, shiftedLanes }
+}

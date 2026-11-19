@@ -373,9 +373,11 @@ export async function exportTimeline(
   const vSegLabels: string[] = []
   let cursor = 0
   let segCounter = 0
+  // 1 kareden küçük mikro kayan nokta farkları için siyah kare üretme (kesintisiz birleştirme)
+  const minGapSec = Math.max(0.045, 0.95 / Math.max(1, fps))
 
   for (const c of vClips) {
-    if (c.start > cursor + 0.02) {
+    if (c.start > cursor + minGapSec) {
       const gap = c.start - cursor
       const lbl = `vseg${segCounter++}`
       filterParts.push(

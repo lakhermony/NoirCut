@@ -10,7 +10,7 @@ import {
 import type { MediaItem } from '../../../shared/types'
 import { fmt } from '../lib/format'
 import { WebGLColorEngine } from '../lib/webgl-grade'
-import { getPlayableUrl, type OverlayVisualLayer } from '../hooks/usePlayer'
+import { getPlayableUrl, type OverlayVisualLayer, type VideoSlot } from '../hooks/usePlayer'
 import CreditOverlay from './CreditOverlay'
 import { MEDIA_DRAG_TYPE } from './LeftPanel'
 import type { ComparisonMode } from './noirfilm/LookComparisonViewer'
@@ -79,6 +79,7 @@ export default function Monitor({
   activeClip,
   overlayLayers = [],
   registerOverlayVideoEl,
+  registerVideoBufferEl,
   videoProps,
   videoRef,
   error,
@@ -111,6 +112,7 @@ export default function Monitor({
   activeClip?: TimelineClip | null
   overlayLayers?: OverlayVisualLayer[]
   registerOverlayVideoEl?: (clipId: string, el: HTMLVideoElement | null) => void
+  registerVideoBufferEl?: (slot: VideoSlot, el: HTMLVideoElement | null) => void
   videoProps: React.VideoHTMLAttributes<HTMLVideoElement>
   videoRef: React.MutableRefObject<HTMLVideoElement | null>
   error: string | null
@@ -168,6 +170,8 @@ export default function Monitor({
   const box = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
+  const slotARef = useRef<HTMLVideoElement | null>(null)
+  const slotBRef = useRef<HTMLVideoElement | null>(null)
   const sampleCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const engineRef = useRef<WebGLColorEngine | null>(null)
   const isImageMedia = media?.mediaKind === 'image'
@@ -325,16 +329,20 @@ export default function Monitor({
     }
   }, [isAudioMedia, isImageMedia, videoRef])
 
-  // WebGL2 motorunu başlat
+  // WebGL2 motorunu başlat (klip geçişlerinde motoru ve çizilmiş kareyi sıfırlama; siyah flaşı önler)
   useEffect(() => {
-    setWebglDrawn(false)
     if (!isVisualMedia) {
+      setWebglDrawn(false)
       engineRef.current?.dispose()
       engineRef.current = null
       return
     }
     const canvas = canvasRef.current
     if (!canvas) return
+    if (engineRef.current) {
+      renderFrame()
+      return
+    }
     try {
       const engine = new WebGLColorEngine(canvas)
       engineRef.current = engine
@@ -348,58 +356,78 @@ export default function Monitor({
       setWebglReady(false)
       return undefined
     }
-  }, [isVisualMedia, media, renderFrame])
+  }, [isVisualMedia, renderFrame])
 
-  // Renk / LUT / zaman / karşılaştırma değiştiğinde anında kareyi güncelle
+  // Renk / LUT / zaman / medya / karşılaştırma değiştiğinde anında kareyi güncelle
   useEffect(() => {
     renderFrame()
-  }, [grade, activeLut, time, falseColor, effCompareMode, effWipe, renderFrame])
+  }, [media, grade, activeLut, time, falseColor, effCompareMode, effWipe, renderFrame])
 
-  // Video olaylarında (loadedmetadata, loadeddata, canplay, seeked, pause) ve oynatma sırasında güncelle
+  // Her iki video tamponunda (Slot A + Slot B) olayları ve oynatma döngüsünü dinle
   useEffect(() => {
-    const v = videoRef.current
-    if (!v || !media || media.mediaKind === 'image' || media.mediaKind === 'audio') return
-    const onMeta = () => {
-      // İlk kareyi hemen decode ettir (duraklatılmış haldeyken readyState >= 2 olması için)
-      if (v.paused && v.currentTime === 0) {
-        try {
-          v.currentTime = 0.0001
-        } catch {
-          // ignore
+    if (!isVisualMedia) return
+    const videos = [slotARef.current, slotBRef.current].filter(
+      (el): el is HTMLVideoElement => el !== null
+    )
+    if (videos.length === 0 && videoRef.current) {
+      videos.push(videoRef.current)
+    }
+
+    const cleanups: Array<() => void> = []
+    for (const v of videos) {
+      const onMeta = () => {
+        // Yalnızca aktif (preload olmayan) tampon 0. saniyedeyse ilk kareyi decode ettir
+        if (!v.dataset.preloadClipId && v.paused && v.currentTime === 0) {
+          try {
+            v.currentTime = 0.0001
+          } catch {
+            // ignore
+          }
+        }
+        renderFrame()
+      }
+      const onFrame = () => renderFrame()
+      v.addEventListener('loadedmetadata', onMeta)
+      v.addEventListener('loadeddata', onFrame)
+      v.addEventListener('canplay', onFrame)
+      v.addEventListener('canplaythrough', onFrame)
+      v.addEventListener('seeked', onFrame)
+      v.addEventListener('pause', onFrame)
+      v.addEventListener('timeupdate', onFrame)
+
+      let vfcId = 0
+      const rVfc = (
+        v as HTMLVideoElement & {
+          requestVideoFrameCallback?: (cb: () => void) => number
+          cancelVideoFrameCallback?: (id: number) => void
+        }
+      ).requestVideoFrameCallback
+      const cVfc = (
+        v as HTMLVideoElement & {
+          cancelVideoFrameCallback?: (id: number) => void
+        }
+      ).cancelVideoFrameCallback
+
+      const onVideoFrame = () => {
+        if (videoRef.current === v) renderFrame()
+        if (typeof rVfc === 'function') {
+          vfcId = rVfc.call(v, onVideoFrame)
         }
       }
-      renderFrame()
-    }
-    const onFrame = () => renderFrame()
-    v.addEventListener('loadedmetadata', onMeta)
-    v.addEventListener('loadeddata', onFrame)
-    v.addEventListener('canplay', onFrame)
-    v.addEventListener('canplaythrough', onFrame)
-    v.addEventListener('seeked', onFrame)
-    v.addEventListener('pause', onFrame)
-    v.addEventListener('timeupdate', onFrame)
-
-    let vfcId = 0
-    const rVfc = (
-      v as HTMLVideoElement & {
-        requestVideoFrameCallback?: (cb: () => void) => number
-        cancelVideoFrameCallback?: (id: number) => void
-      }
-    ).requestVideoFrameCallback
-    const cVfc = (
-      v as HTMLVideoElement & {
-        cancelVideoFrameCallback?: (id: number) => void
-      }
-    ).cancelVideoFrameCallback
-
-    const onVideoFrame = () => {
-      renderFrame()
       if (typeof rVfc === 'function') {
         vfcId = rVfc.call(v, onVideoFrame)
       }
-    }
-    if (typeof rVfc === 'function') {
-      vfcId = rVfc.call(v, onVideoFrame)
+
+      cleanups.push(() => {
+        if (vfcId && typeof cVfc === 'function') cVfc.call(v, vfcId)
+        v.removeEventListener('loadedmetadata', onMeta)
+        v.removeEventListener('loadeddata', onFrame)
+        v.removeEventListener('canplay', onFrame)
+        v.removeEventListener('canplaythrough', onFrame)
+        v.removeEventListener('seeked', onFrame)
+        v.removeEventListener('pause', onFrame)
+        v.removeEventListener('timeupdate', onFrame)
+      })
     }
 
     let raf = 0
@@ -411,16 +439,9 @@ export default function Monitor({
 
     return () => {
       cancelAnimationFrame(raf)
-      if (vfcId && typeof cVfc === 'function') cVfc.call(v, vfcId)
-      v.removeEventListener('loadedmetadata', onMeta)
-      v.removeEventListener('loadeddata', onFrame)
-      v.removeEventListener('canplay', onFrame)
-      v.removeEventListener('canplaythrough', onFrame)
-      v.removeEventListener('seeked', onFrame)
-      v.removeEventListener('pause', onFrame)
-      v.removeEventListener('timeupdate', onFrame)
+      for (const fn of cleanups) fn()
     }
-  }, [media, playing, videoRef, renderFrame])
+  }, [isVisualMedia, media, playing, videoRef, renderFrame])
 
   const scrub = (e: React.PointerEvent) => {
     if (!duration) return
@@ -700,9 +721,9 @@ export default function Monitor({
             </defs>
           </svg>
 
-          {/* ÖNCE (ham görüntü + ses kaynağı) */}
+          {/* ÖNCE (ham görüntü + çift tamponlu kesintisiz video kaynağı: Slot A & Slot B) */}
           <div className="absolute inset-0" style={clipTransformStyle}>
-            {isImageMedia && media ? (
+            {isImageMedia && media && (
               <img
                 ref={imgRef}
                 data-testid="image-main"
@@ -715,20 +736,56 @@ export default function Monitor({
                 }}
                 className="h-full w-full object-contain"
               />
-            ) : isVisualMedia && media ? (
-              <video
-                {...videoProps}
-                ref={videoRef}
-                data-testid="video-main"
-                src={getPlayableUrl(media) ?? undefined}
-                crossOrigin="anonymous"
-                playsInline
-                preload="auto"
-                style={{
-                  filter: !split && (!webglReady || !webglDrawn) ? 'url(#noircut-grade-filter)' : undefined
-                }}
-                className="h-full w-full object-contain"
-              />
+            )}
+            {isVisualMedia && media ? (
+              <>
+                <video
+                  {...videoProps}
+                  ref={(el) => {
+                    slotARef.current = el
+                    if (registerVideoBufferEl) {
+                      registerVideoBufferEl('A', el)
+                    } else {
+                      videoRef.current = el
+                    }
+                  }}
+                  data-testid="video-main"
+                  data-video-slot="A"
+                  src={!registerVideoBufferEl ? (getPlayableUrl(media) ?? undefined) : undefined}
+                  crossOrigin="anonymous"
+                  playsInline
+                  preload="auto"
+                  style={{
+                    filter: !split && (!webglReady || !webglDrawn) ? 'url(#noircut-grade-filter)' : undefined
+                  }}
+                  className={
+                    isImageMedia
+                      ? 'hidden'
+                      : 'absolute inset-0 h-full w-full object-contain'
+                  }
+                />
+                <video
+                  {...videoProps}
+                  ref={(el) => {
+                    slotBRef.current = el
+                    registerVideoBufferEl?.('B', el)
+                  }}
+                  data-testid="video-preload-buffer"
+                  data-video-slot="B"
+                  crossOrigin="anonymous"
+                  playsInline
+                  preload="auto"
+                  style={{
+                    opacity: 0,
+                    filter: !split && (!webglReady || !webglDrawn) ? 'url(#noircut-grade-filter)' : undefined
+                  }}
+                  className={
+                    isImageMedia
+                      ? 'hidden'
+                      : 'pointer-events-none absolute inset-0 h-full w-full object-contain'
+                  }
+                />
+              </>
             ) : (
               <div
                 style={{ filter: 'saturate(0.75) contrast(0.9) brightness(0.95)' }}

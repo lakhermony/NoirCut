@@ -19,6 +19,7 @@ import {
   NOIR_SOUNDSCAPE_PRESETS,
   clipAt,
   clipEnd,
+  clipEndExact,
   cloneKeyframes,
   defaultClipTransform,
   defaultExportSettings,
@@ -34,6 +35,8 @@ import {
   nextVideoLaneId,
   normalizeLanesMap,
   projectEnd,
+  rippleCloseGap,
+  round3,
   type CaseMarker,
   type CaseMarkerColor,
   type CreditExportOverlay,
@@ -253,7 +256,7 @@ export default function App() {
   const [statusToast, setStatusToast] = useState<string | null>(null)
   const [wbPickerActive, setWbPickerActive] = useState(false)
   const [showLauncher, setShowLauncher] = useState(true)
-  const [appVersion, setAppVersion] = useState('1.0.2')
+  const [appVersion, setAppVersion] = useState('1.0.3')
   const [recentProjects, setRecentProjects] = useState<RecentProjectEntry[]>(() => {
     try {
       const raw = window.localStorage.getItem('noircut.recentProjects.v1')
@@ -308,9 +311,9 @@ export default function App() {
       mediaId: m.id,
       lane,
       name: m.name,
-      start,
+      start: round3(start),
       in: 0,
-      duration: m.duration,
+      duration: round3(m.duration),
       gainDb: 0,
       fadeIn: 0,
       fadeOut: 0,
@@ -511,9 +514,9 @@ export default function App() {
 
   // Playhead konumundan klip bölme (Razor / C)
   const cut = useCallback(() => {
-    const t = player.time
+    const t = round3(player.time)
     const cs = stateSnapshotRef.current.clips
-    const canSplit = (c: TimelineClip) => t > c.start + 0.05 && t < clipEnd(c) - 0.05
+    const canSplit = (c: TimelineClip) => t > c.start + 0.05 && t < clipEndExact(c) - 0.05
     const selected = selectedClipId ? cs.find((c) => c.id === selectedClipId && canSplit(c)) : undefined
     const targets = selected ? [selected] : cs.filter(canSplit)
     if (targets.length === 0) return
@@ -523,15 +526,16 @@ export default function App() {
     setClips((prev) =>
       prev.flatMap((c) => {
         if (!targetIds.has(c.id)) return [c]
-        const leftDur = t - c.start
-        const rightDur = clipEnd(c) - t
+        const leftDur = round3(t - c.start)
+        const rightDur = round3(clipEndExact(c) - t)
+        const spd = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
         const leftKfs = c.keyframes
           ? c.keyframes.filter((k) => k.time <= leftDur).map((k) => ({ ...k }))
           : undefined
         const rightKfs = c.keyframes
           ? c.keyframes
               .filter((k) => k.time > leftDur)
-              .map((k) => ({ ...k, time: Number((k.time - leftDur).toFixed(3)) }))
+              .map((k) => ({ ...k, time: round3(k.time - leftDur) }))
           : undefined
         const left: TimelineClip = {
           ...c,
@@ -546,7 +550,7 @@ export default function App() {
           ...c,
           id: `clip-${nextId.current++}`,
           start: t,
-          in: c.in + leftDur,
+          in: round3(c.in + leftDur * spd),
           duration: rightDur,
           fadeIn: 0,
           fadeOut: Math.min(c.fadeOut, rightDur),
@@ -607,12 +611,24 @@ export default function App() {
         let cursor = 0
         const repositioned = new Map<string, number>()
         for (const c of laneClips) {
-          repositioned.set(c.id, Number(cursor.toFixed(3)))
-          cursor += c.duration
+          repositioned.set(c.id, round3(cursor))
+          cursor = round3(cursor + c.duration)
         }
         return cs.map((c) => (repositioned.has(c.id) ? { ...c, start: repositioned.get(c.id)! } : c))
       })
       showToast(`${targetLane} kanalındaki boşluklar kapatıldı`)
+    },
+    [recordHistory, showToast]
+  )
+
+  // İki klip arasındaki boşluğa sağ tıklanıp "Boşluğu Kapat (Ripple Delete Gap)" seçildiğinde sağdaki klipleri boşluksuz sola yapıştır
+  const handleRippleCloseGap = useCallback(
+    (lane: LaneId, gapStart: number, gapEnd: number) => {
+      const gapDur = round3(gapEnd - gapStart)
+      if (gapDur <= 0.001) return
+      recordHistory('Boşluğu Kapat (Ripple Delete Gap)')
+      setClips((cs) => rippleCloseGap(cs, lane, gapStart, gapEnd).clips)
+      showToast(`Boşluk kapatıldı (${lane} · ${gapDur.toFixed(2)}s)`)
     },
     [recordHistory, showToast]
   )
@@ -736,8 +752,8 @@ export default function App() {
       setClips((cs) => {
         const laneEnd = cs
           .filter((c) => c.lane === targetLane)
-          .reduce((max, c) => Math.max(max, clipEnd(c)), 0)
-        return [...cs, makeClip(m, targetLane, laneEnd)]
+          .reduce((max, c) => Math.max(max, clipEndExact(c)), 0)
+        return [...cs, makeClip(m, targetLane, round3(laneEnd))]
       })
     },
     [mediaMap, makeClip, recordHistory]
@@ -1717,6 +1733,7 @@ export default function App() {
           activeClip={player.activePrimaryClip ?? targetGradeClip}
           overlayLayers={player.overlayVisualClips}
           registerOverlayVideoEl={player.registerOverlayVideoEl}
+          registerVideoBufferEl={player.registerVideoBufferEl}
           selectedClipId={selectedClipId}
           onSelectClip={(clipId, seekTime) => {
             setSelectedClipId(clipId)
@@ -1831,6 +1848,7 @@ export default function App() {
               activeClip={player.activePrimaryClip ?? targetGradeClip}
               overlayLayers={player.overlayVisualClips}
               registerOverlayVideoEl={player.registerOverlayVideoEl}
+              registerVideoBufferEl={player.registerVideoBufferEl}
               videoProps={player.videoProps}
               videoRef={player.videoRef}
               error={player.error}
@@ -1947,6 +1965,7 @@ export default function App() {
             onDeleteSelected={deleteSelected}
             onRippleDelete={rippleDeleteSelected}
             onCloseGaps={closeGaps}
+            onRippleCloseGap={handleRippleCloseGap}
             rippleMode={rippleMode}
             onToggleRippleMode={() => setRippleMode((v) => !v)}
             onDetachSelected={detachSelected}

@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  GAPLESS_PRELOAD_SECONDS,
   clipAt,
   clipGainAt,
+  clipSourceTimeAt,
   computeAutoDuckMultiplierAt,
+  findNextBaseClip,
   getOrderedAudioLanes,
   getOrderedVideoLanesAsc,
   isAudioLane,
   isCreditClip,
   isLaneAudible,
+  isSeamlessContinuation,
   isVideoLane,
   projectEnd,
   type LaneId,
@@ -27,8 +31,16 @@ export interface OverlayVisualLayer {
   media: MediaItem
 }
 
+/** Program monitörü çift tamponu: biri ekranda (aktif), diğeri sıradaki klibi önceden yükler. */
+export type VideoSlot = 'A' | 'B'
+const otherSlot = (s: VideoSlot): VideoSlot => (s === 'A' ? 'B' : 'A')
+
 /**
  * Çok kanallı Timeline Oynatıcı (V1..Vn, A1..An).
+ *
+ * Kesintisiz (gapless) geçiş: taban video iki <video> tamponu (A/B) ile çalışır.
+ * Playhead bir sonraki klibe `GAPLESS_PRELOAD_SECONDS` kala, sıradaki klibin kaynağı ve giriş karesi
+ * gizli tamponda hazırlanır; geçiş anında `videoRef.current` hazır tampona çevrilir (siyah kare yok).
  */
 export function usePlayer(
   clips: TimelineClip[],
@@ -36,7 +48,15 @@ export function usePlayer(
   mediaItems: MediaItem[],
   autoDucking = false
 ) {
+  /** Her zaman EKRANDAKİ (aktif) tamponu gösterir; WebGL2 motoru ve skoplar bunu okur. */
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const slotElsRef = useRef<Record<VideoSlot, HTMLVideoElement | null>>({ A: null, B: null })
+  const activeSlotRef = useRef<VideoSlot>('A')
+  const swapPendingRef = useRef(false)
+  const warmedImagesRef = useRef<Set<string>>(new Set())
+  const syncAllAtRef = useRef<(t: number, isPlaying: boolean, forceSeek?: boolean) => void>(
+    () => undefined
+  )
   const audioA1Ref = useRef<HTMLAudioElement | null>(null)
   const audioA2Ref = useRef<HTMLAudioElement | null>(null)
   const extraAudioElsRef = useRef<Map<LaneId, HTMLAudioElement>>(new Map())
@@ -184,6 +204,33 @@ export function usePlayer(
     }
   }, [])
 
+  /** Aktif tamponu görünür (opacity 1), diğerini gizli (opacity 0) yapar ve `videoRef`'i aktife bağlar. */
+  const applyActiveSlotStyles = useCallback(() => {
+    const act = activeSlotRef.current
+    for (const s of ['A', 'B'] as const) {
+      const el = slotElsRef.current[s]
+      if (!el) continue
+      el.style.opacity = s === act ? '1' : '0'
+      el.style.zIndex = s === act ? '2' : '1'
+    }
+    videoRef.current = slotElsRef.current[act]
+  }, [])
+
+  /** Monitor, iki <video> tamponunu (A/B) buraya kaydeder (EDIT ve GRADE monitörleri aynı mantığı paylaşır). */
+  const registerVideoBufferEl = useCallback(
+    (slot: VideoSlot, el: HTMLVideoElement | null) => {
+      const prev = slotElsRef.current[slot]
+      slotElsRef.current[slot] = el
+      applyActiveSlotStyles()
+      if (el && el !== prev) {
+        el.preload = 'auto'
+        // Yeni (örn. sekme değişiminde yeniden oluşan) elemente kaynağı hemen yükle
+        queueMicrotask(() => syncAllAtRef.current(timeRef.current, playingRef.current, true))
+      }
+    },
+    [applyActiveSlotStyles]
+  )
+
   const syncElement = useCallback(
     (
       el: HTMLMediaElement | null,
@@ -204,12 +251,13 @@ export function usePlayer(
       }
 
       const m = mediaMap.get(clip.mediaId)
-      if (el === videoRef.current && (m?.mediaKind === 'image' || m?.mediaKind === 'audio')) {
+      if (el.tagName === 'VIDEO' && (m?.mediaKind === 'image' || m?.mediaKind === 'audio')) {
         if (!el.paused) el.pause()
         el.muted = true
         el.volume = 0
         el.dataset.effectiveGain = '0'
         el.dataset.clipId = clip.id
+        el.dataset.preloadClipId = ''
         return
       }
       const targetUrl = getPlayableUrl(m)
@@ -267,6 +315,7 @@ export function usePlayer(
       el.volume = Math.max(0, Math.min(1, effectiveGain))
       el.dataset.effectiveGain = effectiveGain.toFixed(4)
       el.dataset.clipId = clip.id
+      el.dataset.preloadClipId = ''
 
       if (isPlaying && !isReverseShuttle) {
         if (el.paused) {
@@ -279,18 +328,129 @@ export function usePlayer(
     [autoDucking, clips, lanes, mediaMap, scheduleSeek]
   )
 
+  const preloadStandbyVideo = useCallback(
+    (standbyEl: HTMLVideoElement | null, curClip: TimelineClip | undefined, t: number) => {
+      if (!standbyEl) return
+      const upcoming = findNextBaseClip(
+        clips,
+        (qt) => getVisualStackAt(qt)[0],
+        t,
+        GAPLESS_PRELOAD_SECONDS
+      )
+      if (!upcoming) {
+        if (!standbyEl.paused) standbyEl.pause()
+        standbyEl.muted = true
+        standbyEl.volume = 0
+        return
+      }
+      const nextClip = upcoming.clip
+      if (curClip && isSeamlessContinuation(curClip, nextClip)) {
+        // Aynı dosyanın kesintisiz devamı (Razor kesiği): aktif tampon kesintisiz devam edecek
+        if (!standbyEl.paused) standbyEl.pause()
+        standbyEl.muted = true
+        return
+      }
+
+      const m = mediaMap.get(nextClip.mediaId)
+      const targetUrl = getPlayableUrl(m)
+      if (!m || !targetUrl) return
+
+      if (m.mediaKind === 'image') {
+        if (!warmedImagesRef.current.has(targetUrl)) {
+          warmedImagesRef.current.add(targetUrl)
+          const img = new Image()
+          img.src = targetUrl
+        }
+        return
+      }
+      if (m.mediaKind === 'audio') return
+
+      standbyEl.muted = true
+      standbyEl.volume = 0
+      standbyEl.preload = 'auto'
+      if (!standbyEl.paused) standbyEl.pause()
+
+      if (standbyEl.getAttribute('src') !== targetUrl) {
+        standbyEl.setAttribute('src', targetUrl)
+        standbyEl.dataset.preloadClipId = nextClip.id
+        standbyEl.dataset.clipId = ''
+        standbyEl.load()
+      }
+
+      const targetIn = clipSourceTimeAt(nextClip, upcoming.at)
+      const spd = Math.max(0.25, Math.min(4.0, (nextClip.speed ?? 100) / 100))
+      try {
+        if (Math.abs(standbyEl.playbackRate - spd) > 0.01) {
+          standbyEl.playbackRate = spd
+        }
+      } catch {
+        // yoksay
+      }
+
+      const alreadyParked =
+        standbyEl.dataset.preloadClipId === nextClip.id &&
+        Math.abs(standbyEl.currentTime - targetIn) <= 0.03
+      if (!alreadyParked) {
+        standbyEl.dataset.preloadClipId = nextClip.id
+        scheduleSeek(standbyEl, targetIn)
+      }
+    },
+    [clips, getVisualStackAt, mediaMap, scheduleSeek]
+  )
+
   const syncAllAt = useCallback(
     (t: number, isPlaying: boolean, forceSeek = false) => {
       const stack = getVisualStackAt(t)
-      const baseVClip = stack[0]
+      const baseVClip = stack[0] ?? fallbackVClip ?? undefined
+
+      const curSlot = activeSlotRef.current
+      const stbySlot = otherSlot(curSlot)
+      let activeEl = slotElsRef.current[curSlot] ?? videoRef.current
+      let standbyEl = slotElsRef.current[stbySlot]
+
+      // Sıradaki klibe geçildiyse ve yedek tamponda bu klip önceden hazırlanmışsa anında tampon değiştir
+      if (
+        baseVClip &&
+        standbyEl &&
+        activeEl &&
+        activeEl.dataset.clipId !== baseVClip.id &&
+        (standbyEl.dataset.preloadClipId === baseVClip.id ||
+          standbyEl.dataset.clipId === baseVClip.id)
+      ) {
+        if (!activeEl.paused) activeEl.pause()
+        activeEl.muted = true
+        activeEl.volume = 0
+        activeEl.dataset.effectiveGain = '0'
+        activeEl.dataset.clipId = ''
+
+        activeSlotRef.current = stbySlot
+        swapPendingRef.current = true
+        applyActiveSlotStyles()
+        activeEl = standbyEl
+        standbyEl = slotElsRef.current[curSlot]
+      } else {
+        videoRef.current = activeEl
+      }
+
+      const justSwapped = swapPendingRef.current
+      swapPendingRef.current = false
+
       syncElement(
-        videoRef.current,
-        baseVClip,
-        baseVClip ? isLaneAudible(lanes, baseVClip.lane) : true,
+        activeEl,
+        stack[0],
+        stack[0] ? isLaneAudible(lanes, stack[0].lane) : true,
         t,
         isPlaying,
-        forceSeek
+        forceSeek && !justSwapped
       )
+
+      // Aktif klip yoksa ancak fallback klip varsa ilk karesini sessizce hazır tut
+      if (!stack[0] && baseVClip && activeEl) {
+        syncElement(activeEl, baseVClip, false, baseVClip.start, false, false)
+      }
+
+      // 1.5 sn önceden bir sonraki taban klibini yedek tamponda hazırla
+      preloadStandbyVideo(standbyEl, stack[0], t)
 
       const activeOverlayIds = new Set<string>()
       for (let i = 1; i < stack.length; i++) {
@@ -317,8 +477,18 @@ export function usePlayer(
         }
       }
     },
-    [clips, getVisualStackAt, lanes, orderedAudioLanes, syncElement]
+    [
+      applyActiveSlotStyles,
+      clips,
+      fallbackVClip,
+      getVisualStackAt,
+      lanes,
+      orderedAudioLanes,
+      preloadStandbyVideo,
+      syncElement
+    ]
   )
+  syncAllAtRef.current = syncAllAt
 
   useEffect(() => {
     syncAllAt(timeRef.current, playing)
@@ -342,17 +512,19 @@ export function usePlayer(
       const rate = shuttleRateRef.current || 1
       let nextT = anchorTimeRef.current + ((now - anchorWallRef.current) / 1000) * rate
 
-      // Normal ileri oynatmada alt video saatini ana referans kabul et (duraklatmada kare atlaması önlenir)
+      // Normal ileri oynatmada alt video saatini ana referans kabul et (klip sınırında takılmaması için bitime 35ms kala serbest saat geçişi yap)
       const vEl = videoRef.current
-      const curVClip = rate > 0 ? getVisualStackAt(timeRef.current)[0] : undefined
+      const curVClip = rate > 0 ? getVisualStackAt(nextT)[0] : undefined
       if (
         rate > 0 &&
         curVClip &&
         !curVClip.reverse &&
         vEl &&
+        vEl.dataset.clipId === curVClip.id &&
         !vEl.paused &&
         !vEl.seeking &&
-        vEl.readyState >= 2
+        vEl.readyState >= 2 &&
+        nextT < curVClip.start + curVClip.duration - 0.035
       ) {
         const vm = mediaMap.get(curVClip.mediaId)
         if (vm?.mediaKind !== 'image' && vm?.mediaKind !== 'audio') {
@@ -360,8 +532,8 @@ export function usePlayer(
           const videoBasedT = curVClip.start + (vEl.currentTime - curVClip.in) / spd
           if (
             Number.isFinite(videoBasedT) &&
-            videoBasedT >= curVClip.start - 0.05 &&
-            videoBasedT <= curVClip.start + curVClip.duration + 0.05 &&
+            videoBasedT >= curVClip.start - 0.02 &&
+            videoBasedT <= curVClip.start + curVClip.duration &&
             Math.abs(videoBasedT - nextT) < 0.35
           ) {
             nextT = Math.max(0, videoBasedT)
@@ -572,6 +744,7 @@ export function usePlayer(
     overlayVisualClips,
     registerAudioEl,
     registerOverlayVideoEl,
+    registerVideoBufferEl,
     videoProps,
     videoSrc,
     currentMedia,

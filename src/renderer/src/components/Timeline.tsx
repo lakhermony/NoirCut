@@ -1,6 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   CASE_MARKER_COLOR_META,
+  SNAP_THRESHOLD_PX,
+  clipEndExact,
+  findLaneGapAt,
+  findStrictSnap,
+  findStrictSnapForSpan,
   formatDb,
   isAudioLane,
   isCreditClip,
@@ -8,10 +13,12 @@ import {
   isVideoLane,
   laneNumber,
   orderLanes,
+  round3,
   type CaseMarker,
   type CaseMarkerColor,
   type LaneId,
   type LaneMap,
+  type SnapTarget,
   type TimelineClip
 } from '../../../shared/timeline'
 import type { MediaItem, PeaksResult } from '../../../shared/types'
@@ -106,6 +113,7 @@ export default function Timeline({
   onDeleteSelected,
   onRippleDelete,
   onCloseGaps,
+  onRippleCloseGap,
   rippleMode = false,
   onToggleRippleMode,
   onDetachSelected,
@@ -154,6 +162,7 @@ export default function Timeline({
   onDeleteSelected: () => void
   onRippleDelete?: () => void
   onCloseGaps?: (lane?: LaneId) => void
+  onRippleCloseGap?: (lane: LaneId, gapStart: number, gapEnd: number) => void
   rippleMode?: boolean
   onToggleRippleMode?: () => void
   onDetachSelected: () => void
@@ -178,6 +187,29 @@ export default function Timeline({
   const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null)
   const [draggingClipId, setDraggingClipId] = useState<string | null>(null)
   const [dropTargetLane, setDropTargetLane] = useState<LaneId | null>(null)
+  const [gapMenu, setGapMenu] = useState<{
+    x: number
+    y: number
+    lane: LaneId
+    start: number
+    end: number
+  } | null>(null)
+
+  useEffect(() => {
+    if (!gapMenu) return
+    const close = () => setGapMenu(null)
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') setGapMenu(null)
+    }
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', close, true)
+    return () => {
+      window.removeEventListener('pointerdown', close)
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', close, true)
+    }
+  }, [gapMenu])
 
   const orderedLanes = orderLanes(lanes, clips)
 
@@ -237,13 +269,13 @@ export default function Timeline({
     const x = clientX - r.left + area.current.scrollLeft
     let t = Math.max(0, Math.min(total, x / pps))
     if (snap) {
-      const thresh = 8 / pps
+      const thresh = SNAP_THRESHOLD_PX / Math.max(1, pps)
       let best = t
       let bestDist = thresh
       for (const c of clips) {
-        for (const edge of [c.start, c.start + c.duration]) {
+        for (const edge of [round3(c.start), clipEndExact(c)]) {
           const d = Math.abs(t - edge)
-          if (d < bestDist) {
+          if (d <= bestDist) {
             bestDist = d
             best = edge
           }
@@ -339,42 +371,50 @@ export default function Timeline({
 
     const lanePeers = getLanePeers(clip.lane)
 
-    const prevNeighbor = [...lanePeers].reverse().find((o) => o.start + o.duration <= initStart + 0.02)
-    const nextNeighbor = lanePeers.find((o) => o.start >= initEnd - 0.02)
-    const minTrimStart = prevNeighbor ? prevNeighbor.start + prevNeighbor.duration : 0
-    const maxTrimEnd = nextNeighbor ? nextNeighbor.start : Infinity
+    const prevNeighbor = [...lanePeers].reverse().find((o) => clipEndExact(o) <= initStart + 0.02)
+    const nextNeighbor = lanePeers.find((o) => round3(o.start) >= initEnd - 0.02)
+    const minTrimStart = prevNeighbor ? clipEndExact(prevNeighbor) : 0
+    const maxTrimEnd = nextNeighbor ? round3(nextNeighbor.start) : Infinity
 
-    const snapTargets: number[] = [0, time]
-    for (const o of clips) {
-      if (o.id === clip.id) continue
-      snapTargets.push(o.start, o.start + o.duration)
-    }
-    for (const mk of markers) snapTargets.push(mk.time)
-
-    const findSnap = (t: number): number | null => {
-      if (!snap) return null
-      const thresh = 8 / Math.max(1, pps)
-      let best: number | null = null
-      let bestDist = thresh
-      for (const s of snapTargets) {
-        const d = Math.abs(t - s)
-        if (d < bestDist) {
-          bestDist = d
-          best = s
-        }
+    const buildSnapTargets = (forLane: LaneId): SnapTarget[] => {
+      const targets: SnapTarget[] = [
+        { time: 0, priority: 1 },
+        { time: round3(time), priority: 1 }
+      ]
+      if (inPoint !== null) targets.push({ time: round3(inPoint), priority: 1 })
+      if (outPoint !== null) targets.push({ time: round3(outPoint), priority: 1 })
+      for (const o of clipsRef.current) {
+        if (o.id === clip.id) continue
+        const priority = o.lane === forLane ? 0 : 1
+        targets.push(
+          { time: round3(o.start), priority },
+          { time: clipEndExact(o), priority }
+        )
       }
-      return best
+      for (const mk of markers) targets.push({ time: round3(mk.time), priority: 1 })
+      return targets
+    }
+
+    const snapThresholdSec = SNAP_THRESHOLD_PX / Math.max(1, pps)
+    const findSnap = (t: number, forLane: LaneId = clip.lane): number | null => {
+      if (!snap) return null
+      return findStrictSnap(t, buildSnapTargets(forLane), snapThresholdSec)
     }
 
     const clampNonOverlapMove = (candStart: number, peers: TimelineClip[]): number => {
-      let s = Math.max(0, candStart)
+      let s = Math.max(0, round3(candStart))
       for (const o of peers) {
-        const oEnd = o.start + o.duration
-        if (s < oEnd && s + initDur > o.start) {
-          const leftPos = Math.max(0, o.start - initDur)
+        const oStart = round3(o.start)
+        const oEnd = clipEndExact(o)
+        if (s < oEnd - 1e-4 && s + initDur > oStart + 1e-4) {
+          const leftPos = Math.max(0, round3(oStart - initDur))
           const rightPos = oEnd
-          const leftFree = !peers.some((p) => p !== o && leftPos < p.start + p.duration && leftPos + initDur > p.start)
-          const rightFree = !peers.some((p) => p !== o && rightPos < p.start + p.duration && rightPos + initDur > p.start)
+          const leftFree = !peers.some(
+            (p) => p !== o && leftPos < clipEndExact(p) - 1e-4 && leftPos + initDur > round3(p.start) + 1e-4
+          )
+          const rightFree = !peers.some(
+            (p) => p !== o && rightPos < clipEndExact(p) - 1e-4 && rightPos + initDur > round3(p.start) + 1e-4
+          )
           if (Math.abs(s - leftPos) <= Math.abs(s - rightPos) && leftFree) {
             s = leftPos
           } else if (rightFree) {
@@ -384,7 +424,7 @@ export default function Timeline({
           }
         }
       }
-      return s
+      return round3(s)
     }
 
     const detectTargetLane = (clientY: number, fallbackLane: LaneId): LaneId => {
@@ -429,50 +469,56 @@ export default function Timeline({
         setDropTargetLane(targetLane !== clip.lane ? targetLane : null)
 
         let nextStart = Math.max(0, initStart + deltaSec)
-        const sStart = findSnap(nextStart)
-        const sEnd = findSnap(nextStart + initDur)
-        if (sStart !== null) {
-          nextStart = sStart
-          setSnapGuideTime(sStart)
-        } else if (sEnd !== null) {
-          nextStart = Math.max(0, sEnd - initDur)
-          setSnapGuideTime(sEnd)
+        if (snap) {
+          const spanSnap = findStrictSnapForSpan(
+            nextStart,
+            initDur,
+            buildSnapTargets(targetLane),
+            snapThresholdSec
+          )
+          if (spanSnap) {
+            nextStart = spanSnap.start
+            setSnapGuideTime(spanSnap.guide)
+          } else {
+            setSnapGuideTime(null)
+          }
         } else {
           setSnapGuideTime(null)
         }
         nextStart = clampNonOverlapMove(nextStart, getLanePeers(targetLane))
         onUpdateClip(clip.id, {
           lane: targetLane,
-          start: Number(nextStart.toFixed(3))
+          start: round3(nextStart)
         })
         return
       }
 
       if (mode === 'trim-left') {
         const minInBound = isUnbounded ? 0 : Math.max(0, initStart - initIn / spd)
-        const lo = Math.max(minTrimStart, minInBound)
-        const hi = initEnd - 0.1
+        const lo = round3(Math.max(minTrimStart, minInBound))
+        const hi = round3(initEnd - 0.1)
         let nextStart = Math.max(lo, Math.min(hi, initStart + deltaSec))
-        const snapped = findSnap(nextStart)
-        if (snapped !== null && snapped >= lo && snapped <= hi) {
-          nextStart = snapped
+        const snapped = findSnap(nextStart, clip.lane)
+        if (snapped !== null && snapped >= lo - 1e-4 && snapped <= hi + 1e-4) {
+          nextStart = Math.max(lo, Math.min(hi, snapped))
           setSnapGuideTime(snapped)
         } else {
+          nextStart = round3(nextStart)
           setSnapGuideTime(null)
         }
-        const newDur = Math.max(0.1, Number((initEnd - nextStart).toFixed(3)))
+        const newDur = Math.max(0.1, round3(initEnd - nextStart))
         const headDelta = nextStart - initStart
-        const newIn = isUnbounded ? 0 : Math.max(0, Number((initIn + headDelta * spd).toFixed(3)))
+        const newIn = isUnbounded ? 0 : Math.max(0, round3(initIn + headDelta * spd))
         const nextKfs = initKeyframes
           ? initKeyframes
-              .map((k) => ({ ...k, time: Number((k.time - headDelta).toFixed(3)) }))
+              .map((k) => ({ ...k, time: round3(k.time - headDelta) }))
               .filter((k) => k.time >= -0.001 && k.time <= newDur + 0.001)
               .map((k) => ({ ...k, time: Math.max(0, Math.min(newDur, k.time)) }))
           : undefined
         const nextFadeIn = Math.min(clip.fadeIn, newDur)
         const nextFadeOut = Math.min(clip.fadeOut, Math.max(0, newDur - nextFadeIn))
         onUpdateClip(clip.id, {
-          start: Number(nextStart.toFixed(3)),
+          start: round3(nextStart),
           in: newIn,
           duration: newDur,
           fadeIn: nextFadeIn,
@@ -487,17 +533,18 @@ export default function Timeline({
       const maxMediaEnd = isUnbounded
         ? initStart + 600
         : initStart + Math.max(0.1, (mediaDur - initIn) / spd)
-      const hi = Math.min(maxTrimEnd, maxMediaEnd)
-      const lo = initStart + 0.1
+      const hi = round3(Math.min(maxTrimEnd, maxMediaEnd))
+      const lo = round3(initStart + 0.1)
       let nextEnd = Math.max(lo, Math.min(hi, initEnd + deltaSec))
-      const snapped = findSnap(nextEnd)
-      if (snapped !== null && snapped >= lo && snapped <= hi) {
-        nextEnd = snapped
+      const snapped = findSnap(nextEnd, clip.lane)
+      if (snapped !== null && snapped >= lo - 1e-4 && snapped <= hi + 1e-4) {
+        nextEnd = Math.max(lo, Math.min(hi, snapped))
         setSnapGuideTime(snapped)
       } else {
+        nextEnd = round3(nextEnd)
         setSnapGuideTime(null)
       }
-      const newDur = Math.max(0.1, Number((nextEnd - initStart).toFixed(3)))
+      const newDur = Math.max(0.1, round3(nextEnd - initStart))
       const nextKfs = initKeyframes
         ? initKeyframes.filter((k) => k.time <= newDur + 0.001)
         : undefined
@@ -1221,6 +1268,25 @@ export default function Timeline({
                   data-testid={`lane-${lane}`}
                   data-lane-row={lane}
                   style={{ height: rowH }}
+                  onContextMenu={(e) => {
+                    if ((e.target as HTMLElement).closest('[data-clip-box]')) return
+                    if (!area.current) return
+                    const r = area.current.getBoundingClientRect()
+                    const x = e.clientX - r.left + area.current.scrollLeft
+                    const clickTime = Math.max(0, x / Math.max(1, pps))
+                    const gap = findLaneGapAt(clips, lane, clickTime)
+                    if (gap) {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setGapMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        lane,
+                        start: gap.start,
+                        end: gap.end
+                      })
+                    }
+                  }}
                   onDragOver={(e) => {
                     if (e.dataTransfer.types.includes(MEDIA_DRAG_TYPE)) {
                       e.preventDefault()
@@ -1501,6 +1567,42 @@ export default function Timeline({
           </div>
         </div>
       </div>
+
+      {/* İki Klip Arasındaki Boşluğa Sağ Tık Menüsü: Boşluğu Kapat (Ripple Delete Gap) */}
+      {gapMenu && (
+        <div
+          data-testid="gap-context-menu"
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{
+            left: Math.min(window.innerWidth - 260, Math.max(12, gapMenu.x)),
+            top: Math.min(window.innerHeight - 80, Math.max(12, gapMenu.y - 12))
+          }}
+          className="fixed z-50 min-w-[236px] rounded-xl border border-[color:var(--border-subtle)] bg-[#14171D]/95 p-1.5 shadow-[0_14px_36px_rgba(0,0,0,0.75)] backdrop-blur-md"
+        >
+          <div className="flex items-center justify-between border-b border-white/[0.06] px-2.5 py-1 font-mono text-[9px] text-white/45">
+            <span>{gapMenu.lane} · BOŞLUK</span>
+            <span className="text-[var(--accent)]">
+              {(gapMenu.end - gapMenu.start).toFixed(2)}s
+            </span>
+          </div>
+          <button
+            type="button"
+            data-testid="ripple-delete-gap-btn"
+            onClick={() => {
+              if (onRippleCloseGap) {
+                onRippleCloseGap(gapMenu.lane, gapMenu.start, gapMenu.end)
+              } else {
+                onCloseGaps?.(gapMenu.lane)
+              }
+              setGapMenu(null)
+            }}
+            className="mt-1 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-white transition hover:bg-[var(--accent)] hover:text-[var(--accent-fg)]"
+          >
+            <span>Boşluğu Kapat (Ripple Delete Gap)</span>
+            <span className="font-mono text-[9.5px] opacity-80">←</span>
+          </button>
+        </div>
+      )}
     </footer>
   )
 }

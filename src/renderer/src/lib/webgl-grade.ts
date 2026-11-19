@@ -461,6 +461,7 @@ export class WebGLColorEngine {
   private vbo: WebGLBuffer
   private uploadedLutKey = ''
   private uploadedCurveKey = ''
+  private hasUploadedFrame = false
 
   private loc: Record<string, WebGLUniformLocation | null>
 
@@ -649,10 +650,11 @@ export class WebGLColorEngine {
     const srcW = isVideo ? source.videoWidth : source.naturalWidth
     const srcH = isVideo ? source.videoHeight : source.naturalHeight
     const ready = isVideo ? source.readyState >= 2 : source.complete
-    if (!ready || srcW === 0 || srcH === 0) return false
+    const canUpload = ready && srcW > 0 && srcH > 0
+    if (!canUpload && !this.hasUploadedFrame) return false
     const gl = this.gl
     const canvas = gl.canvas as HTMLCanvasElement
-    if (canvas.width !== srcW || canvas.height !== srcH) {
+    if (canUpload && (canvas.width !== srcW || canvas.height !== srcH)) {
       canvas.width = srcW
       canvas.height = srcH
     }
@@ -663,7 +665,10 @@ export class WebGLColorEngine {
 
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.videoTex)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
+    if (canUpload) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
+      this.hasUploadedFrame = true
+    }
 
     this.ensureLut(lut)
     const hasCurves = this.ensureCurves(grade)
