@@ -106,6 +106,7 @@ interface HistoryEntry {
   markers: CaseMarker[]
   autoDucking: boolean
   selectedClipId: string | null
+  selectedClipIds: string[]
   inPoint: number | null
   outPoint: number | null
   label: string
@@ -236,7 +237,35 @@ export default function App() {
   const [stills, setStills] = useState<GradeStill[]>([])
   const [copiedGrade, setCopiedGrade] = useState<ColorGrade | null>(null)
   const [autoDucking, setAutoDucking] = useState<boolean>(false)
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  const [selectedClipIds, setSelectedClipIds] = useState<string[]>([])
+  const selectedClipId = selectedClipIds[0] ?? null
+
+  const setSelectedClipId = useCallback((id: string | null) => {
+    setSelectedClipIds(id ? [id] : [])
+  }, [])
+
+  const handleSelectClip = useCallback(
+    (id: string | null, opts?: { toggle?: boolean }) => {
+      if (id === null) {
+        setSelectedClipIds([])
+        return
+      }
+      if (opts?.toggle) {
+        setSelectedClipIds((prev) =>
+          prev.includes(id) ? prev.filter((item) => item !== id) : [id, ...prev]
+        )
+        return
+      }
+      setSelectedClipIds([id])
+    },
+    []
+  )
+
+  const handleSelectClips = useCallback((ids: string[]) => {
+    const unique = Array.from(new Set(ids))
+    setSelectedClipIds(unique)
+  }, [])
+
   const [inPoint, setInPoint] = useState<number | null>(null)
   const [outPoint, setOutPoint] = useState<number | null>(null)
   const [undoStack, setUndoStack] = useState<HistoryEntry[]>([])
@@ -418,6 +447,7 @@ export default function App() {
     markers,
     autoDucking,
     selectedClipId,
+    selectedClipIds,
     inPoint,
     outPoint
   })
@@ -428,6 +458,7 @@ export default function App() {
     markers,
     autoDucking,
     selectedClipId,
+    selectedClipIds,
     inPoint,
     outPoint
   }
@@ -451,6 +482,7 @@ export default function App() {
       markers: cloneMarkerList(snap.markers),
       autoDucking: snap.autoDucking,
       selectedClipId: snap.selectedClipId,
+      selectedClipIds: [...snap.selectedClipIds],
       inPoint: snap.inPoint,
       outPoint: snap.outPoint,
       label
@@ -563,14 +595,6 @@ export default function App() {
     )
   }, [player.time, recordHistory, selectedClipId])
 
-  // Seçili klibi silme (Delete / Backspace)
-  const deleteSelected = useCallback(() => {
-    if (!selectedClipId) return
-    recordHistory('Klip Silme')
-    setClips((cs) => cs.filter((c) => c.id !== selectedClipId))
-    setSelectedClipId(null)
-  }, [recordHistory, selectedClipId])
-
   const showToast = useCallback((msg: string) => {
     setStatusToast(msg)
     window.setTimeout(() => {
@@ -578,30 +602,87 @@ export default function App() {
     }, 3000)
   }, [])
 
-  // Ripple Silme: seçili klibi sil ve aynı kanaldaki sonraki klipleri boşluksuz geri kaydır
-  const rippleDeleteSelected = useCallback(() => {
-    if (!selectedClipId) return
-    const target = stateSnapshotRef.current.clips.find((c) => c.id === selectedClipId)
-    if (!target) return
-    recordHistory('Ripple Klip Silme')
-    const targetEnd = target.start + target.duration
-    setClips((cs) =>
-      cs
-        .filter((c) => c.id !== selectedClipId)
-        .map((c) =>
-          c.lane === target.lane && c.start >= targetEnd - 0.02
-            ? { ...c, start: Math.max(0, Number((c.start - target.duration).toFixed(3))) }
-            : c
-        )
-    )
-    setSelectedClipId(null)
-    showToast(`Ripple Silme: ${target.name}`)
-  }, [recordHistory, selectedClipId, showToast])
+  // Seçili klipleri silme (Delete / Backspace — tekli veya çoklu seçim)
+  const deleteSelected = useCallback(() => {
+    const ids = stateSnapshotRef.current.selectedClipIds
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    recordHistory(ids.length > 1 ? `Toplu Klip Silme (${ids.length})` : 'Klip Silme')
+    setClips((cs) => cs.filter((c) => !idSet.has(c.id)))
+    setSelectedClipIds([])
+    if (ids.length > 1) {
+      showToast(`${ids.length} seçili klip silindi`)
+    }
+  }, [recordHistory, showToast])
 
-  // Seçili kanaldaki (veya V1'deki) boşlukları kapat
+  // Ripple Silme: seçili klip(ler)i sil ve aynı kanaldaki sonraki klipleri boşluksuz geri kaydır
+  const rippleDeleteSelected = useCallback(() => {
+    const ids = stateSnapshotRef.current.selectedClipIds
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    const removed = stateSnapshotRef.current.clips.filter((c) => idSet.has(c.id))
+    if (removed.length === 0) return
+    recordHistory(removed.length > 1 ? `Toplu Ripple Silme (${removed.length})` : 'Ripple Klip Silme')
+    setClips((cs) => {
+      const remaining = cs.filter((c) => !idSet.has(c.id))
+      return remaining.map((c) => {
+        const shift = removed
+          .filter((r) => r.lane === c.lane && clipEndExact(r) <= c.start + 0.02)
+          .reduce((sum, r) => sum + r.duration, 0)
+        if (shift <= 0) return c
+        return { ...c, start: Math.max(0, round3(c.start - shift)) }
+      })
+    })
+    setSelectedClipIds([])
+    showToast(
+      removed.length > 1
+        ? `Ripple Silme: ${removed.length} klip silindi`
+        : `Ripple Silme: ${removed[0].name}`
+    )
+  }, [recordHistory, showToast])
+
+  // Seçili kanaldaki (veya seçili klipler arasındaki) boşlukları kapat
   const closeGaps = useCallback(
     (lane?: LaneId) => {
-      const targetLane: LaneId = lane ?? 'V1'
+      const snap = stateSnapshotRef.current
+      const selIds = new Set(snap.selectedClipIds)
+      const selClips = snap.clips.filter((c) => selIds.has(c.id))
+
+      // Eğer birden fazla klip seçiliyse ve belirli bir kanal zorlanmadıysa, seçili kliplerin bulunduğu kanallardaki aralıkları kapat
+      if (!lane && selClips.length >= 2) {
+        const affectedLanes = Array.from(new Set(selClips.map((c) => c.lane)))
+        recordHistory('Seçili Klipler Arası Boşlukları Kapat')
+        setClips((cs) => {
+          const repositioned = new Map<string, number>()
+          for (const ln of affectedLanes) {
+            const laneClips = cs
+              .filter((c) => c.lane === ln)
+              .slice()
+              .sort((a, b) => a.start - b.start)
+            const laneSel = laneClips.filter((c) => selIds.has(c.id))
+            if (laneSel.length >= 2) {
+              const firstSelIdx = laneClips.findIndex((c) => c.id === laneSel[0].id)
+              let cursor = round3(laneClips[firstSelIdx].start)
+              for (let i = firstSelIdx; i < laneClips.length; i++) {
+                const c = laneClips[i]
+                repositioned.set(c.id, round3(cursor))
+                cursor = round3(cursor + c.duration)
+              }
+            } else {
+              let cursor = 0
+              for (const c of laneClips) {
+                repositioned.set(c.id, round3(cursor))
+                cursor = round3(cursor + c.duration)
+              }
+            }
+          }
+          return cs.map((c) => (repositioned.has(c.id) ? { ...c, start: repositioned.get(c.id)! } : c))
+        })
+        showToast('Seçili klipler arasındaki boşluklar kapatıldı')
+        return
+      }
+
+      const targetLane: LaneId = lane ?? selClips[0]?.lane ?? 'V1'
       recordHistory('Boşlukları Kapat')
       setClips((cs) => {
         const laneClips = cs
@@ -678,6 +759,42 @@ export default function App() {
     },
     [recordHistory]
   )
+
+  const batchUpdateClips = useCallback(
+    (updates: Array<{ id: string; patch: Partial<TimelineClip> }>) => {
+      if (updates.length === 0) return
+      recordHistory(
+        updates.length > 1 ? `Çoklu Klip Taşıma (${updates.length})` : 'Klip Ayarı',
+        'batch-clip-move'
+      )
+      const patchMap = new Map(updates.map((u) => [u.id, u.patch]))
+      setClips((cs) =>
+        cs.map((c) => {
+          const patch = patchMap.get(c.id)
+          if (!patch) return c
+          const next = { ...c, ...patch }
+          if (patch.lane && isVideoLane(patch.lane) && !isCreditClip(next)) {
+            if (!next.grade) next.grade = defaultColorGrade()
+            if (!next.transform) next.transform = defaultClipTransform()
+          }
+          return next
+        })
+      )
+    },
+    [recordHistory]
+  )
+
+  const handleSelectAllClips = useCallback(() => {
+    const allIds = stateSnapshotRef.current.clips.map((c) => c.id)
+    if (allIds.length === 0) return
+    setSelectedClipIds(allIds)
+    showToast(`Tüm klipler seçildi (${allIds.length} klip)`)
+  }, [showToast])
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedClipIds([])
+    setActiveMarkerId(null)
+  }, [])
 
   const toggleMute = useCallback(
     (lane: LaneId) => {
@@ -851,6 +968,7 @@ export default function App() {
         markers: cloneMarkerList(snap.markers),
         autoDucking: snap.autoDucking,
         selectedClipId: snap.selectedClipId,
+        selectedClipIds: [...snap.selectedClipIds],
         inPoint: snap.inPoint,
         outPoint: snap.outPoint,
         label: last.label
@@ -861,7 +979,9 @@ export default function App() {
       setLanes(cloneLaneMap(last.lanes))
       setMarkers(cloneMarkerList(last.markers))
       setAutoDucking(last.autoDucking)
-      setSelectedClipId(last.selectedClipId)
+      setSelectedClipIds(
+        last.selectedClipIds ?? (last.selectedClipId ? [last.selectedClipId] : [])
+      )
       setInPoint(last.inPoint)
       setOutPoint(last.outPoint)
       lastHistoryMetaRef.current = { key: '', at: 0 }
@@ -883,6 +1003,7 @@ export default function App() {
         markers: cloneMarkerList(snap.markers),
         autoDucking: snap.autoDucking,
         selectedClipId: snap.selectedClipId,
+        selectedClipIds: [...snap.selectedClipIds],
         inPoint: snap.inPoint,
         outPoint: snap.outPoint,
         label: next.label
@@ -893,7 +1014,9 @@ export default function App() {
       setLanes(cloneLaneMap(next.lanes))
       setMarkers(cloneMarkerList(next.markers))
       setAutoDucking(next.autoDucking)
-      setSelectedClipId(next.selectedClipId)
+      setSelectedClipIds(
+        next.selectedClipIds ?? (next.selectedClipId ? [next.selectedClipId] : [])
+      )
       setInPoint(next.inPoint)
       setOutPoint(next.outPoint)
       lastHistoryMetaRef.current = { key: '', at: 0 }
@@ -1551,6 +1674,18 @@ export default function App() {
         return
       }
       if (isTyping(e.target) || e.repeat) return
+      if ((e.ctrlKey || e.metaKey) && keyLower === 'a') {
+        e.preventDefault()
+        handleSelectAllClips()
+        return
+      }
+      if (e.key === 'Escape') {
+        if (stateSnapshotRef.current.selectedClipIds.length > 0) {
+          e.preventDefault()
+          handleClearSelection()
+          return
+        }
+      }
       if (e.code === 'Space') {
         e.preventDefault()
         player.toggle()
@@ -1604,6 +1739,8 @@ export default function App() {
     handleMarkOut,
     handleRedo,
     handleSaveProject,
+    handleSelectAllClips,
+    handleClearSelection,
     handleUndo,
     player.shuttleForward,
     player.shuttlePause,
@@ -1935,6 +2072,7 @@ export default function App() {
             peaksMap={lib.peaksMap}
             lanes={lanes}
             selectedClipId={selectedClipId}
+            selectedClipIds={selectedClipIds}
             total={total}
             time={player.time}
             fps={monitorMedia?.fps || 25}
@@ -1969,8 +2107,10 @@ export default function App() {
             rippleMode={rippleMode}
             onToggleRippleMode={() => setRippleMode((v) => !v)}
             onDetachSelected={detachSelected}
-            onSelectClip={setSelectedClipId}
+            onSelectClip={handleSelectClip}
+            onSelectClips={handleSelectClips}
             onUpdateClip={updateClip}
+            onBatchUpdateClips={batchUpdateClips}
             onToggleMute={toggleMute}
             onToggleSolo={toggleSolo}
             onAddVideoLane={addVideoLane}

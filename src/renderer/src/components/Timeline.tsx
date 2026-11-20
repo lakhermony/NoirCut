@@ -51,10 +51,14 @@ const SHORTCUT_GUIDE: { group: string; items: [string, string][] }[] = [
   {
     group: 'Kurgu',
     items: [
+      ['Ctrl+A', 'Tüm klipleri seç'],
+      ['Esc', 'Seçimi temizle'],
+      ['Boş Alanda Sürükle', 'Seçim kutusu (Marquee)'],
+      ['Shift / Ctrl + Tık', 'Çoklu klip seç / çıkar'],
       ['C', 'Playhead\'den kes (Razor)'],
-      ['Del', 'Seçili klibi sil'],
+      ['Del', 'Seçili klip(ler)i sil'],
       ['Shift+Del', 'Ripple sil (boşluğu kapat)'],
-      ['Klip Sürükle', 'Zaman ekseninde taşı / Kenar trim'],
+      ['Klip Sürükle', 'Tekli veya grup taşı / Kenar trim'],
       ['M', 'Sahne işaretçisi ekle'],
       ['I / O', 'Giriş / Çıkış noktası'],
       ['Ctrl + Tekerlek', 'Timeline yakınlaştır / uzaklaştır'],
@@ -84,6 +88,7 @@ export default function Timeline({
   peaksMap,
   lanes,
   selectedClipId,
+  selectedClipIds,
   total,
   time,
   fps,
@@ -119,7 +124,9 @@ export default function Timeline({
   onToggleRippleMode,
   onDetachSelected,
   onSelectClip,
+  onSelectClips,
   onUpdateClip,
+  onBatchUpdateClips,
   onToggleMute,
   onToggleSolo,
   onAddVideoLane,
@@ -133,6 +140,7 @@ export default function Timeline({
   peaksMap: Record<string, PeaksResult>
   lanes: LaneMap
   selectedClipId: string | null
+  selectedClipIds?: string[]
   total: number
   time: number
   fps: number
@@ -167,8 +175,10 @@ export default function Timeline({
   rippleMode?: boolean
   onToggleRippleMode?: () => void
   onDetachSelected: () => void
-  onSelectClip: (id: string | null) => void
+  onSelectClip: (id: string | null, opts?: { toggle?: boolean }) => void
+  onSelectClips?: (ids: string[]) => void
   onUpdateClip: (id: string, patch: Partial<TimelineClip>) => void
+  onBatchUpdateClips?: (updates: Array<{ id: string; patch: Partial<TimelineClip> }>) => void
   onToggleMute: (lane: LaneId) => void
   onToggleSolo: (lane: LaneId) => void
   onAddVideoLane?: () => void
@@ -187,8 +197,15 @@ export default function Timeline({
   const [selectedKeyframeId, setSelectedKeyframeId] = useState<string | null>(null)
   const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null)
   const [draggingClipId, setDraggingClipId] = useState<string | null>(null)
+  const [draggingGroupIds, setDraggingGroupIds] = useState<Set<string>>(() => new Set())
   const [draggingMode, setDraggingMode] = useState<'move' | 'trim-left' | 'trim-right' | null>(null)
   const [dropTargetLane, setDropTargetLane] = useState<LaneId | null>(null)
+  const [marqueeBox, setMarqueeBox] = useState<{
+    left: number
+    top: number
+    width: number
+    height: number
+  } | null>(null)
   const [gapMenu, setGapMenu] = useState<{
     x: number
     y: number
@@ -196,12 +213,28 @@ export default function Timeline({
     start: number
     end: number
   } | null>(null)
+  const [clipMenu, setClipMenu] = useState<{
+    x: number
+    y: number
+    lane: LaneId
+  } | null>(null)
+
+  const selectedSet = new Set(
+    selectedClipIds && selectedClipIds.length > 0
+      ? selectedClipIds
+      : selectedClipId
+        ? [selectedClipId]
+        : []
+  )
 
   useEffect(() => {
-    if (!gapMenu) return
-    const close = () => setGapMenu(null)
+    if (!gapMenu && !clipMenu) return
+    const close = () => {
+      setGapMenu(null)
+      setClipMenu(null)
+    }
     const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === 'Escape') setGapMenu(null)
+      if (ev.key === 'Escape') close()
     }
     window.addEventListener('pointerdown', close)
     window.addEventListener('keydown', onKey)
@@ -211,7 +244,7 @@ export default function Timeline({
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('scroll', close, true)
     }
-  }, [gapMenu])
+  }, [gapMenu, clipMenu])
 
   const orderedLanes = orderLanes(lanes, clips)
 
@@ -331,7 +364,7 @@ export default function Timeline({
     window.addEventListener('pointerup', onUp)
   }
 
-  // Klip taşıma ve sol/sağ kenar kırpma (Trim)
+  // Klip taşıma (Tekli veya Çoklu Grup Taşıma) ve sol/sağ kenar kırpma (Trim)
   const startClipDrag = (
     e: React.PointerEvent,
     clip: TimelineClip,
@@ -339,7 +372,17 @@ export default function Timeline({
   ) => {
     if (e.button !== 0) return
     e.stopPropagation()
-    onSelectClip(clip.id)
+
+    // Shift veya Ctrl/Cmd ile tıklandıysa çoklu seçime ekle/çıkar (sürükleme başlatma)
+    if (mode === 'move' && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+      onSelectClip(clip.id, { toggle: true })
+      return
+    }
+
+    const isAlreadyInMultiSelect = mode === 'move' && selectedSet.size > 1 && selectedSet.has(clip.id)
+    if (!isAlreadyInMultiSelect) {
+      onSelectClip(clip.id)
+    }
 
     if (mode !== 'move') {
       const target = e.currentTarget as HTMLElement
@@ -349,6 +392,27 @@ export default function Timeline({
         // yoksay
       }
     }
+
+    const activeGroupIds = isAlreadyInMultiSelect
+      ? Array.from(selectedSet)
+      : [clip.id]
+    const activeGroupSet = new Set(activeGroupIds)
+    const groupInitialClips = clipsRef.current
+      .filter((c) => activeGroupSet.has(c.id))
+      .map((c) => ({
+        id: c.id,
+        lane: c.lane,
+        initStart: round3(c.start),
+        duration: round3(c.duration),
+        initEnd: clipEndExact(c)
+      }))
+    const isGroupMove = mode === 'move' && groupInitialClips.length > 1
+    const minGroupStart = isGroupMove
+      ? Math.min(...groupInitialClips.map((g) => g.initStart))
+      : clip.start
+    const maxGroupEnd = isGroupMove
+      ? Math.max(...groupInitialClips.map((g) => g.initEnd))
+      : clipEndExact(clip)
 
     const startX = e.clientX
     const initStart = clip.start
@@ -378,7 +442,7 @@ export default function Timeline({
     const minTrimStart = prevNeighbor ? clipEndExact(prevNeighbor) : 0
     const maxTrimEnd = nextNeighbor ? round3(nextNeighbor.start) : Infinity
 
-    const buildSnapTargets = (forLane: LaneId): SnapTarget[] => {
+    const buildSnapTargets = (forLane: LaneId, excludeSet?: Set<string>): SnapTarget[] => {
       const targets: SnapTarget[] = [
         { time: 0, priority: 1 },
         { time: round3(time), priority: 1 }
@@ -386,7 +450,7 @@ export default function Timeline({
       if (inPoint !== null) targets.push({ time: round3(inPoint), priority: 1 })
       if (outPoint !== null) targets.push({ time: round3(outPoint), priority: 1 })
       for (const o of clipsRef.current) {
-        if (o.id === clip.id) continue
+        if (o.id === clip.id || excludeSet?.has(o.id)) continue
         const priority = o.lane === forLane ? 0 : 1
         targets.push(
           { time: round3(o.start), priority },
@@ -401,6 +465,29 @@ export default function Timeline({
     const findSnap = (t: number, forLane: LaneId = clip.lane): number | null => {
       if (!snap) return null
       return findStrictSnap(t, buildSnapTargets(forLane), snapThresholdSec)
+    }
+
+    // Grup taşımada seçili olmayan komşu kliplerle çakışmayı önle (tüm seçili klipler arasındaki mesafeyi korur)
+    const clampGroupDelta = (candDelta: number): number => {
+      let d = Math.max(-minGroupStart, round3(candDelta))
+      const unselected = clipsRef.current.filter((o) => !activeGroupSet.has(o.id))
+      for (const member of groupInitialClips) {
+        const mStart = round3(member.initStart + d)
+        const mEnd = round3(mStart + member.duration)
+        const laneOthers = unselected.filter((o) => o.lane === member.lane)
+        for (const peer of laneOthers) {
+          const pStart = round3(peer.start)
+          const pEnd = clipEndExact(peer)
+          if (mStart < pEnd - 1e-4 && mEnd > pStart + 1e-4) {
+            if (member.initStart >= pEnd - 0.02) {
+              d = Math.max(d, round3(pEnd - member.initStart))
+            } else if (member.initEnd <= pStart + 0.02) {
+              d = Math.min(d, round3(pStart - member.initEnd))
+            }
+          }
+        }
+      }
+      return Math.max(-minGroupStart, round3(d))
     }
 
     const clampNonOverlapMove = (candStart: number, peers: TimelineClip[]): number => {
@@ -457,6 +544,7 @@ export default function Timeline({
     let moved = false
     let activeLane: LaneId = clip.lane
     setDraggingClipId(clip.id)
+    setDraggingGroupIds(activeGroupSet)
     setDraggingMode(mode)
 
     const onMove = (ev: PointerEvent) => {
@@ -465,6 +553,50 @@ export default function Timeline({
       if (!moved && Math.abs(dx) < 3 && (mode !== 'move' || Math.abs(dy) < 6)) return
       moved = true
       const deltaSec = dx / Math.max(1, pps)
+
+      if (mode === 'move' && isGroupMove) {
+        let groupDelta = Math.max(-minGroupStart, deltaSec)
+        if (snap) {
+          const groupTargets = buildSnapTargets(clip.lane, activeGroupSet)
+          const leadSnap = findStrictSnapForSpan(
+            initStart + groupDelta,
+            initDur,
+            groupTargets,
+            snapThresholdSec
+          )
+          const boundSnap =
+            leadSnap ??
+            findStrictSnapForSpan(
+              minGroupStart + groupDelta,
+              round3(maxGroupEnd - minGroupStart),
+              groupTargets,
+              snapThresholdSec
+            )
+          if (leadSnap) {
+            groupDelta = Math.max(-minGroupStart, round3(leadSnap.start - initStart))
+            setSnapGuideTime(leadSnap.guide)
+          } else if (boundSnap) {
+            groupDelta = Math.max(-minGroupStart, round3(boundSnap.start - minGroupStart))
+            setSnapGuideTime(boundSnap.guide)
+          } else {
+            setSnapGuideTime(null)
+          }
+        } else {
+          setSnapGuideTime(null)
+        }
+
+        const clampedDelta = clampGroupDelta(groupDelta)
+        const updates = groupInitialClips.map((g) => ({
+          id: g.id,
+          patch: { start: round3(Math.max(0, g.initStart + clampedDelta)) }
+        }))
+        if (onBatchUpdateClips) {
+          onBatchUpdateClips(updates)
+        } else {
+          for (const u of updates) onUpdateClip(u.id, u.patch)
+        }
+        return
+      }
 
       if (mode === 'move') {
         const targetLane = detectTargetLane(ev.clientY, activeLane)
@@ -561,13 +693,110 @@ export default function Timeline({
     }
 
     const onUp = () => {
+      if (!moved && isAlreadyInMultiSelect) {
+        onSelectClip(clip.id)
+      }
       setDraggingClipId(null)
+      setDraggingGroupIds(new Set())
       setDraggingMode(null)
       setDropTargetLane(null)
       setSnapGuideTime(null)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
+
+  // Boş alanda Sol Tık + Kaydırma = Marquee (Rubber-Band) Seçim Kutusu | Tek Tık = Seçimi Temizle & Playhead Taşı
+  const startTrackAreaPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    if ((e.target as HTMLElement).closest('[data-clip-box]')) return
+    if ((e.target as HTMLElement).closest('[data-testid="timeline-ruler"]')) return
+    const container = area.current
+    if (!container) return
+
+    const startClientX = e.clientX
+    const startClientY = e.clientY
+    const getRelPos = (clientX: number, clientY: number) => {
+      const r = container.getBoundingClientRect()
+      return {
+        x: Math.max(0, clientX - r.left + container.scrollLeft),
+        y: Math.max(0, clientY - r.top + container.scrollTop)
+      }
+    }
+    const startPos = getRelPos(startClientX, startClientY)
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey
+    const baseIds = additive ? Array.from(selectedSet) : []
+    let didMarquee = false
+
+    // Kanal satırlarının dikey konum haritasını çıkar (24px cetvel yüksekliğinden başlar)
+    const laneTopMap = new Map<LaneId, { top: number; bottom: number }>()
+    let yCursor = 24
+    for (const ln of orderedLanes) {
+      const rh = ln === 'V1' ? 80 : isVideoLane(ln) ? 74 : 46
+      laneTopMap.set(ln, { top: yCursor, bottom: yCursor + rh })
+      yCursor += rh
+    }
+
+    const onMove = (ev: PointerEvent) => {
+      const dist = Math.hypot(ev.clientX - startClientX, ev.clientY - startClientY)
+      if (!didMarquee && dist < 4) return
+      didMarquee = true
+      const curPos = getRelPos(ev.clientX, ev.clientY)
+      const left = Math.min(startPos.x, curPos.x)
+      const right = Math.max(startPos.x, curPos.x)
+      const top = Math.min(startPos.y, curPos.y)
+      const bottom = Math.max(startPos.y, curPos.y)
+
+      setMarqueeBox({
+        left,
+        top,
+        width: Math.max(2, right - left),
+        height: Math.max(2, bottom - top)
+      })
+
+      const hitIds: string[] = []
+      for (const c of clipsRef.current) {
+        const laneSpan = laneTopMap.get(c.lane)
+        if (!laneSpan) continue
+        const cLeft = c.start * ppsRef.current + 1
+        const cRight = cLeft + Math.max(8, c.duration * ppsRef.current - 2)
+        const cTop = laneSpan.top + 3
+        const cBottom = laneSpan.bottom - 3
+        const intersects =
+          cLeft <= right && cRight >= left && cTop <= bottom && cBottom >= top
+        if (intersects) {
+          hitIds.push(c.id)
+        }
+      }
+
+      const combined = Array.from(new Set([...baseIds, ...hitIds]))
+      if (onSelectClips) {
+        onSelectClips(combined)
+      } else {
+        onSelectClip(combined[0] ?? null)
+      }
+    }
+
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      if (didMarquee) {
+        setMarqueeBox(null)
+      } else {
+        if (!additive) {
+          if (onSelectClips) onSelectClips([])
+          else onSelectClip(null)
+        }
+        onScrubStart()
+        seekFromClientX(ev.clientX)
+        onScrubEnd()
+      }
     }
 
     window.addEventListener('pointermove', onMove)
@@ -761,12 +990,23 @@ export default function Timeline({
         <button
           data-testid="delete-btn"
           onClick={rippleMode && onRippleDelete ? onRippleDelete : onDeleteSelected}
-          disabled={!selectedClip}
+          disabled={selectedSet.size === 0}
           className="chip disabled:opacity-30"
-          title={rippleMode ? 'Ripple Sil — Sonraki klipleri geri kaydır (Del)' : 'Seçili klibi sil (Del)'}
+          title={
+            rippleMode
+              ? 'Ripple Sil — Sonraki klipleri geri kaydır (Del)'
+              : selectedSet.size > 1
+                ? `Seçili ${selectedSet.size} klibi sil (Del)`
+                : 'Seçili klibi sil (Del)'
+          }
         >
           <span className="flex items-center gap-1.5">
-            {rippleMode ? 'Ripple Sil' : 'Sil'} <Kbd>Del</Kbd>
+            {rippleMode
+              ? 'Ripple Sil'
+              : selectedSet.size > 1
+                ? `Sil (${selectedSet.size})`
+                : 'Sil'}{' '}
+            <Kbd>Del</Kbd>
           </span>
         </button>
         {onToggleRippleMode && (
@@ -912,10 +1152,22 @@ export default function Timeline({
         >
           {fmt(time, fps)}
         </span>
-        {selectedClip && (
-          <span className="truncate rounded bg-white/5 px-2 py-0.5 font-mono text-[10px] text-white/60">
-            Seçili: {selectedClip.lane} · {selectedClip.name}
+        {selectedSet.size > 1 ? (
+          <span
+            data-testid="timeline-selection-badge"
+            className="truncate rounded border border-[var(--accent)]/40 bg-[var(--accent-soft)] px-2 py-0.5 font-mono text-[10px] font-semibold text-[var(--accent)]"
+          >
+            Seçili: {selectedSet.size} klip
           </span>
+        ) : (
+          selectedClip && (
+            <span
+              data-testid="timeline-selection-badge"
+              className="truncate rounded bg-white/5 px-2 py-0.5 font-mono text-[10px] text-white/60"
+            >
+              Seçili: {selectedClip.lane} · {selectedClip.name}
+            </span>
+          )
         )}
         <div className="ml-auto flex items-center gap-3">
           <button
@@ -1112,18 +1364,7 @@ export default function Timeline({
           ref={area}
           data-testid="timeline-tracks"
           className="relative flex-1 overflow-x-auto overflow-y-hidden"
-          onPointerDown={(e) => {
-            if ((e.target as HTMLElement).closest('[data-clip-box]')) return
-            onSelectClip(null)
-            onScrubStart()
-            ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-            seekFromClientX(e.clientX)
-          }}
-          onPointerMove={(e) => {
-            if (e.buttons === 1) seekFromClientX(e.clientX)
-          }}
-          onPointerUp={() => onScrubEnd()}
-          onPointerCancel={() => onScrubEnd()}
+          onPointerDown={startTrackAreaPointerDown}
         >
           <div
             className="relative h-full"
@@ -1285,12 +1526,22 @@ export default function Timeline({
                     if (gap) {
                       e.preventDefault()
                       e.stopPropagation()
+                      setClipMenu(null)
                       setGapMenu({
                         x: e.clientX,
                         y: e.clientY,
                         lane,
                         start: gap.start,
                         end: gap.end
+                      })
+                    } else if (selectedSet.size > 0) {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setGapMenu(null)
+                      setClipMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        lane
                       })
                     }
                   }}
@@ -1315,8 +1566,9 @@ export default function Timeline({
                     const peaks = peaksMap[c.mediaId]
                     // Klipler arası tutarlı 2px sinematik boşluk
                     const clipW = Math.max(8, c.duration * pps - 2)
-                    const isSelected = c.id === selectedClipId
-                    const isDraggingThis = draggingClipId === c.id
+                    const isSelected = selectedSet.has(c.id)
+                    const isDraggingThis =
+                      draggingClipId === c.id || draggingGroupIds.has(c.id)
                     const isCredit = isCreditClip(c)
                     const showWaveform = isCredit
                       ? false
@@ -1335,10 +1587,24 @@ export default function Timeline({
                         data-testid="clip"
                         data-clip-id={c.id}
                         data-lane={c.lane}
+                        data-selected={isSelected ? 'true' : 'false'}
                         onPointerDown={(e) => startClipDrag(e, c, 'move')}
                         onClick={(e) => {
                           e.stopPropagation()
-                          onSelectClip(c.id)
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          if (!selectedSet.has(c.id)) {
+                            if (onSelectClips) onSelectClips([c.id])
+                            else onSelectClip(c.id)
+                          }
+                          setGapMenu(null)
+                          setClipMenu({
+                            x: e.clientX,
+                            y: e.clientY,
+                            lane: c.lane
+                          })
                         }}
                         style={{
                           left: c.start * pps + 1,
@@ -1584,6 +1850,20 @@ export default function Timeline({
               />
             )}
 
+            {/* Sol Tık + Kaydırma Seçim Kutusu (Marquee / Rubber-Band Selection Box) */}
+            {marqueeBox && (
+              <div
+                data-testid="timeline-marquee-box"
+                className="pointer-events-none absolute z-40 rounded-[6px] border border-[var(--accent)] bg-[var(--accent-soft)] shadow-[0_0_16px_var(--accent-glow)]"
+                style={{
+                  left: marqueeBox.left,
+                  top: marqueeBox.top,
+                  width: marqueeBox.width,
+                  height: marqueeBox.height
+                }}
+              />
+            )}
+
             {/* Keskin Metalik Başlıklı ve Lazer Işık İzli Playhead İmleci */}
             {total > 0 && (
               <div
@@ -1623,9 +1903,9 @@ export default function Timeline({
           onPointerDown={(e) => e.stopPropagation()}
           style={{
             left: Math.min(window.innerWidth - 260, Math.max(12, gapMenu.x)),
-            top: Math.min(window.innerHeight - 80, Math.max(12, gapMenu.y - 12))
+            top: Math.min(window.innerHeight - 140, Math.max(12, gapMenu.y - 12))
           }}
-          className="fixed z-50 min-w-[236px] rounded-xl border border-[color:var(--border-subtle)] bg-[#14171D]/95 p-1.5 shadow-[0_14px_36px_rgba(0,0,0,0.75)] backdrop-blur-md"
+          className="fixed z-50 min-w-[244px] rounded-xl border border-[color:var(--border-subtle)] bg-[#14171D]/95 p-1.5 shadow-[0_14px_36px_rgba(0,0,0,0.75)] backdrop-blur-md"
         >
           <div className="flex items-center justify-between border-b border-white/[0.06] px-2.5 py-1 font-mono text-[9px] text-white/45">
             <span>{gapMenu.lane} · BOŞLUK</span>
@@ -1648,6 +1928,82 @@ export default function Timeline({
           >
             <span>Boşluğu Kapat (Ripple Delete Gap)</span>
             <span className="font-mono text-[9.5px] opacity-80">←</span>
+          </button>
+          {selectedSet.size > 0 && (
+            <>
+              <button
+                type="button"
+                data-testid="gap-close-all-gaps-btn"
+                onClick={() => {
+                  onCloseGaps?.()
+                  setGapMenu(null)
+                }}
+                className="mt-0.5 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium text-white/90 transition hover:bg-white/10"
+              >
+                <span>Aradaki Boşlukları Kapat</span>
+                <span className="font-mono text-[9.5px] text-white/45">⇄</span>
+              </button>
+              <button
+                type="button"
+                data-testid="gap-delete-selected-btn"
+                onClick={() => {
+                  onDeleteSelected()
+                  setGapMenu(null)
+                }}
+                className="mt-0.5 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium text-rose-300 transition hover:bg-rose-500/20"
+              >
+                <span>Seçili Klipleri Sil ({selectedSet.size})</span>
+                <span className="font-mono text-[9.5px] opacity-75">Del</span>
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Seçili Klip(ler) Sağ Tık Menüsü: Toplu Silme ve Boşlukları Kapatma */}
+      {clipMenu && selectedSet.size > 0 && (
+        <div
+          data-testid="clip-context-menu"
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{
+            left: Math.min(window.innerWidth - 260, Math.max(12, clipMenu.x)),
+            top: Math.min(window.innerHeight - 130, Math.max(12, clipMenu.y - 12))
+          }}
+          className="fixed z-50 min-w-[244px] rounded-xl border border-[color:var(--border-subtle)] bg-[#14171D]/95 p-1.5 shadow-[0_14px_36px_rgba(0,0,0,0.75)] backdrop-blur-md"
+        >
+          <div className="flex items-center justify-between border-b border-white/[0.06] px-2.5 py-1 font-mono text-[9px] text-white/45">
+            <span>
+              {selectedSet.size > 1
+                ? `${selectedSet.size} KLİP SEÇİLİ`
+                : `${selectedClip?.lane ?? clipMenu.lane} · ${selectedClip?.name ?? 'KLİP'}`}
+            </span>
+            <span className="text-[var(--accent)]">KURGU</span>
+          </div>
+          <button
+            type="button"
+            data-testid="ctx-close-gaps-btn"
+            onClick={() => {
+              onCloseGaps?.(selectedSet.size > 1 ? undefined : clipMenu.lane)
+              setClipMenu(null)
+            }}
+            className="mt-1 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-white transition hover:bg-[var(--accent)] hover:text-[var(--accent-fg)]"
+          >
+            <span>Aradaki Boşlukları Kapat</span>
+            <span className="font-mono text-[9.5px] opacity-80">←</span>
+          </button>
+          <button
+            type="button"
+            data-testid="ctx-delete-selected-btn"
+            onClick={() => {
+              onDeleteSelected()
+              setClipMenu(null)
+            }}
+            className="mt-0.5 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-rose-300 transition hover:bg-rose-500/20 hover:text-rose-200"
+          >
+            <span>
+              Seçili Klipleri Sil{selectedSet.size > 1 ? ` (${selectedSet.size})` : ''}
+            </span>
+            <span className="font-mono text-[9.5px] opacity-80">Del</span>
           </button>
         </div>
       )}
