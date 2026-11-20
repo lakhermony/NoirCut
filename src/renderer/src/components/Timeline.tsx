@@ -1616,14 +1616,10 @@ export default function Timeline({
                             ? draggingMode === 'move'
                               ? 'z-20 cursor-grabbing brightness-110 transition-none'
                               : 'z-20 cursor-ew-resize brightness-105 transition-none'
-                            : 'cursor-grab transition-[box-shadow,filter] duration-150 ease-out'
+                            : 'cursor-grab transition-[box-shadow,filter,background-color] duration-150 ease-out hover:brightness-[1.04]'
                         } ${
-                          isVideo || isCredit ? 'bg-[var(--clip-video)]' : 'bg-[var(--clip-audio)]'
-                        } ${
-                          isSelected
-                            ? 'z-10 ring-2 ring-[var(--accent)] shadow-[0_6px_18px_-4px_var(--accent-glow),0_4px_12px_rgba(0,0,0,0.65)]'
-                            : 'ring-1 ring-white/[0.11] shadow-[0_2px_8px_rgba(0,0,0,0.45)] hover:ring-white/[0.26] hover:brightness-[1.05]'
-                        }`}
+                          isVideo || isCredit ? 'timeline-clip-video' : 'timeline-clip-audio'
+                        } ${isSelected ? 'z-10' : ''}`}
                       >
                         {/* Sol & Sağ Kenar Kırpma (Edge Trim) Tutamaçları */}
                         <div
@@ -1650,16 +1646,16 @@ export default function Timeline({
                           <div className="flex h-full flex-col">
                             <div
                               style={{ height: headerH }}
-                              className="flex shrink-0 items-center justify-between gap-1.5 border-b border-white/[0.08] bg-[var(--clip-header)] px-2"
+                              className="flex shrink-0 items-center justify-between gap-1.5 border-b border-[color:var(--clip-divider)] bg-[var(--clip-header)] px-2 transition-colors duration-150"
                             >
-                              <span className="truncate text-[10px] font-medium tracking-[0.01em] text-[#E4EEF8]">
+                              <span className="truncate text-[10px] font-medium tracking-[0.01em] text-[color:var(--text-primary)]">
                                 {c.name}
                               </span>
                               <span className="shrink-0 font-mono text-[8.5px] text-[var(--accent)]">
                                 {c.duration.toFixed(1)}s
                               </span>
                             </div>
-                            <div className="flex flex-1 items-center bg-gradient-to-r from-amber-500/15 via-transparent to-amber-500/10 px-2.5 text-[9.5px] text-white/55">
+                            <div className="flex flex-1 items-center bg-gradient-to-r from-[var(--accent-soft)] via-transparent to-[var(--accent-soft)] px-2.5 text-[9.5px] text-white/60">
                               Sinematik Jenerik Katmanı
                             </div>
                           </div>
@@ -1668,13 +1664,13 @@ export default function Timeline({
                             {/* 1. Katman: Üst Klip Başlık Şeridi (Thumbnail'ları kapatmaz) */}
                             <div
                               style={{ height: headerH }}
-                              className="pointer-events-none flex shrink-0 items-center justify-between gap-1.5 border-b border-black/30 bg-[var(--clip-header)] px-2"
+                              className="pointer-events-none flex shrink-0 items-center justify-between gap-1.5 border-b border-[color:var(--clip-divider)] bg-[var(--clip-header)] px-2 transition-colors duration-150"
                             >
-                              <span className="truncate text-[10px] font-medium leading-none tracking-[0.01em] text-[#E4EEF8]">
+                              <span className="truncate text-[10px] font-medium leading-none tracking-[0.01em] text-[color:var(--text-primary)]">
                                 {c.name}
                               </span>
                               {clipW >= 72 && (
-                                <span className="shrink-0 font-mono text-[8.5px] leading-none text-[#9DB7D4]/85 transition-opacity group-hover:text-white/95">
+                                <span className="shrink-0 font-mono text-[8.5px] leading-none text-[color:var(--text-muted)] transition-colors group-hover:text-[var(--accent)]">
                                   {c.audioDetached
                                     ? 'Sessiz'
                                     : (c.speed ?? 100) !== 100
@@ -1701,7 +1697,7 @@ export default function Timeline({
                             {showWaveform && (
                               <div
                                 style={{ height: waveformTrayH }}
-                                className="relative w-full shrink-0 overflow-hidden border-t border-[#7FA8D6]/20 bg-[var(--clip-tray)]"
+                                className="relative w-full shrink-0 overflow-hidden border-t border-[color:var(--clip-divider)] bg-[var(--clip-tray)] transition-colors duration-150"
                               >
                                 <WaveformCanvas
                                   clip={c}
@@ -1709,7 +1705,6 @@ export default function Timeline({
                                   width={clipW}
                                   height={waveformTrayH}
                                   variant="embedded"
-                                  color="#7CC4F8"
                                   muted={!laneAudible}
                                 />
                               </div>

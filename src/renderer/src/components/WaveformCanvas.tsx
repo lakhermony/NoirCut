@@ -1,11 +1,11 @@
-import { memo, useEffect, useRef } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { dbToGain, fadeGain, type TimelineClip } from '../../../shared/timeline'
 import type { PeaksResult } from '../../../shared/types'
 
 /**
  * Gerçek ses dalga formunu (PCM peaks) Canvas üzerine çizer.
- * - `variant="embedded"`: Video kliplerinin alt ses şeridinde (referans görseldeki gibi)
- *   yatay referans çizgisi ve alttan yukarıya dolgulu silüet dalga formu çizer.
+ * - `variant="embedded"`: Video kliplerinin alt ses şeridinde aktif uygulama temasının
+ *   vurgu rengiyle (`--accent`) uyumlu yatay referans çizgisi ve dolgulu silüet dalga formu çizer.
  * - `variant="track"`: Bağımsız ses kanallarında (A1, A2...) zengin stüdyo dalga formu çizer.
  */
 function WaveformCanvasInner({
@@ -26,6 +26,18 @@ function WaveformCanvasInner({
   variant?: 'embedded' | 'track'
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const [themeTick, setThemeTick] = useState(0)
+
+  // Aktif uygulama teması (data-theme) değiştiğinde anında yeniden çiz
+  useEffect(() => {
+    if (variant !== 'embedded') return
+    const root = document.documentElement
+    const obs = new MutationObserver(() => {
+      setThemeTick((t) => t + 1)
+    })
+    obs.observe(root, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => obs.disconnect()
+  }, [variant])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -50,16 +62,25 @@ function WaveformCanvasInner({
     const speed = Math.max(0.25, Math.min(4.0, (clip.speed ?? 100) / 100))
 
     if (variant === 'embedded') {
-      // Üst referans / seviye çizgisi (Final Cut / DaVinci tarzı ince ufuk çizgisi)
+      const rootStyle = window.getComputedStyle(document.documentElement)
+      const accentHex = rootStyle.getPropertyValue('--accent').trim() || color
+      const accentGlow =
+        rootStyle.getPropertyValue('--accent-glow').trim() || 'rgba(183, 227, 106, 0.24)'
+      const accentSoft =
+        rootStyle.getPropertyValue('--accent-soft').trim() || 'rgba(183, 227, 106, 0.14)'
+      const borderHover =
+        rootStyle.getPropertyValue('--clip-border-hover').trim() || accentHex
+
+      // Üst referans / seviye çizgisi (aktif tema renginden türetilen zarif ufuk çizgisi)
       const refY = Math.max(3.5, Math.round(h * 0.28) + 0.5)
-      ctx.strokeStyle = muted
-        ? 'rgba(255, 255, 255, 0.14)'
-        : 'rgba(176, 206, 242, 0.38)'
+      ctx.strokeStyle = muted ? 'rgba(255, 255, 255, 0.14)' : borderHover
+      ctx.globalAlpha = muted ? 1 : 0.55
       ctx.lineWidth = 1
       ctx.beginPath()
       ctx.moveTo(0, refY)
       ctx.lineTo(w, refY)
       ctx.stroke()
+      ctx.globalAlpha = 1
 
       if (clip.duration > 0) {
         const step = 1.5
@@ -72,12 +93,10 @@ function WaveformCanvasInner({
           let norm = 0.18
           if (data && data.length > 0) {
             const idx = Math.min(data.length - 1, Math.max(0, Math.floor(srcSec * perSec)))
-            // Komşu örneklerle hafif yumuşatma
             const c0 = data[idx] ?? 0
             const c1 = data[Math.min(data.length - 1, idx + 1)] ?? c0
             norm = (c0 * 0.65 + c1 * 0.35) / 255
           } else {
-            // Peaks yüklenirken çok hafif organik taban izi
             norm = 0.12 + 0.06 * Math.sin(srcSec * 9.5) * Math.cos(srcSec * 4.2)
           }
           const env = fadeGain(clip, localSec)
@@ -95,18 +114,18 @@ function WaveformCanvasInner({
           fillGrad.addColorStop(0, 'rgba(148, 163, 184, 0.22)')
           fillGrad.addColorStop(1, 'rgba(148, 163, 184, 0.08)')
         } else {
-          fillGrad.addColorStop(0, 'rgba(156, 198, 245, 0.56)')
-          fillGrad.addColorStop(1, 'rgba(92, 145, 209, 0.24)')
+          fillGrad.addColorStop(0, accentGlow)
+          fillGrad.addColorStop(1, accentSoft)
         }
         ctx.fillStyle = fillGrad
         ctx.fill()
 
         // Üst kontur parlaması
-        ctx.strokeStyle = muted
-          ? 'rgba(148, 163, 184, 0.28)'
-          : 'rgba(195, 224, 255, 0.68)'
+        ctx.strokeStyle = muted ? 'rgba(148, 163, 184, 0.28)' : borderHover
+        ctx.globalAlpha = muted ? 1 : 0.78
         ctx.lineWidth = 0.9
         ctx.stroke()
+        ctx.globalAlpha = 1
       }
     } else {
       // Bağımsız Ses Kanalı (A1 / A2...)
@@ -177,7 +196,7 @@ function WaveformCanvasInner({
     }
 
     ctx.restore()
-  }, [clip, peaks, width, height, color, muted, variant])
+  }, [clip, peaks, width, height, color, muted, variant, themeTick])
 
   return (
     <canvas

@@ -18,9 +18,13 @@
   --border-subtle: #343943;
   --text-primary: #f1f2ee;
   --text-muted: #9298a3;
-  --clip-video: #1c2a3d;
-  --clip-header: #203047;
-  --clip-tray: #182538;
+  --clip-video: color-mix(in srgb, var(--accent) 11%, var(--bg-surface));
+  --clip-header: color-mix(in srgb, var(--accent) 16%, var(--bg-elevated));
+  --clip-tray: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+  --clip-border-default: color-mix(in srgb, var(--accent) 36%, rgba(255, 255, 255, 0.08));
+  --clip-border-hover: color-mix(in srgb, var(--accent) 64%, rgba(255, 255, 255, 0.16));
+  --clip-border-selected: var(--accent);
+  --clip-divider: color-mix(in srgb, var(--accent) 24%, rgba(255, 255, 255, 0.06));
   --clip-audio: #18242e;
   --obsidian: var(--bg-app);
   --anthracite: var(--bg-panel);
@@ -42,9 +46,13 @@
   --accent-glow: rgba(229, 229, 229, 0.2);
   --border-subtle: rgba(255, 255, 255, 0.07);
   --text-muted: #71717a;
-  --clip-video: #1b2636;
-  --clip-header: #212e42;
-  --clip-tray: #172130;
+  --clip-video: color-mix(in srgb, var(--accent) 10%, #16171a);
+  --clip-header: color-mix(in srgb, var(--accent) 15%, #1e2024);
+  --clip-tray: color-mix(in srgb, var(--accent) 9%, #121316);
+  --clip-border-default: color-mix(in srgb, var(--accent) 34%, rgba(255, 255, 255, 0.08));
+  --clip-border-hover: color-mix(in srgb, var(--accent) 62%, rgba(255, 255, 255, 0.16));
+  --clip-border-selected: var(--accent);
+  --clip-divider: color-mix(in srgb, var(--accent) 22%, rgba(255, 255, 255, 0.06));
   --clip-audio: #16181d;
 }
 
@@ -60,9 +68,13 @@
   --accent-glow: rgba(56, 189, 248, 0.24);
   --border-subtle: rgba(148, 163, 184, 0.10);
   --text-muted: #7c8ea6;
-  --clip-video: #1b2b40;
-  --clip-header: #21344d;
-  --clip-tray: #172538;
+  --clip-video: color-mix(in srgb, var(--accent) 12%, #151e2c);
+  --clip-header: color-mix(in srgb, var(--accent) 18%, #1a2638);
+  --clip-tray: color-mix(in srgb, var(--accent) 11%, #121a26);
+  --clip-border-default: color-mix(in srgb, var(--accent) 36%, rgba(255, 255, 255, 0.08));
+  --clip-border-hover: color-mix(in srgb, var(--accent) 64%, rgba(255, 255, 255, 0.16));
+  --clip-border-selected: var(--accent);
+  --clip-divider: color-mix(in srgb, var(--accent) 24%, rgba(255, 255, 255, 0.06));
   --clip-audio: #131d2b;
 }
 
@@ -78,9 +90,13 @@
   --accent-glow: rgba(217, 119, 6, 0.24);
   --border-subtle: rgba(255, 255, 255, 0.07);
   --text-muted: #8c8279;
-  --clip-video: #1e2b3c;
-  --clip-header: #233246;
-  --clip-tray: #192434;
+  --clip-video: color-mix(in srgb, var(--accent) 12%, #1c1814);
+  --clip-header: color-mix(in srgb, var(--accent) 18%, #241f1a);
+  --clip-tray: color-mix(in srgb, var(--accent) 11%, #161310);
+  --clip-border-default: color-mix(in srgb, var(--accent) 38%, rgba(255, 255, 255, 0.08));
+  --clip-border-hover: color-mix(in srgb, var(--accent) 66%, rgba(255, 255, 255, 0.16));
+  --clip-border-selected: var(--accent);
+  --clip-divider: color-mix(in srgb, var(--accent) 25%, rgba(255, 255, 255, 0.06));
   --clip-audio: #1e1915;
 }
 
@@ -97,9 +113,13 @@
   --border-subtle: rgba(255, 228, 230, 0.09);
   --text-primary: #f5f2f3;
   --text-muted: #9e8d93;
-  --clip-video: #1e2a3c;
-  --clip-header: #233146;
-  --clip-tray: #182334;
+  --clip-video: color-mix(in srgb, var(--accent) 12%, #20181c);
+  --clip-header: color-mix(in srgb, var(--accent) 18%, #281d22);
+  --clip-tray: color-mix(in srgb, var(--accent) 11%, #181215);
+  --clip-border-default: color-mix(in srgb, var(--accent) 38%, rgba(255, 255, 255, 0.08));
+  --clip-border-hover: color-mix(in srgb, var(--accent) 66%, rgba(255, 255, 255, 0.16));
+  --clip-border-selected: var(--accent);
+  --clip-divider: color-mix(in srgb, var(--accent) 25%, rgba(255, 255, 255, 0.06));
   --clip-audio: #1f1a23;
 }
 
@@ -189,6 +209,40 @@ body {
   }
   .case-file-card {
     border-radius: 13px;
+  }
+  .timeline-clip-video {
+    background-color: var(--clip-video);
+    box-shadow:
+      0 0 0 1px var(--clip-border-default, var(--border-subtle)),
+      0 2px 8px rgba(0, 0, 0, 0.45);
+  }
+  .timeline-clip-video:hover {
+    box-shadow:
+      0 0 0 1.25px var(--clip-border-hover, var(--accent)),
+      0 4px 12px rgba(0, 0, 0, 0.52);
+  }
+  .timeline-clip-video[data-selected='true'] {
+    box-shadow:
+      0 0 0 2px var(--clip-border-selected, var(--accent)),
+      0 6px 18px -4px var(--accent-glow),
+      0 4px 12px rgba(0, 0, 0, 0.65);
+  }
+  .timeline-clip-audio {
+    background-color: var(--clip-audio);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.11),
+      0 2px 8px rgba(0, 0, 0, 0.45);
+  }
+  .timeline-clip-audio:hover {
+    box-shadow:
+      0 0 0 1.25px rgba(255, 255, 255, 0.28),
+      0 4px 12px rgba(0, 0, 0, 0.52);
+  }
+  .timeline-clip-audio[data-selected='true'] {
+    box-shadow:
+      0 0 0 2px var(--clip-border-selected, var(--accent)),
+      0 6px 18px -4px var(--accent-glow),
+      0 4px 12px rgba(0, 0, 0, 0.65);
   }
 }
 
