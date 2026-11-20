@@ -451,6 +451,8 @@ function compileShader(gl: WebGL2RenderingContext, type: number, src: string): W
   return s
 }
 
+export type PlaybackQuality = 1 | 0.5 | 0.25
+
 export class WebGLColorEngine {
   private gl: WebGL2RenderingContext
   private program: WebGLProgram
@@ -462,6 +464,10 @@ export class WebGLColorEngine {
   private uploadedLutKey = ''
   private uploadedCurveKey = ''
   private hasUploadedFrame = false
+  private texW = 0
+  private texH = 0
+  private lastSourceEl: HTMLVideoElement | HTMLImageElement | null = null
+  private lastUploadedVideoTime = -1
 
   private loc: Record<string, WebGLUniformLocation | null>
 
@@ -644,7 +650,9 @@ export class WebGLColorEngine {
     wipePercent: number,
     falseColor = false,
     compareMode: 'none' | 'v-wipe' | 'h-wipe' | 'side-by-side' | 'original' = 'none',
-    isPlaying = false
+    isPlaying = false,
+    qualityScale: PlaybackQuality = 1,
+    forceUpload = false
   ): boolean {
     const isVideo = 'videoWidth' in source
     const srcW = isVideo ? source.videoWidth : source.naturalWidth
@@ -654,9 +662,11 @@ export class WebGLColorEngine {
     if (!canUpload && !this.hasUploadedFrame) return false
     const gl = this.gl
     const canvas = gl.canvas as HTMLCanvasElement
-    if (canUpload && (canvas.width !== srcW || canvas.height !== srcH)) {
-      canvas.width = srcW
-      canvas.height = srcH
+    const targetW = Math.max(16, Math.round(srcW * qualityScale))
+    const targetH = Math.max(16, Math.round(srcH * qualityScale))
+    if (canUpload && (canvas.width !== targetW || canvas.height !== targetH)) {
+      canvas.width = targetW
+      canvas.height = targetH
     }
 
     gl.viewport(0, 0, canvas.width, canvas.height)
@@ -666,8 +676,27 @@ export class WebGLColorEngine {
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.videoTex)
     if (canUpload) {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
-      this.hasUploadedFrame = true
+      const sourceChanged = this.lastSourceEl !== source
+      const curVideoTime = isVideo ? source.currentTime : 0
+      const frameTimeChanged =
+        !isVideo ||
+        sourceChanged ||
+        forceUpload ||
+        Math.abs(curVideoTime - this.lastUploadedVideoTime) > 1e-5
+
+      if (this.texW !== srcW || this.texH !== srcH) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
+        this.texW = srcW
+        this.texH = srcH
+        this.lastSourceEl = source
+        this.lastUploadedVideoTime = curVideoTime
+        this.hasUploadedFrame = true
+      } else if (frameTimeChanged) {
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source)
+        this.lastSourceEl = source
+        this.lastUploadedVideoTime = curVideoTime
+        this.hasUploadedFrame = true
+      }
     }
 
     this.ensureLut(lut)

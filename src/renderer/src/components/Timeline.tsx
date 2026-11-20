@@ -91,6 +91,8 @@ export default function Timeline({
   selectedClipIds,
   total,
   time,
+  timeRef,
+  subscribeTime,
   fps,
   playing,
   shuttleRate = 0,
@@ -143,6 +145,8 @@ export default function Timeline({
   selectedClipIds?: string[]
   total: number
   time: number
+  timeRef?: React.MutableRefObject<number>
+  subscribeTime?: (cb: (t: number) => void) => () => void
   fps: number
   playing: boolean
   shuttleRate?: number
@@ -188,6 +192,10 @@ export default function Timeline({
   height?: number
 }) {
   const area = useRef<HTMLDivElement>(null)
+  const playheadRef = useRef<HTMLDivElement>(null)
+  const timecodeRef = useRef<HTMLSpanElement>(null)
+  const fpsRef = useRef(fps)
+  fpsRef.current = fps
   const clipsRef = useRef(clips)
   clipsRef.current = clips
   const [width, setWidth] = useState(800)
@@ -266,6 +274,22 @@ export default function Timeline({
   const ppsRef = useRef(pps)
   ppsRef.current = pps
   const pendingAnchor = useRef<{ time: number; x: number } | null>(null)
+
+  // Oynatma sırasında React re-render tetiklemeden Playhead (transform: translateX) ve Zaman Kodunu (textContent) doğrudan DOM ref üzerinden güncelle
+  useEffect(() => {
+    if (!subscribeTime) return
+    return subscribeTime((t) => {
+      if (playheadRef.current) {
+        playheadRef.current.style.transform = `translate3d(${t * ppsRef.current}px, 0, 0)`
+      }
+      if (timecodeRef.current) {
+        const tc = fmt(t, fpsRef.current)
+        if (timecodeRef.current.textContent !== tc) {
+          timecodeRef.current.textContent = tc
+        }
+      }
+    })
+  }, [subscribeTime])
 
   useLayoutEffect(() => {
     const el = area.current
@@ -443,9 +467,10 @@ export default function Timeline({
     const maxTrimEnd = nextNeighbor ? round3(nextNeighbor.start) : Infinity
 
     const buildSnapTargets = (forLane: LaneId, excludeSet?: Set<string>): SnapTarget[] => {
+      const curTime = timeRef ? timeRef.current : time
       const targets: SnapTarget[] = [
         { time: 0, priority: 1 },
-        { time: round3(time), priority: 1 }
+        { time: round3(curTime), priority: 1 }
       ]
       if (inPoint !== null) targets.push({ time: round3(inPoint), priority: 1 })
       if (outPoint !== null) targets.push({ time: round3(outPoint), priority: 1 })
@@ -1147,10 +1172,11 @@ export default function Timeline({
         )}
 
         <span
+          ref={timecodeRef}
           className="ml-1 rounded border border-white/[0.06] bg-white/[0.04] px-2 py-0.5 font-mono text-[11px] tracking-wider text-white/90"
           data-testid="timeline-timecode"
         >
-          {fmt(time, fps)}
+          {fmt(timeRef ? timeRef.current : time, fps)}
         </span>
         {selectedSet.size > 1 ? (
           <span
@@ -1862,9 +1888,12 @@ export default function Timeline({
             {/* Keskin Metalik Başlıklı ve Lazer Işık İzli Playhead İmleci */}
             {total > 0 && (
               <div
+                ref={playheadRef}
                 data-testid="playhead"
-                className="pointer-events-none absolute inset-y-0 z-30 w-[1.5px] bg-[var(--accent)] "
-                style={{ left: time * pps }}
+                className="pointer-events-none absolute inset-y-0 left-0 z-30 w-[1.5px] bg-[var(--accent)] will-change-transform"
+                style={{
+                  transform: `translate3d(${(timeRef ? timeRef.current : time) * pps}px, 0, 0)`
+                }}
               >
                 {/* Lazer Işık İzi (Laser Light Trail) */}
                 <div

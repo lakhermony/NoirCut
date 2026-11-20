@@ -35,6 +35,15 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('com.noircut.studio')
 }
 
+// NVIDIA / Linux Donanım Video Çözme (Hardware Video Decode) ve Sıfır-Kopya (Zero-Copy) GPU Bayrakları
+app.commandLine.appendSwitch('ignore-gpu-blocklist')
+app.commandLine.appendSwitch('enable-gpu-rasterization')
+app.commandLine.appendSwitch('enable-zero-copy')
+app.commandLine.appendSwitch(
+  'enable-features',
+  'VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,UseChromeOSDirectVideoDecoder'
+)
+
 function resolveWindowIcon() {
   const candidates = [
     join(process.resourcesPath ?? '', 'icon.png'),

@@ -12,18 +12,33 @@ const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
 
 export default function CreditOverlay({
   credit,
-  localTime,
+  localTime: initialLocalTime,
+  clipStart = 0,
+  subscribeTime,
   duration,
   playing = false,
   isPreview = false
 }: {
   credit: CreditConfig
   localTime: number
+  clipStart?: number
+  subscribeTime?: (cb: (t: number) => void) => () => void
   duration: number
   playing?: boolean
   isPreview?: boolean
 }) {
   const [, setFontLoadTick] = useState(0)
+  const [liveLocalTime, setLiveLocalTime] = useState(initialLocalTime)
+  useEffect(() => {
+    setLiveLocalTime(initialLocalTime)
+  }, [initialLocalTime])
+  useEffect(() => {
+    if (!subscribeTime) return
+    return subscribeTime((t) => {
+      setLiveLocalTime(Math.max(0, t - clipStart))
+    })
+  }, [subscribeTime, clipStart])
+  const localTime = liveLocalTime
   const dur = Math.max(0.2, duration || credit.duration)
   const p = clamp01(localTime / dur)
   const fontFamily = resolveCreditFontCss(credit)

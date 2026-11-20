@@ -127,6 +127,8 @@ export default function GradeWorkspace({
   error,
   playing,
   time,
+  timeRef,
+  subscribeTime,
   duration,
   onToggle,
   onSeek,
@@ -169,6 +171,8 @@ export default function GradeWorkspace({
   error: string | null
   playing: boolean
   time: number
+  timeRef?: React.MutableRefObject<number>
+  subscribeTime?: (cb: (t: number) => void) => () => void
   duration: number
   onToggle: () => void
   onSeek: (t: number) => void
@@ -234,6 +238,8 @@ export default function GradeWorkspace({
           error={error}
           playing={playing}
           time={time}
+          timeRef={timeRef}
+          subscribeTime={subscribeTime}
           duration={duration}
           onToggle={onToggle}
           onSeek={onSeek}

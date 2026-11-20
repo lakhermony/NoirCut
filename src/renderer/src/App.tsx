@@ -546,7 +546,7 @@ export default function App() {
 
   // Playhead konumundan klip bölme (Razor / C)
   const cut = useCallback(() => {
-    const t = round3(player.time)
+    const t = round3(player.timeRef.current)
     const cs = stateSnapshotRef.current.clips
     const canSplit = (c: TimelineClip) => t > c.start + 0.05 && t < clipEndExact(c) - 0.05
     const selected = selectedClipId ? cs.find((c) => c.id === selectedClipId && canSplit(c)) : undefined
@@ -593,7 +593,7 @@ export default function App() {
         return [left, right]
       })
     )
-  }, [player.time, recordHistory, selectedClipId])
+  }, [player.timeRef, recordHistory, selectedClipId])
 
   const showToast = useCallback((msg: string) => {
     setStatusToast(msg)
@@ -928,7 +928,7 @@ export default function App() {
     const id = `clip-${nextId.current++}`
     setClips((cs) => {
       const v2Clips = cs.filter((c) => c.lane === 'V2')
-      const startAtPlayhead = player.time
+      const startAtPlayhead = player.timeRef.current
       const overlaps = v2Clips.some(
         (c) => startAtPlayhead < clipEnd(c) && startAtPlayhead + cfg.duration > c.start
       )
@@ -953,7 +953,7 @@ export default function App() {
       return [...cs, newClip]
     })
     setSelectedClipId(id)
-  }, [activeCredit, player.time])
+  }, [activeCredit, player.timeRef])
 
   // Geri Al (Undo - Ctrl+Z)
   const handleUndo = useCallback(() => {
@@ -1027,7 +1027,7 @@ export default function App() {
 
   // NLE Giriş (I) ve Çıkış (O) Noktası İşaretleme
   const handleMarkIn = useCallback(() => {
-    const t = Number(player.time.toFixed(3))
+    const t = Number(player.timeRef.current.toFixed(3))
     recordHistory('Giriş (In) İşareti')
     setInPoint(t)
     if (outPoint !== null && outPoint <= t) {
@@ -1040,10 +1040,10 @@ export default function App() {
       )
     }
     showToast(`[ I · Giriş (In) Noktası: ${t.toFixed(2)}s`)
-  }, [outPoint, player.time, recordHistory, showToast, targetEditClip])
+  }, [outPoint, player.timeRef, recordHistory, showToast, targetEditClip])
 
   const handleMarkOut = useCallback(() => {
-    const t = Number(player.time.toFixed(3))
+    const t = Number(player.timeRef.current.toFixed(3))
     recordHistory('Çıkış (Out) İşareti')
     setOutPoint(t)
     if (inPoint !== null && inPoint >= t) {
@@ -1056,7 +1056,7 @@ export default function App() {
       )
     }
     showToast(`O ] · Çıkış (Out) Noktası: ${t.toFixed(2)}s`)
-  }, [inPoint, player.time, recordHistory, showToast, targetEditClip])
+  }, [inPoint, player.timeRef, recordHistory, showToast, targetEditClip])
 
   const handleClearInOut = useCallback(() => {
     recordHistory('In/Out Temizle')
@@ -1068,7 +1068,7 @@ export default function App() {
 
   // 1) Sahne İşaretçileri ve Yönetmen Notları (Case Markers)
   const handleAddMarkerAtPlayhead = useCallback(() => {
-    const t = Number(player.time.toFixed(3))
+    const t = Number(player.timeRef.current.toFixed(3))
     const cur = stateSnapshotRef.current.markers
     const existing = cur.find((m) => Math.abs(m.time - t) < 0.08)
     if (existing) {
@@ -1089,7 +1089,7 @@ export default function App() {
     setMarkers((ms) => [...ms, newMarker].sort((a, b) => a.time - b.time))
     setActiveMarkerId(newMarker.id)
     showToast(`◆ Sahne İşaretçisi eklendi (${t.toFixed(2)}s)`)
-  }, [player.time, recordHistory, showToast])
+  }, [player.timeRef, recordHistory, showToast])
 
   const handleUpdateMarker = useCallback(
     (id: string, patch: Partial<CaseMarker>) => {
@@ -1115,7 +1115,7 @@ export default function App() {
     (dir: -1 | 1) => {
       const sorted = [...stateSnapshotRef.current.markers].sort((a, b) => a.time - b.time)
       if (sorted.length === 0) return
-      const curT = player.time
+      const curT = player.timeRef.current
       let target: CaseMarker | undefined
       if (dir > 0) {
         target = sorted.find((m) => m.time > curT + 0.04) ?? sorted[0]
@@ -1194,7 +1194,7 @@ export default function App() {
     }
 
     const thumbnailDataUrl = thumbCanvas.toDataURL('image/jpeg', 0.86)
-    const sec = Math.max(0, player.time)
+    const sec = Math.max(0, player.timeRef.current)
     const mm = String(Math.floor(sec / 60)).padStart(2, '0')
     const ss = String(Math.floor(sec % 60)).padStart(2, '0')
     const ff = String(Math.floor((sec % 1) * 24)).padStart(2, '0')
@@ -1209,7 +1209,7 @@ export default function App() {
     setStills((prev) => [newStill, ...prev])
     setCopiedGrade(cloneColorGrade(activeGrade))
     showToast(`Kare Yakalandı ve Renk Kopyalandı: ${newStill.name}`)
-  }, [activeGrade, activeLut, player.time, player.videoRef, showToast, stills.length, targetGradeClip])
+  }, [activeGrade, activeLut, player.timeRef, player.videoRef, showToast, stills.length, targetGradeClip])
 
   const handleCopyGrade = useCallback(() => {
     setCopiedGrade(cloneColorGrade(activeGrade))
@@ -1266,7 +1266,7 @@ export default function App() {
       recordHistory(`SFX Ekle: ${preset?.label ?? item.name}`)
 
       const id = `clip-${nextId.current++}`
-      const playhead = Number(player.time.toFixed(2))
+      const playhead = Number(player.timeRef.current.toFixed(2))
       setClips((cs) => {
         const overlapsOnLane = (lane: LaneId, s: number, dur: number) =>
           cs.some((c) => c.lane === lane && s < clipEnd(c) && s + dur > c.start)
@@ -1306,7 +1306,7 @@ export default function App() {
       setSelectedClipId(id)
       showToast(`${item.name} timeline'a eklendi (${playhead.toFixed(2)}s)`)
     },
-    [lib, player.time, recordHistory, showToast]
+    [lib, player.timeRef, recordHistory, showToast]
   )
 
   // Otomatik Beyaz Dengesi (Auto WB): Aktif video karesini örnekleyip Gray-World / Highlight-Neutral analizi yapar
@@ -1776,6 +1776,7 @@ export default function App() {
       return {
         credit: activeV2Clip.credit,
         localTime: player.time - activeV2Clip.start,
+        clipStart: activeV2Clip.start,
         duration: activeV2Clip.duration,
         isPreview: false
       }
@@ -1787,6 +1788,7 @@ export default function App() {
       return {
         credit: activeCredit,
         localTime: player.time,
+        clipStart: 0,
         duration: dur,
         isPreview: true
       }
@@ -1882,6 +1884,8 @@ export default function App() {
           error={player.error}
           playing={player.playing}
           time={player.time}
+          timeRef={player.timeRef}
+          subscribeTime={player.subscribeTime}
           duration={player.duration || total}
           onToggle={player.toggle}
           onSeek={player.seek}
@@ -1992,6 +1996,8 @@ export default function App() {
               playing={player.playing}
               shuttleRate={player.shuttleRate}
               time={player.time}
+              timeRef={player.timeRef}
+              subscribeTime={player.subscribeTime}
               duration={player.duration || total}
               onToggle={player.toggle}
               onShuttleReverse={() => {
@@ -2075,6 +2081,8 @@ export default function App() {
             selectedClipIds={selectedClipIds}
             total={total}
             time={player.time}
+            timeRef={player.timeRef}
+            subscribeTime={player.subscribeTime}
             fps={monitorMedia?.fps || 25}
             playing={player.playing}
             shuttleRate={player.shuttleRate}

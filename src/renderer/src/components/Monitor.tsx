@@ -9,7 +9,7 @@ import {
 } from '../../../shared/timeline'
 import type { MediaItem } from '../../../shared/types'
 import { fmt } from '../lib/format'
-import { WebGLColorEngine } from '../lib/webgl-grade'
+import { WebGLColorEngine, type PlaybackQuality } from '../lib/webgl-grade'
 import { getPlayableUrl, type OverlayVisualLayer, type VideoSlot } from '../hooks/usePlayer'
 import CreditOverlay from './CreditOverlay'
 import { MEDIA_DRAG_TYPE } from './LeftPanel'
@@ -86,6 +86,8 @@ export default function Monitor({
   playing,
   shuttleRate = 0,
   time,
+  timeRef,
+  subscribeTime,
   duration,
   onToggle,
   onShuttleReverse,
@@ -119,6 +121,8 @@ export default function Monitor({
   playing: boolean
   shuttleRate?: number
   time: number
+  timeRef?: React.MutableRefObject<number>
+  subscribeTime?: (cb: (t: number) => void) => () => void
   duration: number
   onToggle: () => void
   onShuttleReverse?: () => void
@@ -133,6 +137,7 @@ export default function Monitor({
   creditOverlay?: {
     credit: CreditConfig
     localTime: number
+    clipStart?: number
     duration: number
     isPreview?: boolean
   } | null
@@ -154,6 +159,24 @@ export default function Monitor({
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [falseColor, setFalseColor] = useState(false)
   const [safeFrame, setSafeFrame] = useState<'off' | '2.39:1' | '16:9' | '9:16'>('off')
+  const [playbackQuality, setPlaybackQuality] = useState<PlaybackQuality>(() => {
+    try {
+      const saved = window.localStorage.getItem('noircut-playback-quality')
+      if (saved === '0.5') return 0.5
+      if (saved === '0.25') return 0.25
+    } catch {
+      // yoksay
+    }
+    return 1
+  })
+  const handleSelectQuality = useCallback((q: PlaybackQuality) => {
+    setPlaybackQuality(q)
+    try {
+      window.localStorage.setItem('noircut-playback-quality', String(q))
+    } catch {
+      // yoksay
+    }
+  }, [])
   const [dragOver, setDragOver] = useState(false)
   const [webglReady, setWebglReady] = useState(true)
   const [webglDrawn, setWebglDrawn] = useState(false)
@@ -174,17 +197,92 @@ export default function Monitor({
   const slotBRef = useRef<HTMLVideoElement | null>(null)
   const sampleCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const engineRef = useRef<WebGLColorEngine | null>(null)
+  const topTimecodeRef = useRef<HTMLSpanElement | null>(null)
+  const bottomTimecodeCurrentRef = useRef<HTMLSpanElement | null>(null)
+  const progressFillRef = useRef<HTMLDivElement | null>(null)
+  const progressThumbRef = useRef<HTMLDivElement | null>(null)
+  const beforeWrapRef = useRef<HTMLDivElement | null>(null)
+  const afterWrapRef = useRef<HTMLDivElement | null>(null)
+  const overlayWrapRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const isImageMedia = media?.mediaKind === 'image'
   const isAudioMedia = media?.mediaKind === 'audio'
   const isVisualMedia = Boolean(media && !isAudioMedia)
-  const latestRef = useRef({ grade, activeLut, time, falseColor, effCompareMode, effWipe, playing })
-  latestRef.current = { grade, activeLut, time, falseColor, effCompareMode, effWipe, playing }
+  const latestRef = useRef({
+    grade,
+    activeLut,
+    time,
+    falseColor,
+    effCompareMode,
+    effWipe,
+    playing,
+    playbackQuality,
+    activeClip,
+    overlayLayers,
+    fps: media?.fps || 25,
+    duration
+  })
+  latestRef.current = {
+    grade,
+    activeLut,
+    time,
+    falseColor,
+    effCompareMode,
+    effWipe,
+    playing,
+    playbackQuality,
+    activeClip,
+    overlayLayers,
+    fps: media?.fps || 25,
+    duration
+  }
 
   // Klip Transform + Keyframe Interpolasyonu + Geçiş (Transition) hesaplaması
   const clipTransformStyle = useMemo<React.CSSProperties>(
     () => computeClipTransformStyle(activeClip, time),
     [activeClip, time]
   )
+
+  // Oynatma sırasında React re-render tetiklemeden Timecode, İlerleme Çubuğu ve Keyframe/Transition stillerini doğrudan DOM ref üzerinden güncelle
+  useEffect(() => {
+    if (!subscribeTime) return
+    return subscribeTime((t) => {
+      const { fps: curFps, duration: curDur, activeClip: curClip, overlayLayers: curOverlays } =
+        latestRef.current
+      const tc = fmt(t, curFps)
+      if (topTimecodeRef.current && topTimecodeRef.current.textContent !== tc) {
+        topTimecodeRef.current.textContent = tc
+      }
+      if (bottomTimecodeCurrentRef.current && bottomTimecodeCurrentRef.current.textContent !== tc) {
+        bottomTimecodeCurrentRef.current.textContent = tc
+      }
+      const pct = curDur > 0 ? Math.max(0, Math.min(100, (t / curDur) * 100)) : 0
+      if (progressFillRef.current) {
+        progressFillRef.current.style.width = `${pct}%`
+      }
+      if (progressThumbRef.current) {
+        progressThumbRef.current.style.left = `${pct}%`
+      }
+      if (curClip) {
+        const st = computeClipTransformStyle(curClip, t)
+        if (beforeWrapRef.current) {
+          beforeWrapRef.current.style.transform = String(st.transform ?? '')
+          beforeWrapRef.current.style.opacity = String(st.opacity ?? 1)
+        }
+        if (afterWrapRef.current) {
+          afterWrapRef.current.style.transform = String(st.transform ?? '')
+          afterWrapRef.current.style.opacity = String(st.opacity ?? 1)
+        }
+      }
+      for (const layer of curOverlays) {
+        const el = overlayWrapRefs.current.get(layer.clip.id)
+        if (el) {
+          const ost = computeClipTransformStyle(layer.clip, t)
+          el.style.transform = String(ost.transform ?? '')
+          el.style.opacity = String(ost.opacity ?? 1)
+        }
+      }
+    })
+  }, [subscribeTime])
 
   useEffect(() => {
     if (!isFullscreen) return
@@ -307,27 +405,31 @@ export default function Monitor({
     setWipe(Math.max(0, Math.min(100, ((e.clientX - r.left) / r.width) * 100)))
   }
 
-  const renderFrame = useCallback(() => {
-    const engine = engineRef.current
-    const srcEl = isImageMedia ? imgRef.current : videoRef.current
-    if (!engine || !srcEl || isAudioMedia) return
-    const {
-      grade: g,
-      activeLut: lut,
-      falseColor: fc,
-      effCompareMode: cmp,
-      effWipe: wp,
-      playing: isPl
-    } = latestRef.current
-    try {
-      const ok = engine.render(srcEl, g, lut, false, wp, fc, cmp, isPl)
-      if (ok) setWebglDrawn(true)
-    } catch (err) {
-      console.error('[NoirCut] WebGL render hatası:', err)
-      setWebglReady(false)
-      setWebglDrawn(false)
-    }
-  }, [isAudioMedia, isImageMedia, videoRef])
+  const renderFrame = useCallback(
+    (forceUpload = false) => {
+      const engine = engineRef.current
+      const srcEl = isImageMedia ? imgRef.current : videoRef.current
+      if (!engine || !srcEl || isAudioMedia) return
+      const {
+        grade: g,
+        activeLut: lut,
+        falseColor: fc,
+        effCompareMode: cmp,
+        effWipe: wp,
+        playing: isPl,
+        playbackQuality: pq
+      } = latestRef.current
+      try {
+        const ok = engine.render(srcEl, g, lut, false, wp, fc, cmp, isPl, pq, forceUpload)
+        if (ok) setWebglDrawn(true)
+      } catch (err) {
+        console.error('[NoirCut] WebGL render hatası:', err)
+        setWebglReady(false)
+        setWebglDrawn(false)
+      }
+    },
+    [isAudioMedia, isImageMedia, videoRef]
+  )
 
   // WebGL2 motorunu başlat (klip geçişlerinde motoru ve çizilmiş kareyi sıfırlama; siyah flaşı önler)
   useEffect(() => {
@@ -340,14 +442,14 @@ export default function Monitor({
     const canvas = canvasRef.current
     if (!canvas) return
     if (engineRef.current) {
-      renderFrame()
+      renderFrame(true)
       return
     }
     try {
       const engine = new WebGLColorEngine(canvas)
       engineRef.current = engine
       setWebglReady(true)
-      renderFrame()
+      renderFrame(true)
       return () => {
         engine.dispose()
         if (engineRef.current === engine) engineRef.current = null
@@ -358,12 +460,12 @@ export default function Monitor({
     }
   }, [isVisualMedia, renderFrame])
 
-  // Renk / LUT / zaman / medya / karşılaştırma değiştiğinde anında kareyi güncelle
+  // Renk / LUT / zaman / medya / karşılaştırma / playback kalitesi değiştiğinde anında kareyi güncelle
   useEffect(() => {
     renderFrame()
-  }, [media, grade, activeLut, time, falseColor, effCompareMode, effWipe, renderFrame])
+  }, [media, grade, activeLut, time, falseColor, effCompareMode, effWipe, playbackQuality, renderFrame])
 
-  // Her iki video tamponunda (Slot A + Slot B) olayları ve oynatma döngüsünü dinle
+  // Her iki video tamponunda (Slot A + Slot B) olayları ve senkronize requestVideoFrameCallback döngüsünü dinle
   useEffect(() => {
     if (!isVisualMedia) return
     const videos = [slotARef.current, slotBRef.current].filter(
@@ -373,6 +475,7 @@ export default function Monitor({
       videos.push(videoRef.current)
     }
 
+    let supportsVfc = false
     const cleanups: Array<() => void> = []
     for (const v of videos) {
       const onMeta = () => {
@@ -384,16 +487,19 @@ export default function Monitor({
             // ignore
           }
         }
-        renderFrame()
+        renderFrame(true)
       }
+      const onForceFrame = () => renderFrame(true)
       const onFrame = () => renderFrame()
       v.addEventListener('loadedmetadata', onMeta)
-      v.addEventListener('loadeddata', onFrame)
+      v.addEventListener('loadeddata', onForceFrame)
       v.addEventListener('canplay', onFrame)
       v.addEventListener('canplaythrough', onFrame)
-      v.addEventListener('seeked', onFrame)
-      v.addEventListener('pause', onFrame)
-      v.addEventListener('timeupdate', onFrame)
+      v.addEventListener('seeked', onForceFrame)
+      v.addEventListener('pause', onForceFrame)
+      if (!playing) {
+        v.addEventListener('timeupdate', onFrame)
+      }
 
       let vfcId = 0
       const rVfc = (
@@ -408,40 +514,42 @@ export default function Monitor({
         }
       ).cancelVideoFrameCallback
 
-      const onVideoFrame = () => {
-        if (videoRef.current === v) renderFrame()
-        if (typeof rVfc === 'function') {
+      if (typeof rVfc === 'function') {
+        supportsVfc = true
+        const onVideoFrame = () => {
+          if (videoRef.current === v) renderFrame(true)
           vfcId = rVfc.call(v, onVideoFrame)
         }
-      }
-      if (typeof rVfc === 'function') {
         vfcId = rVfc.call(v, onVideoFrame)
       }
 
       cleanups.push(() => {
         if (vfcId && typeof cVfc === 'function') cVfc.call(v, vfcId)
         v.removeEventListener('loadedmetadata', onMeta)
-        v.removeEventListener('loadeddata', onFrame)
+        v.removeEventListener('loadeddata', onForceFrame)
         v.removeEventListener('canplay', onFrame)
         v.removeEventListener('canplaythrough', onFrame)
-        v.removeEventListener('seeked', onFrame)
-        v.removeEventListener('pause', onFrame)
+        v.removeEventListener('seeked', onForceFrame)
+        v.removeEventListener('pause', onForceFrame)
         v.removeEventListener('timeupdate', onFrame)
       })
     }
 
+    // requestVideoFrameCallback desteklenmeyen ortamlarda veya görsel medya/grain animasyonunda yedek RAF döngüsü
     let raf = 0
-    const loop = () => {
-      renderFrame()
-      if (playing) raf = requestAnimationFrame(loop)
+    if (playing && (!supportsVfc || isImageMedia)) {
+      const loop = () => {
+        renderFrame()
+        if (playing) raf = requestAnimationFrame(loop)
+      }
+      raf = requestAnimationFrame(loop)
     }
-    if (playing) raf = requestAnimationFrame(loop)
 
     return () => {
       cancelAnimationFrame(raf)
       for (const fn of cleanups) fn()
     }
-  }, [isVisualMedia, media, playing, videoRef, renderFrame])
+  }, [isVisualMedia, isImageMedia, media, playing, videoRef, renderFrame])
 
   const scrub = (e: React.PointerEvent) => {
     if (!duration) return
@@ -476,6 +584,35 @@ export default function Monitor({
           </button>
         </div>
         <div className="flex items-center gap-1.5">
+          {/* Playback Kalitesi (Tam / 1/2 / 1/4) Seçici */}
+          <div
+            data-testid="playback-quality-selector"
+            className="flex items-center gap-0.5 rounded-full border border-[color:var(--border-subtle)] bg-[var(--bg-surface)] p-0.5"
+            title="Önizleme Playback Kalitesi (1/2 veya 1/4 ağır 4K/10-bit dosyalarda 60 FPS akıcılık sağlar; Export her zaman tam çözünürlükte çalışır)"
+          >
+            {(
+              [
+                [1, 'Tam'],
+                [0.5, '1/2'],
+                [0.25, '1/4']
+              ] as Array<[PlaybackQuality, string]>
+            ).map(([q, label]) => (
+              <button
+                key={q}
+                type="button"
+                data-testid={`playback-quality-${q}`}
+                onClick={() => handleSelectQuality(q)}
+                className={`rounded-full px-2 py-0.5 font-mono text-[9px] font-semibold transition duration-150 ${
+                  playbackQuality === q
+                    ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
+                    : 'text-[var(--text-muted)] hover:text-white'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           {/* Açılıp kapanabilir Safe Frame (2.39:1 / 16:9 / 9:16) seçici */}
           <div
             data-testid="safe-frame-selector"
@@ -536,6 +673,7 @@ export default function Monitor({
             Önce / Sonra
           </button>
           <span
+            ref={topTimecodeRef}
             className="rounded-full border border-[var(--accent)]/40 bg-[var(--bg-surface)] px-2.5 py-0.5 font-mono text-[10px] font-semibold text-[var(--accent)]"
             data-testid="timecode"
           >
@@ -722,14 +860,14 @@ export default function Monitor({
           </svg>
 
           {/* ÖNCE (ham görüntü + çift tamponlu kesintisiz video kaynağı: Slot A & Slot B) */}
-          <div className="absolute inset-0" style={clipTransformStyle}>
+          <div ref={beforeWrapRef} className="absolute inset-0" style={clipTransformStyle}>
             {isImageMedia && media && (
               <img
                 ref={imgRef}
                 data-testid="image-main"
                 src={media.url}
                 crossOrigin="anonymous"
-                onLoad={renderFrame}
+                onLoad={() => renderFrame(true)}
                 alt={media.name}
                 style={{
                   filter: !split && (!webglReady || !webglDrawn) ? 'url(#noircut-grade-filter)' : undefined
@@ -798,6 +936,7 @@ export default function Monitor({
 
           {/* SONRA (WebGL2 renk düzenlenmiş kare + SVG filtre yedeklemesi; split açıkken wipe sağında görünür) */}
           <div
+            ref={afterWrapRef}
             className="pointer-events-none absolute inset-0"
             style={{
               ...clipTransformStyle,
@@ -850,6 +989,10 @@ export default function Monitor({
             return (
               <div
                 key={layer.clip.id}
+                ref={(el) => {
+                  if (el) overlayWrapRefs.current.set(layer.clip.id, el)
+                  else overlayWrapRefs.current.delete(layer.clip.id)
+                }}
                 data-testid={`overlay-layer-${layer.clip.lane}`}
                 className="pointer-events-none absolute inset-0 z-10"
                 style={ovStyle}
@@ -900,6 +1043,8 @@ export default function Monitor({
             <CreditOverlay
               credit={creditOverlay.credit}
               localTime={creditOverlay.localTime}
+              clipStart={creditOverlay.clipStart}
+              subscribeTime={subscribeTime}
               duration={creditOverlay.duration}
               playing={playing}
               isPreview={creditOverlay.isPreview}
@@ -1010,7 +1155,7 @@ export default function Monitor({
           </div>
         ) : (
           <button
-            onClick={() => onSeek(Math.max(0, time - 5))}
+            onClick={() => onSeek(Math.max(0, (timeRef ? timeRef.current : time) - 5))}
             disabled={!media}
             title="5 sn Geri Sar"
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[color:var(--border-subtle)] bg-[var(--bg-panel)] text-[10px] text-[var(--text-muted)] transition hover:border-white/40 hover:text-white disabled:opacity-30"
@@ -1028,7 +1173,7 @@ export default function Monitor({
           {playing ? '❚❚' : '▶'}
         </button>
         <button
-          onClick={() => onSeek(Math.min(duration, time + 5))}
+          onClick={() => onSeek(Math.min(duration, (timeRef ? timeRef.current : time) + 5))}
           disabled={!media}
           title="5 sn İleri Sar"
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-subtle)] bg-[var(--bg-surface)] text-[10px] text-[var(--text-muted)] transition duration-150 hover:border-white/30 hover:bg-[var(--bg-elevated,#292E36)] hover:text-white active:scale-95 disabled:opacity-30"
@@ -1048,10 +1193,12 @@ export default function Monitor({
         >
           <div className="absolute left-0 right-0 top-1/2 h-[4px] -translate-y-1/2 rounded-full bg-white/12" />
           <div
+            ref={progressFillRef}
             className="absolute left-0 top-1/2 h-[4px] -translate-y-1/2 rounded-full bg-[var(--accent)]"
             style={{ width: `${progress}%` }}
           />
           <div
+            ref={progressThumbRef}
             className="absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--accent)] ring-2 ring-[var(--bg-panel)] transition-transform duration-150 hover:scale-110"
             style={{ left: `${progress}%` }}
           />
@@ -1102,7 +1249,8 @@ export default function Monitor({
         )}
 
         <span className="shrink-0 rounded-full border border-[var(--accent)]/40 bg-[var(--bg-surface)] px-3 py-1 font-mono text-[10px] tracking-wider text-[var(--accent)]">
-          {fmt(time, media?.fps || 25)} <span className="text-white/30">/</span> {fmt(duration, media?.fps || 25)}
+          <span ref={bottomTimecodeCurrentRef}>{fmt(time, media?.fps || 25)}</span>{' '}
+          <span className="text-white/30">/</span> {fmt(duration, media?.fps || 25)}
         </span>
       </div>
     </section>

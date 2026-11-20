@@ -68,7 +68,6 @@ export function usePlayer(
   const [error, setError] = useState<string | null>(null)
 
   const timeRef = useRef(0)
-  timeRef.current = time
   const playingRef = useRef(false)
   playingRef.current = playing
   const shuttleRateRef = useRef(0)
@@ -77,6 +76,27 @@ export function usePlayer(
   const wasPlayingRef = useRef(false)
   const anchorWallRef = useRef(0)
   const anchorTimeRef = useRef(0)
+  const lastCommittedPrimaryIdRef = useRef<string | null>(null)
+  const lastCommittedOverlayKeyRef = useRef<string>('')
+  const lastCommittedCreditIdRef = useRef<string | null>(null)
+  const timeListenersRef = useRef<Set<(t: number) => void>>(new Set())
+
+  const notifyTimeListeners = useCallback((t: number) => {
+    for (const cb of timeListenersRef.current) {
+      try {
+        cb(t)
+      } catch {
+        // yoksay
+      }
+    }
+  }, [])
+
+  const subscribeTime = useCallback((cb: (t: number) => void): (() => void) => {
+    timeListenersRef.current.add(cb)
+    return () => {
+      timeListenersRef.current.delete(cb)
+    }
+  }, [])
   const seekQueueRef = useRef(
     new WeakMap<HTMLMediaElement, { pending: number | null; listenerAttached: boolean }>()
   )
@@ -546,6 +566,7 @@ export function usePlayer(
       if (rate > 0 && (total <= 0 || nextT >= total)) {
         timeRef.current = total
         anchorTimeRef.current = total
+        notifyTimeListeners(total)
         setTime(total)
         playingRef.current = false
         shuttleRateRef.current = 0
@@ -558,6 +579,7 @@ export function usePlayer(
       if (rate < 0 && nextT <= 0) {
         timeRef.current = 0
         anchorTimeRef.current = 0
+        notifyTimeListeners(0)
         setTime(0)
         playingRef.current = false
         shuttleRateRef.current = 0
@@ -568,14 +590,39 @@ export function usePlayer(
       }
 
       timeRef.current = nextT
-      setTime(nextT)
+      notifyTimeListeners(nextT)
       syncAllAt(nextT, true)
+
+      // Oynatma sırasında yalnızca aktif taban klip veya üst katman (overlay/jenerik) sınır geçişinde React state'ini senkronize et
+      const nextStack = getVisualStackAt(nextT)
+      const nextPrimaryId = nextStack[0]?.id ?? null
+      const nextOverlayKey = nextStack
+        .slice(1)
+        .map((c) => c.id)
+        .join(',')
+      let nextCreditId: string | null = null
+      for (const laneId of orderedVideoLanesAsc) {
+        if (!isLaneAudible(lanes, laneId)) continue
+        const c = clipAt(clips, laneId, nextT)
+        if (c && isCreditClip(c)) nextCreditId = c.id
+      }
+      if (
+        nextPrimaryId !== lastCommittedPrimaryIdRef.current ||
+        nextOverlayKey !== lastCommittedOverlayKeyRef.current ||
+        nextCreditId !== lastCommittedCreditIdRef.current
+      ) {
+        lastCommittedPrimaryIdRef.current = nextPrimaryId
+        lastCommittedOverlayKeyRef.current = nextOverlayKey
+        lastCommittedCreditIdRef.current = nextCreditId
+        setTime(nextT)
+      }
+
       raf = requestAnimationFrame(tick)
     }
 
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [playing, total, syncAllAt])
+  }, [playing, total, syncAllAt, getVisualStackAt, mediaMap, notifyTimeListeners, orderedVideoLanesAsc, lanes, clips])
 
   const snapPlayheadToCurrentVideoFrame = useCallback(() => {
     const curVClip = getVisualStackAt(timeRef.current)[0]
@@ -593,11 +640,12 @@ export function usePlayer(
         )
         if (Number.isFinite(exactT)) {
           timeRef.current = exactT
+          notifyTimeListeners(exactT)
           setTime(exactT)
         }
       }
     }
-  }, [getVisualStackAt, mediaMap])
+  }, [getVisualStackAt, mediaMap, notifyTimeListeners])
 
   const toggle = useCallback(() => {
     if (total <= 0) return
@@ -613,19 +661,28 @@ export function usePlayer(
       timeRef.current = 0
       anchorTimeRef.current = 0
       anchorWallRef.current = performance.now()
+      notifyTimeListeners(0)
       setTime(0)
       syncAllAt(0, true, true)
     } else if (!next) {
       snapPlayheadToCurrentVideoFrame()
+      notifyTimeListeners(timeRef.current)
+      setTime(timeRef.current)
       anchorTimeRef.current = timeRef.current
       anchorWallRef.current = performance.now()
       syncAllAt(timeRef.current, false)
     } else {
+      const stack = getVisualStackAt(timeRef.current)
+      lastCommittedPrimaryIdRef.current = stack[0]?.id ?? null
+      lastCommittedOverlayKeyRef.current = stack
+        .slice(1)
+        .map((c) => c.id)
+        .join(',')
       anchorTimeRef.current = timeRef.current
       anchorWallRef.current = performance.now()
       syncAllAt(timeRef.current, true)
     }
-  }, [snapPlayheadToCurrentVideoFrame, total, syncAllAt])
+  }, [snapPlayheadToCurrentVideoFrame, total, syncAllAt, getVisualStackAt, notifyTimeListeners])
 
   /** NLE J Kısayolu: Geri sarma (-1x, tekrar basınca -2x) */
   const shuttleReverse = useCallback((): number => {
@@ -635,6 +692,7 @@ export function usePlayer(
     const nextRate = curRate >= 0 ? -1 : -2
     if (timeRef.current <= 0.05) {
       timeRef.current = total
+      notifyTimeListeners(total)
       setTime(total)
     }
     anchorTimeRef.current = timeRef.current
@@ -645,19 +703,21 @@ export function usePlayer(
     setPlaying(true)
     syncAllAt(timeRef.current, true, true)
     return nextRate
-  }, [total, syncAllAt])
+  }, [total, syncAllAt, notifyTimeListeners])
 
   /** NLE K Kısayolu: Durdurma (Pause) */
   const shuttlePause = useCallback(() => {
     playingRef.current = false
     shuttleRateRef.current = 0
     snapPlayheadToCurrentVideoFrame()
+    notifyTimeListeners(timeRef.current)
+    setTime(timeRef.current)
     anchorTimeRef.current = timeRef.current
     anchorWallRef.current = performance.now()
     setPlaying(false)
     setShuttleRate(0)
     syncAllAt(timeRef.current, false)
-  }, [snapPlayheadToCurrentVideoFrame, syncAllAt])
+  }, [snapPlayheadToCurrentVideoFrame, syncAllAt, notifyTimeListeners])
 
   /** NLE L Kısayolu: İleri oynatma (1x, tekrar basınca 2x, 4x) */
   const shuttleForward = useCallback((): number => {
@@ -667,6 +727,7 @@ export function usePlayer(
     const nextRate = curRate <= 0 ? 1 : curRate === 1 ? 2 : 4
     if (timeRef.current >= total - 0.05) {
       timeRef.current = 0
+      notifyTimeListeners(0)
       setTime(0)
     }
     anchorTimeRef.current = timeRef.current
@@ -677,7 +738,7 @@ export function usePlayer(
     setPlaying(true)
     syncAllAt(timeRef.current, true, curRate <= 0)
     return nextRate
-  }, [total, syncAllAt])
+  }, [total, syncAllAt, notifyTimeListeners])
 
   const beginScrub = useCallback(() => {
     if (scrubbingRef.current) return
@@ -686,6 +747,7 @@ export function usePlayer(
     if (wasPlayingRef.current) {
       playingRef.current = false
       setPlaying(false)
+      setTime(timeRef.current)
       syncAllAt(timeRef.current, false)
     }
   }, [syncAllAt])
@@ -695,6 +757,7 @@ export function usePlayer(
     scrubbingRef.current = false
     anchorTimeRef.current = timeRef.current
     anchorWallRef.current = performance.now()
+    setTime(timeRef.current)
     if (wasPlayingRef.current) {
       wasPlayingRef.current = false
       playingRef.current = true
@@ -711,10 +774,17 @@ export function usePlayer(
       timeRef.current = clamped
       anchorTimeRef.current = clamped
       anchorWallRef.current = performance.now()
+      const stack = getVisualStackAt(clamped)
+      lastCommittedPrimaryIdRef.current = stack[0]?.id ?? null
+      lastCommittedOverlayKeyRef.current = stack
+        .slice(1)
+        .map((c) => c.id)
+        .join(',')
+      notifyTimeListeners(clamped)
       setTime(clamped)
       syncAllAt(clamped, scrubbingRef.current ? false : playingRef.current, true)
     },
-    [total, syncAllAt]
+    [total, syncAllAt, getVisualStackAt, notifyTimeListeners]
   )
 
   const videoProps: React.VideoHTMLAttributes<HTMLVideoElement> = {
@@ -753,6 +823,8 @@ export function usePlayer(
     playing,
     shuttleRate,
     time,
+    timeRef,
+    subscribeTime,
     duration: total,
     error,
     toggle,

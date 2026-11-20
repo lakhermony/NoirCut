@@ -61,8 +61,9 @@ export default function VideoScopes({
       sampleCanvasRef.current = document.createElement('canvas')
     }
     const sc = sampleCanvasRef.current
-    const sw = 96
-    const sh = 54
+    // Oynatma sırasında 128x72 düşük örnekleme, video durdurulduğunda 192x108 tam hassasiyet
+    const sw = playing ? 128 : 192
+    const sh = playing ? 72 : 108
     if (sc.width !== sw || sc.height !== sh) {
       sc.width = sw
       sc.height = sh
@@ -359,17 +360,25 @@ export default function VideoScopes({
       drawCurve(histB, 'rgba(56,189,248,0.85)', 'rgba(56,189,248,0.18)')
       drawCurve(histY, 'rgba(255,255,255,0.9)', 'rgba(255,255,255,0.10)')
     }
-  }, [activeLut, grade, media, mode, videoRef])
+  }, [activeLut, grade, media, mode, playing, videoRef])
 
   useEffect(() => {
-    drawScopes()
-  }, [drawScopes, time, grade, activeLut, mode, media])
+    if (!playing) {
+      drawScopes()
+    }
+  }, [drawScopes, time, grade, activeLut, mode, media, playing])
 
+  // Oynatma sırasında her karede piksel okumak yerine saniyede 10-12 kare (~95ms throttle) ile güncelle
   useEffect(() => {
     if (!playing) return
+    drawScopes()
     let raf = 0
-    const tick = () => {
-      drawScopes()
+    let lastDraw = performance.now()
+    const tick = (now: number) => {
+      if (now - lastDraw >= 95) {
+        lastDraw = now
+        drawScopes()
+      }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
