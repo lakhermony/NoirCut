@@ -23,6 +23,7 @@ import {
 } from '../../../shared/timeline'
 import type { MediaItem, PeaksResult } from '../../../shared/types'
 import { fmt } from '../lib/format'
+import FilmstripCanvas from './FilmstripCanvas'
 import { MEDIA_DRAG_TYPE } from './LeftPanel'
 import WaveformCanvas from './WaveformCanvas'
 
@@ -125,7 +126,7 @@ export default function Timeline({
   onAddAudioLane,
   onRemoveLane,
   onDropMediaToLane,
-  height = 252
+  height = 284
 }: {
   clips: TimelineClip[]
   mediaMap: Map<string, MediaItem>
@@ -186,6 +187,7 @@ export default function Timeline({
   const [selectedKeyframeId, setSelectedKeyframeId] = useState<string | null>(null)
   const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null)
   const [draggingClipId, setDraggingClipId] = useState<string | null>(null)
+  const [draggingMode, setDraggingMode] = useState<'move' | 'trim-left' | 'trim-right' | null>(null)
   const [dropTargetLane, setDropTargetLane] = useState<LaneId | null>(null)
   const [gapMenu, setGapMenu] = useState<{
     x: number
@@ -455,6 +457,7 @@ export default function Timeline({
     let moved = false
     let activeLane: LaneId = clip.lane
     setDraggingClipId(clip.id)
+    setDraggingMode(mode)
 
     const onMove = (ev: PointerEvent) => {
       const dx = ev.clientX - startX
@@ -559,6 +562,7 @@ export default function Timeline({
 
     const onUp = () => {
       setDraggingClipId(null)
+      setDraggingMode(null)
       setDropTargetLane(null)
       setSnapGuideTime(null)
       window.removeEventListener('pointermove', onMove)
@@ -1026,7 +1030,7 @@ export default function Timeline({
             const audible = isLaneAudible(lanes, lane)
             const isVideo = isVideoLane(lane)
             const n = laneNumber(lane)
-            const rowH = lane === 'V1' ? 58 : isVideo ? 50 : 44
+            const rowH = lane === 'V1' ? 80 : isVideo ? 74 : 46
             const laneSub =
               lane === 'V1'
                 ? 'Video 1'
@@ -1260,7 +1264,10 @@ export default function Timeline({
               const laneClips = clips.filter((c) => c.lane === lane)
               const laneAudible = isLaneAudible(lanes, lane)
               const isVideo = isVideoLane(lane)
-              const rowH = lane === 'V1' ? 58 : isVideo ? 50 : 44
+              const rowH = lane === 'V1' ? 80 : isVideo ? 74 : 46
+              const clipInnerH = rowH - 6
+              const headerH = isVideo ? 18 : 15
+              const waveformTrayH = lane === 'V1' ? 18 : 17
 
               return (
                 <div
@@ -1306,15 +1313,20 @@ export default function Timeline({
                   {laneClips.map((c) => {
                     const m = mediaMap.get(c.mediaId)
                     const peaks = peaksMap[c.mediaId]
-                    const clipW = Math.max(6, c.duration * pps - 2)
+                    // Klipler arası tutarlı 2px sinematik boşluk
+                    const clipW = Math.max(8, c.duration * pps - 2)
                     const isSelected = c.id === selectedClipId
-                    const cell = 88
+                    const isDraggingThis = draggingClipId === c.id
                     const isCredit = isCreditClip(c)
                     const showWaveform = isCredit
                       ? false
                       : isVideo
                         ? !c.audioDetached && Boolean(m?.hasAudio)
                         : Boolean(m?.hasAudio ?? true)
+                    const filmstripH = Math.max(
+                      16,
+                      clipInnerH - headerH - (showWaveform ? waveformTrayH : 0)
+                    )
 
                     return (
                       <div
@@ -1328,17 +1340,23 @@ export default function Timeline({
                           e.stopPropagation()
                           onSelectClip(c.id)
                         }}
-                        style={{ left: c.start * pps, width: clipW }}
-                        className={`group absolute bottom-[2px] top-[2px] overflow-hidden rounded-[13px] ${
-                          draggingClipId === c.id
-                            ? 'cursor-grabbing brightness-110 transition-none'
-                            : 'cursor-grab transition-all duration-150'
+                        style={{
+                          left: c.start * pps + 1,
+                          width: clipW,
+                          willChange: isDraggingThis ? 'left, width' : undefined
+                        }}
+                        className={`group absolute bottom-[3px] top-[3px] overflow-hidden rounded-[8px] ${
+                          isDraggingThis
+                            ? draggingMode === 'move'
+                              ? 'z-20 cursor-grabbing brightness-110 transition-none'
+                              : 'z-20 cursor-ew-resize brightness-105 transition-none'
+                            : 'cursor-grab transition-[box-shadow,filter] duration-150 ease-out'
                         } ${
                           isVideo || isCredit ? 'bg-[var(--clip-video)]' : 'bg-[var(--clip-audio)]'
                         } ${
                           isSelected
-                            ? 'z-10 ring-2 ring-[var(--accent)]'
-                            : 'ring-1 ring-[color:var(--border-subtle)] hover:ring-[var(--accent)]/60 hover:brightness-110'
+                            ? 'z-10 ring-2 ring-[var(--accent)] shadow-[0_6px_18px_-4px_var(--accent-glow),0_4px_12px_rgba(0,0,0,0.65)]'
+                            : 'ring-1 ring-white/[0.11] shadow-[0_2px_8px_rgba(0,0,0,0.45)] hover:ring-white/[0.26] hover:brightness-[1.05]'
                         }`}
                       >
                         {/* Sol & Sağ Kenar Kırpma (Edge Trim) Tutamaçları */}
@@ -1346,95 +1364,117 @@ export default function Timeline({
                           data-testid={`trim-left-${c.id}`}
                           onPointerDown={(e) => startClipDrag(e, c, 'trim-left')}
                           title="Sol kenardan kırp (Trim In)"
-                          className="absolute bottom-0 left-0 top-0 z-30 w-2 cursor-ew-resize bg-[var(--accent)]/0 transition-colors hover:bg-[var(--accent)]/70"
-                        />
+                          className="group/trimL absolute bottom-0 left-0 top-0 z-30 flex w-2.5 cursor-ew-resize items-center justify-center bg-transparent transition-colors hover:bg-[var(--accent)]/35"
+                        >
+                          <span className="h-4 w-[2px] rounded-full bg-white/0 transition-all duration-150 group-hover/trimL:bg-white/90" />
+                        </div>
                         <div
                           data-testid={`trim-right-${c.id}`}
                           onPointerDown={(e) => startClipDrag(e, c, 'trim-right')}
                           title="Sağ kenardan kırp (Trim Out)"
-                          className="absolute bottom-0 right-0 top-0 z-30 w-2 cursor-ew-resize bg-[var(--accent)]/0 transition-colors hover:bg-[var(--accent)]/70"
-                        />
-                        {/* Hover Parlama Katmanı */}
-                        <div className="pointer-events-none absolute inset-0 z-10 bg-gradient-to-r from-white/[0.06] via-transparent to-white/[0.04] opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+                          className="group/trimR absolute bottom-0 right-0 top-0 z-30 flex w-2.5 cursor-ew-resize items-center justify-center bg-transparent transition-colors hover:bg-[var(--accent)]/35"
+                        >
+                          <span className="h-4 w-[2px] rounded-full bg-white/0 transition-all duration-150 group-hover/trimR:bg-white/90" />
+                        </div>
+
+                        {/* İnce Üst Işık Yansıması */}
+                        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-px bg-white/[0.08]" />
+
                         {isCredit ? (
-                          <div className="flex h-full items-center bg-gradient-to-r from-tungsten/15 via-transparent to-tungsten/10 px-2" />
-                        ) : isVideo ? (
-                          <>
-                            {/* Filmstrip küçük resimleri */}
+                          <div className="flex h-full flex-col">
                             <div
-                              className="absolute inset-x-0 top-[6px]"
-                              style={{
-                                bottom: showWaveform ? '20px' : '6px',
-                                ...(m?.thumbnail
-                                  ? {
-                                      backgroundImage: `url(${m.thumbnail})`,
-                                      backgroundSize: `${cell - 2}px 100%`,
-                                      backgroundRepeat: 'repeat-x',
-                                      maskImage: `repeating-linear-gradient(90deg, #000 0 ${cell - 2}px, transparent ${cell - 2}px ${cell}px)`,
-                                      WebkitMaskImage: `repeating-linear-gradient(90deg, #000 0 ${cell - 2}px, transparent ${cell - 2}px ${cell}px)`
-                                    }
-                                  : {
-                                      background:
-                                        'linear-gradient(90deg, rgba(245,166,35,0.25), rgba(229,57,53,0.25))'
-                                    })
-                              }}
-                            />
-                            {/* Gömülü ses dalga formu (ayrılmamışsa) */}
+                              style={{ height: headerH }}
+                              className="flex shrink-0 items-center justify-between gap-1.5 border-b border-white/[0.08] bg-[var(--clip-header)] px-2"
+                            >
+                              <span className="truncate text-[10px] font-medium tracking-[0.01em] text-[#E4EEF8]">
+                                {c.name}
+                              </span>
+                              <span className="shrink-0 font-mono text-[8.5px] text-[var(--accent)]">
+                                {c.duration.toFixed(1)}s
+                              </span>
+                            </div>
+                            <div className="flex flex-1 items-center bg-gradient-to-r from-amber-500/15 via-transparent to-amber-500/10 px-2.5 text-[9.5px] text-white/55">
+                              Sinematik Jenerik Katmanı
+                            </div>
+                          </div>
+                        ) : isVideo ? (
+                          <div className="flex h-full w-full flex-col">
+                            {/* 1. Katman: Üst Klip Başlık Şeridi (Thumbnail'ları kapatmaz) */}
+                            <div
+                              style={{ height: headerH }}
+                              className="pointer-events-none flex shrink-0 items-center justify-between gap-1.5 border-b border-black/30 bg-[var(--clip-header)] px-2"
+                            >
+                              <span className="truncate text-[10px] font-medium leading-none tracking-[0.01em] text-[#E4EEF8]">
+                                {c.name}
+                              </span>
+                              {clipW >= 72 && (
+                                <span className="shrink-0 font-mono text-[8.5px] leading-none text-[#9DB7D4]/85 transition-opacity group-hover:text-white/95">
+                                  {c.audioDetached
+                                    ? 'Sessiz'
+                                    : (c.speed ?? 100) !== 100
+                                      ? `${((c.speed ?? 100) / 100).toFixed(2)}x · ${formatDb(c.gainDb)}`
+                                      : formatDb(c.gainDb)}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* 2. Katman: Orijinal En-Boy Oranlı Çoklu Kare Filmstrip Şeridi */}
+                            <div
+                              style={{ height: filmstripH }}
+                              className="relative w-full shrink-0 overflow-hidden bg-[#131b26]"
+                            >
+                              <FilmstripCanvas
+                                clip={c}
+                                media={m}
+                                width={clipW}
+                                height={filmstripH}
+                              />
+                            </div>
+
+                            {/* 3. Katman: Alt Ses Dalga Formu Şeridi + Referans Çizgisi */}
                             {showWaveform && (
-                              <div className="absolute inset-x-0 bottom-[5px] h-[16px] bg-black/75 border-t border-white/10">
+                              <div
+                                style={{ height: waveformTrayH }}
+                                className="relative w-full shrink-0 overflow-hidden border-t border-[#7FA8D6]/20 bg-[var(--clip-tray)]"
+                              >
                                 <WaveformCanvas
                                   clip={c}
                                   peaks={peaks}
                                   width={clipW}
-                                  height={16}
-                                  color="#06B6D4"
+                                  height={waveformTrayH}
+                                  variant="embedded"
+                                  color="#7CC4F8"
                                   muted={!laneAudible}
                                 />
                               </div>
                             )}
-                            {/* Sprocket delikleri */}
-                            <div
-                              className="pointer-events-none absolute inset-x-0 top-0 h-[5px]"
-                              style={{
-                                background:
-                                  'repeating-linear-gradient(90deg, transparent 0 5px, rgba(255,255,255,0.25) 5px 9px, transparent 9px 14px)'
-                              }}
-                            />
-                            <div
-                              className="pointer-events-none absolute inset-x-0 bottom-0 h-[5px]"
-                              style={{
-                                background:
-                                  'repeating-linear-gradient(90deg, transparent 0 5px, rgba(255,255,255,0.25) 5px 9px, transparent 9px 14px)'
-                              }}
-                            />
-                          </>
+                          </div>
                         ) : (
-                          /* Ses Kanalı (A1 / A2) Tam Boy Gerçek Ses Dalgası */
-                          <div className="absolute inset-0">
-                            <WaveformCanvas
-                              clip={c}
-                              peaks={peaks}
-                              width={clipW}
-                              height={rowH - 4}
-                              color={lane === 'A1' ? '#22D3EE' : '#06B6D4'}
-                              muted={!laneAudible}
-                            />
+                          /* Ses Kanalı (A1 / A2...) Tam Boy Ses Dalgası + Zarif Üst Başlık */
+                          <div className="relative h-full w-full">
+                            <div className="absolute inset-x-0 bottom-0 top-[14px]">
+                              <WaveformCanvas
+                                clip={c}
+                                peaks={peaks}
+                                width={clipW}
+                                height={Math.max(14, clipInnerH - 14)}
+                                variant="track"
+                                color={lane === 'A1' ? '#38BDF8' : '#22D3EE'}
+                                muted={!laneAudible}
+                              />
+                            </div>
+                            <div className="pointer-events-none absolute inset-x-0 top-0 flex h-[15px] items-center justify-between gap-1 border-b border-white/[0.06] bg-black/35 px-2">
+                              <span className="truncate text-[9.5px] font-medium leading-none text-[#D8E8F8]/90">
+                                {c.name}
+                              </span>
+                              {clipW >= 68 && (
+                                <span className="shrink-0 font-mono text-[8px] leading-none text-cyan-300/85">
+                                  {formatDb(c.gainDb)}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         )}
-
-                        {/* Klip Etiketi */}
-                        <div className="pointer-events-none absolute left-1.5 right-1.5 top-1.5 flex items-center justify-between gap-1">
-                          <span className="truncate rounded-full bg-black/70 px-2 py-0.5 text-[9px] font-medium text-white/90">
-                            {c.name}
-                          </span>
-                          <span className="shrink-0 rounded-full bg-black/75 px-2 py-0.5 font-mono text-[8px] text-[var(--accent)]">
-                            {isCredit
-                              ? `${c.duration.toFixed(1)}s`
-                              : isVideo && c.audioDetached
-                                ? 'Sessiz'
-                                : formatDb(c.gainDb)}
-                          </span>
-                        </div>
 
                         {/* Fade In & Fade Out Sürükleme Tutamaçları */}
                         {showWaveform && (
@@ -1446,10 +1486,14 @@ export default function Timeline({
                               style={{
                                 left: Math.min(
                                   clipW - 8,
-                                  Math.max(2, (c.fadeIn / Math.max(0.01, c.duration)) * clipW)
+                                  Math.max(3, (c.fadeIn / Math.max(0.01, c.duration)) * clipW)
                                 )
                               }}
-                              className="absolute top-0.5 z-20 h-3 w-3 -translate-x-1/2 cursor-ew-resize rounded-full border border-black bg-white/90 shadow hover:scale-125 hover:bg-[var(--accent)]"
+                              className={`absolute bottom-[13px] z-20 h-2.5 w-2.5 -translate-x-1/2 cursor-ew-resize rounded-full border border-black/80 bg-white/90 shadow transition-all duration-150 hover:scale-125 hover:bg-[var(--accent)] ${
+                                isSelected || c.fadeIn > 0.01
+                                  ? 'opacity-95'
+                                  : 'opacity-0 group-hover:opacity-90'
+                              }`}
                             />
                             <div
                               data-testid={`fade-out-handle-${c.id}`}
@@ -1459,12 +1503,16 @@ export default function Timeline({
                                 left: Math.max(
                                   8,
                                   Math.min(
-                                    clipW - 2,
+                                    clipW - 3,
                                     clipW - (c.fadeOut / Math.max(0.01, c.duration)) * clipW
                                   )
                                 )
                               }}
-                              className="absolute top-0.5 z-20 h-3 w-3 -translate-x-1/2 cursor-ew-resize rounded-full border border-black bg-white/90 shadow hover:scale-125 hover:bg-[var(--accent)]"
+                              className={`absolute bottom-[13px] z-20 h-2.5 w-2.5 -translate-x-1/2 cursor-ew-resize rounded-full border border-black/80 bg-white/90 shadow transition-all duration-150 hover:scale-125 hover:bg-[var(--accent)] ${
+                                isSelected || c.fadeOut > 0.01
+                                  ? 'opacity-95'
+                                  : 'opacity-0 group-hover:opacity-90'
+                              }`}
                             />
                           </>
                         )}

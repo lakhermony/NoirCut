@@ -72,9 +72,9 @@ import { THEME_OPTIONS, type Tab, type ThemeId } from './types'
 
 const THEME_STORAGE_KEY = 'noircut-theme'
 const TIMELINE_HEIGHT_KEY = 'noircut-timeline-height'
-const DEFAULT_TIMELINE_HEIGHT = 252
-const MIN_TIMELINE_HEIGHT = 160
-const MAX_TIMELINE_HEIGHT = 500
+const DEFAULT_TIMELINE_HEIGHT = 284
+const MIN_TIMELINE_HEIGHT = 176
+const MAX_TIMELINE_HEIGHT = 520
 
 function getInitialTimelineHeight(): number {
   try {
