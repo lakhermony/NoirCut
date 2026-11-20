@@ -22,6 +22,8 @@ export interface ProbeResult {
   fps: number
   hasAudio: boolean
   audioCodec: string | null
+  bitrate: number
+  pixFmt: string | null
 }
 
 function parseFps(rate: string | undefined): number {
@@ -52,7 +54,9 @@ export async function probeMedia(filePath: string): Promise<ProbeResult> {
       codec: video?.codec_name ?? 'image',
       fps: 24,
       hasAudio: false,
-      audioCodec: null
+      audioCodec: null,
+      bitrate: 0,
+      pixFmt: video?.pix_fmt ?? null
     }
   }
 
@@ -69,12 +73,17 @@ export async function probeMedia(filePath: string): Promise<ProbeResult> {
       codec: 'none',
       fps: 24,
       hasAudio: true,
-      audioCodec: audio.codec_name ?? null
+      audioCodec: audio.codec_name ?? null,
+      bitrate: Number(data.format.bit_rate ?? audio.bit_rate ?? 0) || 0,
+      pixFmt: null
     }
   }
 
   const duration = Number(data.format.duration ?? video.duration ?? 0)
   if (!duration || !isFinite(duration)) throw new Error('Video süresi okunamadı')
+  const rawBitrate =
+    Number(video.bit_rate ?? data.format.bit_rate ?? 0) ||
+    (data.format.size && duration > 0 ? Math.round((Number(data.format.size) * 8) / duration) : 0)
   return {
     mediaKind: 'video',
     duration,
@@ -83,7 +92,9 @@ export async function probeMedia(filePath: string): Promise<ProbeResult> {
     codec: video.codec_name ?? 'unknown',
     fps: parseFps(video.avg_frame_rate) || parseFps(video.r_frame_rate) || 25,
     hasAudio: Boolean(audio),
-    audioCodec: audio?.codec_name ?? null
+    audioCodec: audio?.codec_name ?? null,
+    bitrate: Number.isFinite(rawBitrate) ? rawBitrate : 0,
+    pixFmt: video.pix_fmt ?? null
   }
 }
 

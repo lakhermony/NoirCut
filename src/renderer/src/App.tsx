@@ -1811,6 +1811,7 @@ export default function App() {
         onLoadProject={handleLoadProject}
         onOpenLauncher={() => setShowLauncher(true)}
         exportSettings={exportSettings}
+        mediaItems={lib.items}
         onExport={() => {
           setExportResultPath(null)
           setExportError(null)

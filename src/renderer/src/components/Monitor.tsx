@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { buildSvgGradeTables, type ColorGrade } from '../../../shared/color'
+import { buildSvgGradeTables, isNeutralGrade, type ColorGrade } from '../../../shared/color'
 import type { CreditConfig } from '../../../shared/credits'
 import type { Lut3D } from '../../../shared/lut'
 import {
@@ -108,7 +108,8 @@ export default function Monitor({
   onPasteGrade,
   hasCopiedGrade = false,
   compareMode = 'none',
-  externalWipe
+  externalWipe,
+  forceWebGL = false
 }: {
   media: MediaItem | null
   activeClip?: TimelineClip | null
@@ -150,6 +151,7 @@ export default function Monitor({
   hasCopiedGrade?: boolean
   compareMode?: ComparisonMode
   externalWipe?: number
+  forceWebGL?: boolean
 }) {
   const [wipe, setWipe] = useState(50)
   const [split, setSplit] = useState(false)
@@ -207,6 +209,17 @@ export default function Monitor({
   const isImageMedia = media?.mediaKind === 'image'
   const isAudioMedia = media?.mediaKind === 'audio'
   const isVisualMedia = Boolean(media && !isAudioMedia)
+  const hasActiveGradeOrFx = useMemo(
+    () =>
+      !isNeutralGrade(grade) ||
+      Boolean(activeLut) ||
+      falseColor ||
+      split ||
+      effCompareMode !== 'none',
+    [grade, activeLut, falseColor, split, effCompareMode]
+  )
+  // EDIT sekmesinde aktif bir renk/LUT ayarı yokken doğrudan donanım hızlandırmalı HTML5 video katmanını kullan (sıfır WebGL2 doku kopyası)
+  const useWebGLPipeline = isVisualMedia && (forceWebGL || hasActiveGradeOrFx)
   const latestRef = useRef({
     grade,
     activeLut,
@@ -219,7 +232,8 @@ export default function Monitor({
     activeClip,
     overlayLayers,
     fps: media?.fps || 25,
-    duration
+    duration,
+    useWebGLPipeline
   })
   latestRef.current = {
     grade,
@@ -233,7 +247,8 @@ export default function Monitor({
     activeClip,
     overlayLayers,
     fps: media?.fps || 25,
-    duration
+    duration,
+    useWebGLPipeline
   }
 
   // Klip Transform + Keyframe Interpolasyonu + Geçiş (Transition) hesaplaması
@@ -407,6 +422,7 @@ export default function Monitor({
 
   const renderFrame = useCallback(
     (forceUpload = false) => {
+      if (!latestRef.current.useWebGLPipeline) return
       const engine = engineRef.current
       const srcEl = isImageMedia ? imgRef.current : videoRef.current
       if (!engine || !srcEl || isAudioMedia) return
@@ -439,6 +455,7 @@ export default function Monitor({
       engineRef.current = null
       return
     }
+    if (!useWebGLPipeline) return
     const canvas = canvasRef.current
     if (!canvas) return
     if (engineRef.current) {
@@ -458,12 +475,24 @@ export default function Monitor({
       setWebglReady(false)
       return undefined
     }
-  }, [isVisualMedia, renderFrame])
+  }, [isVisualMedia, useWebGLPipeline, renderFrame])
 
   // Renk / LUT / zaman / medya / karşılaştırma / playback kalitesi değiştiğinde anında kareyi güncelle
   useEffect(() => {
+    if (!useWebGLPipeline) return
     renderFrame()
-  }, [media, grade, activeLut, time, falseColor, effCompareMode, effWipe, playbackQuality, renderFrame])
+  }, [
+    useWebGLPipeline,
+    media,
+    grade,
+    activeLut,
+    time,
+    falseColor,
+    effCompareMode,
+    effWipe,
+    playbackQuality,
+    renderFrame
+  ])
 
   // Her iki video tamponunda (Slot A + Slot B) olayları ve senkronize requestVideoFrameCallback döngüsünü dinle
   useEffect(() => {
@@ -487,18 +516,24 @@ export default function Monitor({
             // ignore
           }
         }
-        renderFrame(true)
+        if (latestRef.current.useWebGLPipeline) renderFrame(true)
       }
-      const onForceFrame = () => renderFrame(true)
-      const onFrame = () => renderFrame()
+      const onForceFrame = () => {
+        if (latestRef.current.useWebGLPipeline) renderFrame(true)
+      }
+      const onFrame = () => {
+        if (latestRef.current.useWebGLPipeline) renderFrame()
+      }
       v.addEventListener('loadedmetadata', onMeta)
-      v.addEventListener('loadeddata', onForceFrame)
-      v.addEventListener('canplay', onFrame)
-      v.addEventListener('canplaythrough', onFrame)
-      v.addEventListener('seeked', onForceFrame)
-      v.addEventListener('pause', onForceFrame)
-      if (!playing) {
-        v.addEventListener('timeupdate', onFrame)
+      if (useWebGLPipeline) {
+        v.addEventListener('loadeddata', onForceFrame)
+        v.addEventListener('canplay', onFrame)
+        v.addEventListener('canplaythrough', onFrame)
+        v.addEventListener('seeked', onForceFrame)
+        v.addEventListener('pause', onForceFrame)
+        if (!playing) {
+          v.addEventListener('timeupdate', onFrame)
+        }
       }
 
       let vfcId = 0
@@ -514,7 +549,7 @@ export default function Monitor({
         }
       ).cancelVideoFrameCallback
 
-      if (typeof rVfc === 'function') {
+      if (useWebGLPipeline && typeof rVfc === 'function') {
         supportsVfc = true
         const onVideoFrame = () => {
           if (videoRef.current === v) renderFrame(true)
@@ -537,7 +572,7 @@ export default function Monitor({
 
     // requestVideoFrameCallback desteklenmeyen ortamlarda veya görsel medya/grain animasyonunda yedek RAF döngüsü
     let raf = 0
-    if (playing && (!supportsVfc || isImageMedia)) {
+    if (useWebGLPipeline && playing && (!supportsVfc || isImageMedia)) {
       const loop = () => {
         renderFrame()
         if (playing) raf = requestAnimationFrame(loop)
@@ -549,7 +584,7 @@ export default function Monitor({
       cancelAnimationFrame(raf)
       for (const fn of cleanups) fn()
     }
-  }, [isVisualMedia, isImageMedia, media, playing, videoRef, renderFrame])
+  }, [isVisualMedia, isImageMedia, useWebGLPipeline, media, playing, videoRef, renderFrame])
 
   const scrub = (e: React.PointerEvent) => {
     if (!duration) return
@@ -582,6 +617,30 @@ export default function Monitor({
           >
             {isFullscreen ? 'Çık (ESC)' : '⛶ Tam Ekran'}
           </button>
+          {media && (media.proxyState === 'building' || media.proxyState === 'ready') && (
+            <span
+              data-testid="monitor-proxy-badge"
+              title={
+                media.proxyState === 'building'
+                  ? `Smart Proxy üretiliyor (%${Math.round((media.proxyProgress ?? 0) * 100)}) — 720p All-Intra (Export her zaman orijinal yüksek çözünürlüklü dosyayı kullanır)`
+                  : 'Smart Proxy Aktif (720p All-Intra 60 FPS önizleme · Export orijinal dosyayı kullanır)'
+              }
+              className={`flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[8.5px] font-bold tracking-wider ${
+                media.proxyState === 'building'
+                  ? 'border-amber-400/50 bg-amber-400/12 text-amber-300'
+                  : 'border-[var(--accent)]/45 bg-[var(--accent)]/12 text-[var(--accent)]'
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  media.proxyState === 'building' ? 'animate-pulse bg-amber-400' : 'bg-[var(--accent)]'
+                }`}
+              />
+              {media.proxyState === 'building'
+                ? `PROXY %${Math.round((media.proxyProgress ?? 0) * 100)}`
+                : 'PROXY'}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5">
           {/* Playback Kalitesi (Tam / 1/2 / 1/4) Seçici */}
@@ -781,7 +840,9 @@ export default function Monitor({
           {!split && (
             <div className="pointer-events-none absolute right-4 top-3.5 z-20 flex items-center gap-1.5 rounded border border-white/10 bg-black/65 px-2 py-0.5 font-mono text-[8px] font-semibold tracking-widest text-white/75 ">
               <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)] " />
-              <span>NOIRCUT ENGINE • WEBGL2</span>
+              <span>
+                {useWebGLPipeline ? 'NOIRCUT ENGINE • WEBGL2' : 'NOIRCUT ENGINE • DIRECT GPU'}
+              </span>
             </div>
           )}
 
@@ -870,7 +931,10 @@ export default function Monitor({
                 onLoad={() => renderFrame(true)}
                 alt={media.name}
                 style={{
-                  filter: !split && (!webglReady || !webglDrawn) ? 'url(#noircut-grade-filter)' : undefined
+                  filter:
+                    useWebGLPipeline && !split && (!webglReady || !webglDrawn)
+                      ? 'url(#noircut-grade-filter)'
+                      : undefined
                 }}
                 className="h-full w-full object-contain"
               />
@@ -894,7 +958,10 @@ export default function Monitor({
                   playsInline
                   preload="auto"
                   style={{
-                    filter: !split && (!webglReady || !webglDrawn) ? 'url(#noircut-grade-filter)' : undefined
+                    filter:
+                      useWebGLPipeline && !split && (!webglReady || !webglDrawn)
+                        ? 'url(#noircut-grade-filter)'
+                        : undefined
                   }}
                   className={
                     isImageMedia
@@ -915,7 +982,10 @@ export default function Monitor({
                   preload="auto"
                   style={{
                     opacity: 0,
-                    filter: !split && (!webglReady || !webglDrawn) ? 'url(#noircut-grade-filter)' : undefined
+                    filter:
+                      useWebGLPipeline && !split && (!webglReady || !webglDrawn)
+                        ? 'url(#noircut-grade-filter)'
+                        : undefined
                   }}
                   className={
                     isImageMedia
@@ -934,13 +1004,14 @@ export default function Monitor({
             )}
           </div>
 
-          {/* SONRA (WebGL2 renk düzenlenmiş kare + SVG filtre yedeklemesi; split açıkken wipe sağında görünür) */}
+          {/* SONRA (WebGL2 renk düzenlenmiş kare + SVG filtre yedeklemesi; EDIT modunda ve nötr grade'de doğrudan HTML5 video katmanı görünür) */}
           <div
             ref={afterWrapRef}
             className="pointer-events-none absolute inset-0"
             style={{
               ...clipTransformStyle,
-              clipPath: split ? `inset(0 0 0 ${wipe}%)` : 'none'
+              clipPath: split ? `inset(0 0 0 ${wipe}%)` : 'none',
+              display: isVisualMedia && !useWebGLPipeline ? 'none' : undefined
             }}
           >
             {isVisualMedia ? (

@@ -4,7 +4,7 @@
  */
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
-import { BrowserWindow, dialog, protocol } from 'electron'
+import { app, BrowserWindow, dialog, protocol } from 'electron'
 import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'fs'
 import { mkdir, stat } from 'fs/promises'
 import { tmpdir } from 'os'
@@ -13,7 +13,7 @@ import { synthesizeNoirSoundscapeWav } from '../../shared/foley-wav'
 import { NOIR_SOUNDSCAPE_PRESETS, type NoirSoundscapeId } from '../../shared/timeline'
 import type { ImportResult, MediaItem, PeaksResult, ProxyUpdate } from '../../shared/types'
 import { getEngineInfo } from '../engine/ffmpeg-engine'
-import { extractPeaks, makeThumbnail, probeMedia } from './media-probe'
+import { extractPeaks, makeThumbnail, probeMedia, type ProbeResult } from './media-probe'
 
 export const MEDIA_SCHEME = 'noircut-media'
 export const VIDEO_EXTENSIONS = ['mp4', 'mov', 'mkv', 'webm']
@@ -256,15 +256,41 @@ function broadcastProxyUpdate(update: ProxyUpdate): void {
   }
 }
 
-function checkNeedsProxy(codec: string, hasAudio: boolean, audioCodec: string | null): boolean {
-  const vOk = NATIVE_VIDEO_CODECS.has(codec.toLowerCase())
-  const aOk = !hasAudio || !audioCodec || NATIVE_AUDIO_CODECS.has(audioCodec.toLowerCase())
-  return !vOk || !aOk
+function getProxyCacheDir(): string {
+  try {
+    return join(app.getPath('userData'), 'proxy-cache')
+  } catch {
+    return join(tmpdir(), 'noircut-proxies')
+  }
 }
 
 /**
- * Oynamayan codec'ler (HEVC/H.265, ProRes, MPEG-4, AC-3 vb.) için
- * FFmpeg ile H.264 + AAC oynatılabilir proxy üretir.
+ * Otomatik Smart Proxy karar fonksiyonu:
+ * - Tarayıcıda doğrudan çözülemeyen codec'ler (HEVC/H.265, ProRes, AC-3 vb.)
+ * - 1080p'den büyük çözünürlüklü videolar (>1920x1080)
+ * - Yüksek bit hızlı videolar (>18 Mbps) veya 10-bit/4:2:2 piksel formatları
+ * - .MOV kapsayıcılı ağır kamera dosyaları
+ */
+function checkNeedsProxy(filePath: string, info: ProbeResult): boolean {
+  const vOk = NATIVE_VIDEO_CODECS.has(info.codec.toLowerCase())
+  const aOk =
+    !info.hasAudio || !info.audioCodec || NATIVE_AUDIO_CODECS.has(info.audioCodec.toLowerCase())
+  if (!vOk || !aOk) return true
+
+  const ext = extname(filePath).toLowerCase()
+  const isMov = ext === '.mov'
+  const isOver1080p = Math.max(info.width, info.height) > 1920 || Math.min(info.width, info.height) > 1088
+  const isHighBitrate = (info.bitrate ?? 0) > 18_000_000
+  const is10BitOrChromaHeavy =
+    Boolean(info.pixFmt) && info.pixFmt!.toLowerCase() !== 'yuv420p' && info.pixFmt!.toLowerCase() !== 'yuvj420p'
+
+  return isMov || isOver1080p || isHighBitrate || is10BitOrChromaHeavy
+}
+
+/**
+ * Ağır videolar (>1080p, yüksek bit hızı, .MOV, 10-bit, HEVC/ProRes vb.) için
+ * arka planda 720p, yuv420p, -g 1 (All-Intra) ultra hızlı çözülen Smart Proxy üretir.
+ * NVIDIA h264_nvenc varsa GPU ile, yoksa -preset ultrafast ile kodlar.
  */
 export function startProxyGeneration(item: MediaItem): Promise<void> {
   const existingJob = proxyJobs.get(item.id)
@@ -272,9 +298,9 @@ export function startProxyGeneration(item: MediaItem): Promise<void> {
 
   const job = (async () => {
     try {
-      const proxyDir = join(tmpdir(), 'noircut-proxies')
+      const proxyDir = getProxyCacheDir()
       await mkdir(proxyDir, { recursive: true })
-      const outPath = resolve(join(proxyDir, `${item.id}-proxy.mp4`))
+      const outPath = resolve(join(proxyDir, `${item.id}-smartproxy-v2.mp4`))
 
       if (existsSync(outPath)) {
         approvedPaths.add(outPath)
@@ -291,53 +317,91 @@ export function startProxyGeneration(item: MediaItem): Promise<void> {
       broadcastProxyUpdate({ id: item.id, state: 'building', progress: 0, proxyUrl: null })
 
       const engine = await getEngineInfo()
-      await new Promise<void>((resolvePromise, rejectPromise) => {
-        const args = [
-          '-y',
-          '-v',
-          'error',
-          '-progress',
-          'pipe:1',
-          '-nostats',
-          '-i',
-          item.path,
-          '-vf',
-          'scale=min(1280\\,iw):-2,format=yuv420p',
-          '-c:v',
-          'libx264',
-          '-preset',
-          'ultrafast',
-          '-crf',
-          '23'
-        ]
-        if (item.hasAudio) {
-          args.push('-c:a', 'aac', '-b:a', '160k', '-ac', '2', '-ar', '48000')
-        } else {
-          args.push('-an')
-        }
-        args.push('-movflags', '+faststart', outPath)
+      const hasNvenc = Boolean(engine.availableEncoders?.includes('h264_nvenc'))
 
-        const proc = spawn(engine.ffmpegPath, args, { windowsHide: true })
-        let stderr = ''
-        proc.stdout.on('data', (chunk: Buffer) => {
-          const text = chunk.toString()
-          const m = text.match(/out_time_us=(\d+)/) ?? text.match(/out_time_ms=(\d+)/)
-          if (m && item.duration > 0) {
-            const sec = Number(m[1]) / 1_000_000
-            const p = Math.max(0, Math.min(0.99, sec / item.duration))
-            item.proxyProgress = p
-            broadcastProxyUpdate({ id: item.id, state: 'building', progress: p, proxyUrl: null })
+      const runProxyEncode = (useNvenc: boolean) =>
+        new Promise<void>((resolvePromise, rejectPromise) => {
+          const bin =
+            useNvenc && engine.gpuFfmpegPath ? engine.gpuFfmpegPath : engine.ffmpegPath
+          const args = [
+            '-y',
+            '-v',
+            'error',
+            '-progress',
+            'pipe:1',
+            '-nostats',
+            '-i',
+            item.path,
+            '-vf',
+            'scale=min(1280\\,iw):-2,format=yuv420p'
+          ]
+          if (useNvenc) {
+            args.push(
+              '-c:v',
+              'h264_nvenc',
+              '-preset',
+              'p1',
+              '-cq',
+              '23',
+              '-g',
+              '1',
+              '-pix_fmt',
+              'yuv420p'
+            )
+          } else {
+            args.push(
+              '-c:v',
+              'libx264',
+              '-preset',
+              'ultrafast',
+              '-tune',
+              'fastdecode',
+              '-crf',
+              '23',
+              '-g',
+              '1',
+              '-pix_fmt',
+              'yuv420p'
+            )
           }
+          if (item.hasAudio) {
+            args.push('-c:a', 'aac', '-b:a', '160k', '-ac', '2', '-ar', '48000')
+          } else {
+            args.push('-an')
+          }
+          args.push('-movflags', '+faststart', outPath)
+
+          const proc = spawn(bin, args, { windowsHide: true })
+          let stderr = ''
+          proc.stdout.on('data', (chunk: Buffer) => {
+            const text = chunk.toString()
+            const m = text.match(/out_time_us=(\d+)/) ?? text.match(/out_time_ms=(\d+)/)
+            if (m && item.duration > 0) {
+              const sec = Number(m[1]) / 1_000_000
+              const p = Math.max(0, Math.min(0.99, sec / item.duration))
+              item.proxyProgress = p
+              broadcastProxyUpdate({ id: item.id, state: 'building', progress: p, proxyUrl: null })
+            }
+          })
+          proc.stderr.on('data', (chunk: Buffer) => {
+            stderr += chunk.toString()
+          })
+          proc.on('close', (code) => {
+            if (code === 0 && existsSync(outPath)) resolvePromise()
+            else rejectPromise(new Error(stderr.trim() || `FFmpeg proxy çıkış kodu: ${code}`))
+          })
+          proc.on('error', rejectPromise)
         })
-        proc.stderr.on('data', (chunk: Buffer) => {
-          stderr += chunk.toString()
-        })
-        proc.on('close', (code) => {
-          if (code === 0 && existsSync(outPath)) resolvePromise()
-          else rejectPromise(new Error(stderr.trim() || `FFmpeg proxy çıkış kodu: ${code}`))
-        })
-        proc.on('error', rejectPromise)
-      })
+
+      if (hasNvenc) {
+        try {
+          await runProxyEncode(true)
+        } catch {
+          await runProxyEncode(false)
+        }
+      } else {
+        await runProxyEncode(false)
+      }
 
       approvedPaths.add(outPath)
       const url = mediaUrl(outPath)
@@ -376,8 +440,12 @@ async function buildItem(rawPath: string): Promise<MediaItem> {
           info.mediaKind === 'image'
         )
   const id = createHash('sha1').update(filePath).digest('hex').slice(0, 12)
-  const needsProxy =
-    info.mediaKind === 'video' ? checkNeedsProxy(info.codec, info.hasAudio, info.audioCodec) : false
+  const needsProxy = info.mediaKind === 'video' ? checkNeedsProxy(filePath, info) : false
+  const cachedProxyPath = resolve(join(getProxyCacheDir(), `${id}-smartproxy-v2.mp4`))
+  const hasCachedProxy = needsProxy && existsSync(cachedProxyPath)
+  if (hasCachedProxy) {
+    approvedPaths.add(cachedProxyPath)
+  }
 
   const item: MediaItem = {
     id,
@@ -387,13 +455,13 @@ async function buildItem(rawPath: string): Promise<MediaItem> {
     thumbnail,
     url: mediaUrl(filePath),
     needsProxy,
-    proxyState: needsProxy ? 'building' : 'none',
-    proxyProgress: 0,
-    proxyUrl: null
+    proxyState: hasCachedProxy ? 'ready' : needsProxy ? 'building' : 'none',
+    proxyProgress: hasCachedProxy ? 1 : 0,
+    proxyUrl: hasCachedProxy ? mediaUrl(cachedProxyPath) : null
   }
   mediaRegistry.set(id, item)
 
-  if (needsProxy) {
+  if (needsProxy && !hasCachedProxy) {
     void startProxyGeneration(item)
   }
   return item

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import noircutLogo from '../assets/noircut-logo.png'
 import { EXPORT_RESOLUTION_DIM, type ExportSettings } from '../../../shared/timeline'
+import type { MediaItem } from '../../../shared/types'
 import { THEME_OPTIONS, type Tab, type ThemeId } from '../types'
 
 const MAIN_TABS: Array<{ id: Tab; label: string }> = [
@@ -63,7 +64,8 @@ export default function CommandIsland({
   onLoadProject,
   onExport,
   onOpenLauncher,
-  exportSettings
+  exportSettings,
+  mediaItems = []
 }: {
   tab: Tab
   onTab: (t: Tab) => void
@@ -80,6 +82,7 @@ export default function CommandIsland({
   onExport: () => void
   onOpenLauncher?: () => void
   exportSettings: ExportSettings
+  mediaItems?: MediaItem[]
 }) {
   const refs = useRef<Record<string, HTMLButtonElement | null>>({})
   const [ind, setInd] = useState({ left: 0, width: 0, visible: false })
@@ -128,6 +131,17 @@ export default function CommandIsland({
       : exportSettings.resolution === 'vertical'
         ? '1080×1920'
         : '1080p'
+
+  const buildingProxies = mediaItems.filter((m) => m.proxyState === 'building')
+  const readyProxies = mediaItems.filter((m) => m.proxyState === 'ready')
+  const avgProxyPct =
+    buildingProxies.length > 0
+      ? Math.round(
+          (buildingProxies.reduce((sum, m) => sum + (m.proxyProgress ?? 0), 0) /
+            buildingProxies.length) *
+            100
+        )
+      : 100
 
   return (
     <header className="flex h-12 shrink-0 items-center justify-between gap-3 px-1">
@@ -270,6 +284,31 @@ export default function CommandIsland({
             >
               ↷
             </button>
+          </div>
+        )}
+
+        {(buildingProxies.length > 0 || readyProxies.length > 0) && (
+          <div
+            data-testid="topbar-proxy-badge"
+            className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[9.5px] font-semibold sm:flex ${
+              buildingProxies.length > 0
+                ? 'border-amber-400/45 bg-amber-400/10 text-amber-300'
+                : 'border-[var(--accent)]/40 bg-[var(--accent)]/10 text-[var(--accent)]'
+            }`}
+            title={
+              buildingProxies.length > 0
+                ? `Smart Proxy hazırlanıyor (%${avgProxyPct}) — 720p All-Intra akıcı önizleme (Export orijinal dosyayı kullanır)`
+                : `Smart Proxy Aktif (${readyProxies.length} klip) — 720p All-Intra 60 FPS önizleme (Export her zaman tam çözünürlüklü orijinal dosyayı kullanır)`
+            }
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                buildingProxies.length > 0 ? 'animate-pulse bg-amber-400' : 'bg-[var(--accent)]'
+              }`}
+            />
+            <span>
+              {buildingProxies.length > 0 ? `PROXY %${avgProxyPct}` : 'PROXY'}
+            </span>
           </div>
         )}
 

@@ -250,6 +250,7 @@ export default function GradeWorkspace({
           activeLut={effectiveLut}
           compareMode={compareMode}
           externalWipe={compareWipe}
+          forceWebGL={true}
           wbPickerActive={wbPickerActive}
           onPickWbRgb={onPickWbRgb}
           onCancelWbPicker={onCancelWbPicker}

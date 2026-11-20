@@ -281,9 +281,11 @@ export function usePlayer(
         return
       }
       const targetUrl = getPlayableUrl(m)
+      let srcChanged = false
       if (targetUrl && el.getAttribute('src') !== targetUrl) {
         el.setAttribute('src', targetUrl)
         el.load()
+        srcChanged = true
       }
 
       const local = Math.max(0, Math.min(clip.duration, t - clip.start))
@@ -307,13 +309,11 @@ export function usePlayer(
 
       const needSeek =
         forceSeek ||
-        clip.reverse ||
-        isReverseShuttle ||
-        (isPlaying
-          ? drift > Math.max(0.45, 0.45 * effectiveRate)
-          : !scrubbingRef.current && el.tagName === 'VIDEO'
-            ? drift > 0.25
-            : drift > 0.04)
+        srcChanged ||
+        (!isPlaying &&
+          (clip.reverse ||
+            (!scrubbingRef.current && el.tagName === 'VIDEO' ? drift > 0.25 : drift > 0.04))) ||
+        (isPlaying && (clip.reverse || isReverseShuttle))
 
       if (needSeek) {
         if (!isReverseShuttle || drift > 0.025 || forceSeek) {
@@ -454,6 +454,13 @@ export function usePlayer(
 
       const justSwapped = swapPendingRef.current
       swapPendingRef.current = false
+      const prevClipId = activeEl?.dataset.clipId ?? ''
+      const curClipId = stack[0]?.id ?? ''
+      const clipChangedNotSeamless =
+        Boolean(stack[0]) &&
+        prevClipId !== '' &&
+        prevClipId !== curClipId &&
+        !justSwapped
 
       syncElement(
         activeEl,
@@ -461,7 +468,7 @@ export function usePlayer(
         stack[0] ? isLaneAudible(lanes, stack[0].lane) : true,
         t,
         isPlaying,
-        forceSeek && !justSwapped
+        (forceSeek && !justSwapped) || clipChangedNotSeamless
       )
 
       // Aktif klip yoksa ancak fallback klip varsa ilk karesini sessizce hazır tut
@@ -478,7 +485,15 @@ export function usePlayer(
         activeOverlayIds.add(oc.id)
         const ovEl = overlayVideoElsRef.current.get(oc.id) ?? null
         if (ovEl) {
-          syncElement(ovEl, oc, isLaneAudible(lanes, oc.lane), t, isPlaying, forceSeek)
+          const ovEntering = ovEl.dataset.clipId !== oc.id
+          syncElement(
+            ovEl,
+            oc,
+            isLaneAudible(lanes, oc.lane),
+            t,
+            isPlaying,
+            forceSeek || ovEntering
+          )
         }
       }
       for (const [cid, ovEl] of overlayVideoElsRef.current.entries()) {
@@ -493,7 +508,15 @@ export function usePlayer(
           extraAudioElsRef.current.get(aLane) ??
           (aLane === 'A1' ? audioA1Ref.current : aLane === 'A2' ? audioA2Ref.current : null)
         if (aEl) {
-          syncElement(aEl, aClip, isLaneAudible(lanes, aLane), t, isPlaying, forceSeek)
+          const aEntering = Boolean(aClip) && aEl.dataset.clipId !== aClip!.id
+          syncElement(
+            aEl,
+            aClip,
+            isLaneAudible(lanes, aLane),
+            t,
+            isPlaying,
+            forceSeek || aEntering
+          )
         }
       }
     },
@@ -510,8 +533,17 @@ export function usePlayer(
   )
   syncAllAtRef.current = syncAllAt
 
+  const prevPlayingForEffectRef = useRef(false)
+  const prevShuttleForEffectRef = useRef(0)
   useEffect(() => {
-    syncAllAt(timeRef.current, playing)
+    const playStateChanged =
+      prevPlayingForEffectRef.current !== playing ||
+      prevShuttleForEffectRef.current !== shuttleRate
+    prevPlayingForEffectRef.current = playing
+    prevShuttleForEffectRef.current = shuttleRate
+    // Oynatma zaten devam ediyorsa useEffect içinden tekrar seek/play tetikleme (oynatma RAF döngüsü yönetir)
+    if (playing && !playStateChanged) return
+    syncAllAt(timeRef.current, playing, false)
   }, [clips, lanes, playing, shuttleRate, syncAllAt])
 
   // Doğrudan oynatma döngüsü (J/K/L shuttle hız çarpanı destekli)
@@ -554,7 +586,7 @@ export function usePlayer(
             Number.isFinite(videoBasedT) &&
             videoBasedT >= curVClip.start - 0.02 &&
             videoBasedT <= curVClip.start + curVClip.duration &&
-            Math.abs(videoBasedT - nextT) < 0.35
+            Math.abs(videoBasedT - nextT) < 1.25
           ) {
             nextT = Math.max(0, videoBasedT)
             anchorTimeRef.current = nextT
@@ -789,7 +821,7 @@ export function usePlayer(
 
   const videoProps: React.VideoHTMLAttributes<HTMLVideoElement> = {
     onLoadedMetadata: () => {
-      syncAllAt(timeRef.current, playingRef.current, true)
+      syncAllAt(timeRef.current, playingRef.current, !playingRef.current)
     },
     onError: () => {
       if (currentMedia?.proxyState === 'building') {
@@ -803,8 +835,9 @@ export function usePlayer(
   useEffect(() => {
     if (currentMedia?.proxyState === 'ready') {
       setError(null)
+      syncAllAt(timeRef.current, playingRef.current, true)
     }
-  }, [currentMedia?.proxyState])
+  }, [currentMedia?.proxyState, currentMedia?.proxyUrl, syncAllAt])
 
   return {
     videoRef,
