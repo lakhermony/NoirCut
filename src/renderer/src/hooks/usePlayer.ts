@@ -5,6 +5,7 @@ import {
   clipGainAt,
   clipSourceTimeAt,
   computeAutoDuckMultiplierAt,
+  dbToGain,
   findNextBaseClip,
   getOrderedAudioLanes,
   getOrderedVideoLanesAsc,
@@ -52,7 +53,8 @@ export function usePlayer(
   lanes: LaneMap,
   mediaItems: MediaItem[],
   autoDucking = false,
-  proxyPlaybackMode: ProxyPlaybackMode = 'auto'
+  proxyPlaybackMode: ProxyPlaybackMode = 'auto',
+  masterGainDb = 0
 ) {
   /** Her zaman EKRANDAKİ (aktif) tamponu gösterir; WebGL2 motoru ve skoplar bunu okur. */
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -332,9 +334,10 @@ export function usePlayer(
         isAudioLane(clip.lane) && clip.lane !== 'A1' && autoDucking
           ? computeAutoDuckMultiplierAt(clips, lanes, t, autoDucking)
           : 1
+      const masterMult = dbToGain(masterGainDb)
       const effectiveGain =
         !embeddedMuted && laneAudible && (m?.hasAudio ?? true)
-          ? clipGainAt(clip, local) * duckMult
+          ? clipGainAt(clip, local) * duckMult * masterMult
           : 0
 
       el.muted = effectiveGain <= 0.0001 || isReverseShuttle
@@ -351,7 +354,7 @@ export function usePlayer(
         el.pause()
       }
     },
-    [autoDucking, clips, lanes, mediaMap, proxyPlaybackMode, scheduleSeek]
+    [autoDucking, clips, lanes, masterGainDb, mediaMap, proxyPlaybackMode, scheduleSeek]
   )
 
   const preloadStandbyVideo = useCallback(

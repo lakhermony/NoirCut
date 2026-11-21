@@ -58,20 +58,31 @@ function run(bin: string, args: string[]): Promise<string | null> {
   })
 }
 
-const HW_CANDIDATES: Array<Exclude<VideoEncoderId, 'libx264'>> = [
+const HW_CANDIDATES: Array<Exclude<VideoEncoderId, 'libx264' | 'libx265'>> = [
   'h264_nvenc',
+  'hevc_nvenc',
   'h264_vaapi',
   'h264_qsv',
   'h264_amf'
 ]
 
-async function detectCompiledHwEncoders(bin: string): Promise<Array<Exclude<VideoEncoderId, 'libx264'>>> {
+async function detectCompiledHwEncoders(
+  bin: string
+): Promise<Array<Exclude<VideoEncoderId, 'libx264' | 'libx265'>>> {
   const out = await run(bin, ['-hide_banner', '-encoders'])
   if (!out) return []
   return HW_CANDIDATES.filter((enc) => out.includes(enc))
 }
 
-async function testHwEncoderUsable(bin: string, enc: Exclude<VideoEncoderId, 'libx264'>): Promise<boolean> {
+async function hasLibx265(bin: string): Promise<boolean> {
+  const out = await run(bin, ['-hide_banner', '-encoders'])
+  return Boolean(out && out.includes('libx265'))
+}
+
+async function testHwEncoderUsable(
+  bin: string,
+  enc: Exclude<VideoEncoderId, 'libx264' | 'libx265'>
+): Promise<boolean> {
   const args =
     enc === 'h264_vaapi'
       ? [
@@ -138,6 +149,9 @@ export async function initEngine(): Promise<EngineInfo> {
   ffmpeg.setFfprobePath(ffprobePath)
 
   const availableEncoders: VideoEncoderId[] = ['libx264']
+  if (await hasLibx265(ffmpegPath)) {
+    availableEncoders.push('libx265')
+  }
   let gpuFfmpegPath: string | null = null
 
   const candidateBins = source === 'embedded' ? [ffmpegPath, 'ffmpeg'] : [ffmpegPath]

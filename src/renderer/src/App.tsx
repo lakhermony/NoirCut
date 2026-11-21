@@ -71,7 +71,7 @@ import SubtitlesWorkspace from './components/SubtitlesWorkspace'
 import Timeline from './components/Timeline'
 import { useMediaLibrary } from './hooks/useMediaLibrary'
 import { usePlayer } from './hooks/usePlayer'
-import { renderCreditToPng } from './lib/credit-export'
+import { renderCreditToPng, renderSubtitlesToPngOverlays } from './lib/credit-export'
 import { ensureCreditFontsReady } from './lib/custom-fonts'
 import {
   THEME_OPTIONS,
@@ -351,7 +351,7 @@ export default function App() {
 
   const lib = useMediaLibrary()
   const mediaMap = useMemo(() => new Map(lib.items.map((m) => [m.id, m])), [lib.items])
-  const player = usePlayer(clips, lanes, lib.items, autoDucking, proxyPlaybackMode)
+  const player = usePlayer(clips, lanes, lib.items, autoDucking, proxyPlaybackMode, masterGainDb)
 
   const handleProxyPlaybackModeChange = useCallback(
     (mode: ProxyPlaybackMode) => {
@@ -1963,6 +1963,15 @@ export default function App() {
     [clips]
   )
 
+  const buildSubtitleOverlays = useCallback(
+    (settings: ExportSettings) => {
+      if (settings.burnInSubtitles === false || subtitles.length === 0) return []
+      const { width, height } = EXPORT_RESOLUTION_DIM[settings.resolution]
+      return renderSubtitlesToPngOverlays(subtitles, subtitleStyle, width, height)
+    },
+    [subtitleStyle, subtitles]
+  )
+
   const handleStartExport = useCallback(async () => {
     if (exporting || !window.noircut?.exportProject) return
     setExporting(true)
@@ -1971,12 +1980,14 @@ export default function App() {
     setExportError(null)
     try {
       const creditOverlays = await buildCreditOverlays(exportSettings.resolution)
+      const subtitleOverlays = buildSubtitleOverlays(exportSettings)
       const useRange = Boolean(exportSettings.useInOutRange && (inPoint !== null || outPoint !== null))
       const res = await window.noircut.exportProject({
         clips,
         lanes,
         customLuts,
         creditOverlays,
+        subtitleOverlays,
         subtitles,
         subtitleStyle,
         masterGainDb,
@@ -2005,6 +2016,7 @@ export default function App() {
   }, [
     autoDucking,
     buildCreditOverlays,
+    buildSubtitleOverlays,
     clips,
     customLuts,
     exportSettings,
@@ -2109,11 +2121,13 @@ export default function App() {
           )
         )
         const creditOverlays = await buildCreditOverlays(job.settings.resolution)
+        const subtitleOverlays = buildSubtitleOverlays(job.settings)
         const res = await window.noircut.exportProject({
           clips,
           lanes,
           customLuts,
           creditOverlays,
+          subtitleOverlays,
           subtitles,
           subtitleStyle,
           masterGainDb,
@@ -2153,6 +2167,7 @@ export default function App() {
   }, [
     autoDucking,
     buildCreditOverlays,
+    buildSubtitleOverlays,
     clips,
     customLuts,
     exportQueue,

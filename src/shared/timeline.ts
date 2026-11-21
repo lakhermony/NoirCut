@@ -657,11 +657,20 @@ export const NOIR_SOUNDSCAPE_PRESETS: NoirSoundscapePresetMeta[] = [
   }
 ]
 
+export interface SubtitleExportOverlay {
+  id: string
+  start: number
+  end: number
+  /** Base64 PNG (data:image/png;base64,...) */
+  pngDataUrl: string
+}
+
 export interface ExportRequest {
   clips: TimelineClip[]
   lanes: LaneMap
   customLuts?: Record<string, Lut3D>
   creditOverlays?: Record<string, CreditExportOverlay>
+  subtitleOverlays?: SubtitleExportOverlay[]
   subtitles?: SubtitleSegment[]
   subtitleStyle?: SubtitleStyleConfig
   masterGainDb?: number

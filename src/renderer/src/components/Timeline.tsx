@@ -750,8 +750,22 @@ export default function Timeline({
 
       if (mode === 'trim-left') {
         const minInBound = isUnbounded ? 0 : Math.max(0, initStart - initIn / spd)
-        const lo = round3(Math.max(minTrimStart, minInBound))
-        const hi = round3(initEnd - 0.1)
+        const isRollLeft = editTool === 'roll' && Boolean(prevNeighbor)
+        const prevMinEnd = prevNeighbor ? round3(prevNeighbor.start + 0.1) : 0
+        const prevMedia = prevNeighbor ? mediaMap.get(prevNeighbor.mediaId) : undefined
+        const prevSpd = prevNeighbor
+          ? Math.max(0.25, Math.min(4.0, (prevNeighbor.speed ?? 100) / 100))
+          : 1
+        const prevMaxEnd =
+          prevNeighbor && !isCreditClip(prevNeighbor) && prevMedia?.mediaKind !== 'image' && prevMedia?.duration
+            ? round3(prevNeighbor.start + Math.max(0.1, (prevMedia.duration - prevNeighbor.in) / prevSpd))
+            : Infinity
+        const lo = isRollLeft
+          ? round3(Math.max(prevMinEnd, minInBound))
+          : round3(Math.max(minTrimStart, minInBound))
+        const hi = isRollLeft
+          ? round3(Math.min(initEnd - 0.1, prevMaxEnd))
+          : round3(initEnd - 0.1)
         let nextStart = Math.max(lo, Math.min(hi, initStart + deltaSec))
         const snapped = findSnap(nextStart, clip.lane)
         if (snapped !== null && snapped >= lo - 1e-4 && snapped <= hi + 1e-4) {
@@ -772,6 +786,60 @@ export default function Timeline({
           : undefined
         const nextFadeIn = Math.min(clip.fadeIn, newDur)
         const nextFadeOut = Math.min(clip.fadeOut, Math.max(0, newDur - nextFadeIn))
+
+        if (isRollLeft && prevNeighbor && onBatchUpdateClips) {
+          const prevNewDur = Math.max(0.1, round3(nextStart - prevNeighbor.start))
+          const prevFadeOut = Math.min(
+            prevNeighbor.fadeOut,
+            Math.max(0, prevNewDur - prevNeighbor.fadeIn)
+          )
+          onBatchUpdateClips([
+            {
+              id: prevNeighbor.id,
+              patch: {
+                duration: prevNewDur,
+                fadeOut: prevFadeOut
+              }
+            },
+            {
+              id: clip.id,
+              patch: {
+                start: round3(nextStart),
+                in: newIn,
+                duration: newDur,
+                fadeIn: nextFadeIn,
+                fadeOut: nextFadeOut,
+                ...(nextKfs ? { keyframes: nextKfs } : {}),
+                ...(clip.credit ? { credit: { ...clip.credit, duration: newDur } } : {})
+              }
+            }
+          ])
+          return
+        }
+
+        if (rippleMode && Math.abs(headDelta) > 0.001 && onBatchUpdateClips) {
+          const downstream = lanePeers.filter((o) => o.start >= initEnd - 0.02)
+          onBatchUpdateClips([
+            {
+              id: clip.id,
+              patch: {
+                start: initStart,
+                in: newIn,
+                duration: newDur,
+                fadeIn: nextFadeIn,
+                fadeOut: nextFadeOut,
+                ...(nextKfs ? { keyframes: nextKfs } : {}),
+                ...(clip.credit ? { credit: { ...clip.credit, duration: newDur } } : {})
+              }
+            },
+            ...downstream.map((o) => ({
+              id: o.id,
+              patch: { start: Math.max(0, round3(o.start - headDelta)) }
+            }))
+          ])
+          return
+        }
+
         onUpdateClip(clip.id, {
           start: round3(nextStart),
           in: newIn,

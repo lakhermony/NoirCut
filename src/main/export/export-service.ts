@@ -137,7 +137,7 @@ export async function exportTimeline(
   const crf = settings.quality === 'high' ? '15' : settings.quality === 'low' ? '26' : '20'
   const preset = settings.quality === 'high' ? 'medium' : settings.quality === 'low' ? 'veryfast' : 'faster'
 
-  const { clips, total } = sliceClipsToRange(req.clips, req.rangeStart, req.rangeEnd)
+  const { clips, total, offset: rangeOffset } = sliceClipsToRange(req.clips, req.rangeStart, req.rangeEnd)
   if (clips.length === 0 || total <= 0.05) {
     return { ok: false, error: 'Dışa aktarılacak klip bulunamadı.' }
   }
@@ -378,6 +378,23 @@ export async function exportTimeline(
         const sim = Math.max(0.01, Math.min(0.85, (ck.tolerance || 30) / 100)).toFixed(3)
         const bln = Math.max(0.0, Math.min(0.6, (ck.edgeSoftness || 15) / 100)).toFixed(3)
         vChain.push(`colorkey=0x${hexClean}:${sim}:${bln}`)
+        if (c.lane === 'V1') {
+          const bgHex = (ck.bgColor || '#0B0D12').replace('#', '').trim() || '0B0D12'
+          const ckPre = `vck_pre_${segId}`
+          const ckFg = `vck_fg_${segId}`
+          const ckBg0 = `vck_bg0_${segId}`
+          const ckBg = `vck_bg_${segId}`
+          const ckOut = `vck_out_${segId}`
+          const srcLbl = fxOutLabel ? `[${fxOutLabel}]` : `[${inIdx}:v]`
+          filterParts.push(`${srcLbl}${vChain.join(',')},format=rgba[${ckPre}]`)
+          vChain.length = 0
+          filterParts.push(`[${ckPre}]split=2[${ckFg}][${ckBg0}]`)
+          filterParts.push(
+            `[${ckBg0}]drawbox=x=0:y=0:w=iw:h=ih:color=0x${bgHex}:t=fill,format=rgba[${ckBg}]`
+          )
+          filterParts.push(`[${ckBg}][${ckFg}]overlay=x=0:y=0:format=auto[${ckOut}]`)
+          fxOutLabel = ckOut
+        }
       }
     }
 
@@ -655,6 +672,34 @@ export async function exportTimeline(
         `${currentVLabel}[${crLabel}]overlay=x=0:y=0:enable='between(t,${start},${end})'${nextVLabel}`
       )
     }
+    currentVLabel = nextVLabel
+  })
+
+  // 1c) Altyazı (Burn-In Subtitles) PNG katmanları
+  const subtitleOverlays =
+    settings.burnInSubtitles !== false && Array.isArray(req.subtitleOverlays)
+      ? req.subtitleOverlays
+      : []
+  subtitleOverlays.forEach((sub, idx) => {
+    const startSec = Math.max(0, sub.start - rangeOffset)
+    const endSec = Math.min(total, sub.end - rangeOffset)
+    if (endSec <= startSec + 0.02 || !sub.pngDataUrl) return
+    const b64 = sub.pngDataUrl.replace(/^data:image\/png;base64,/, '')
+    if (!tempLutDir) tempLutDir = mkdtempSync(join(tmpdir(), 'noircut-lut-'))
+    const pngPath = join(tempLutDir, `sub-${idx}.png`)
+    writeFileSync(pngPath, Buffer.from(b64, 'base64'))
+
+    const inIdx = nextInputIdx++
+    inputArgs.push('-loop', '1', '-t', total.toFixed(4), '-i', pngPath)
+
+    const sStr = startSec.toFixed(4)
+    const eStr = endSec.toFixed(4)
+    const subLbl = `sub${idx}`
+    const nextVLabel = `[vsub${idx}]`
+    filterParts.push(`[${inIdx}:v]format=rgba[${subLbl}]`)
+    filterParts.push(
+      `${currentVLabel}[${subLbl}]overlay=x=0:y=0:enable='between(t,${sStr},${eStr})'${nextVLabel}`
+    )
     currentVLabel = nextVLabel
   })
 
