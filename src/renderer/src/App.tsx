@@ -24,6 +24,7 @@ import {
   defaultClipTransform,
   defaultExportSettings,
   defaultLanes,
+  defaultSubtitleStyle,
   getOrderedAudioLanes,
   getOrderedVideoLanesAsc,
   isAudioLane,
@@ -45,6 +46,8 @@ import {
   type LaneId,
   type LaneMap,
   type NoirSoundscapeId,
+  type SubtitleSegment,
+  type SubtitleStyleConfig,
   type TimelineClip
 } from '../../shared/timeline'
 import type { NoirCutProject } from '../../shared/project'
@@ -52,7 +55,8 @@ import type {
   AutosaveStatus,
   EngineInfo,
   MediaItem,
-  RecentProjectEntry
+  RecentProjectEntry,
+  SilenceRegion
 } from '../../shared/types'
 import AudioWorkspace from './components/AudioWorkspace'
 import CommandIsland from './components/CommandIsland'
@@ -63,12 +67,19 @@ import LeftPanel from './components/LeftPanel'
 import Monitor from './components/Monitor'
 import NoirLauncher from './components/NoirLauncher'
 import RightPanel from './components/RightPanel'
+import SubtitlesWorkspace from './components/SubtitlesWorkspace'
 import Timeline from './components/Timeline'
 import { useMediaLibrary } from './hooks/useMediaLibrary'
 import { usePlayer } from './hooks/usePlayer'
 import { renderCreditToPng } from './lib/credit-export'
 import { ensureCreditFontsReady } from './lib/custom-fonts'
-import { THEME_OPTIONS, type Tab, type ThemeId } from './types'
+import {
+  THEME_OPTIONS,
+  type ProxyPlaybackMode,
+  type ProxyResolutionScale,
+  type Tab,
+  type ThemeId
+} from './types'
 
 const THEME_STORAGE_KEY = 'noircut-theme'
 const TIMELINE_HEIGHT_KEY = 'noircut-timeline-height'
@@ -237,6 +248,11 @@ export default function App() {
   const [stills, setStills] = useState<GradeStill[]>([])
   const [copiedGrade, setCopiedGrade] = useState<ColorGrade | null>(null)
   const [autoDucking, setAutoDucking] = useState<boolean>(false)
+  const [masterGainDb, setMasterGainDb] = useState<number>(0)
+  const [subtitles, setSubtitles] = useState<SubtitleSegment[]>([])
+  const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyleConfig>(defaultSubtitleStyle)
+  const [proxyPlaybackMode, setProxyPlaybackMode] = useState<ProxyPlaybackMode>('auto')
+  const [proxyScale, setProxyScale] = useState<ProxyResolutionScale>('1/2')
   const [selectedClipIds, setSelectedClipIds] = useState<string[]>([])
   const selectedClipId = selectedClipIds[0] ?? null
 
@@ -279,7 +295,10 @@ export default function App() {
   const [exportError, setExportError] = useState<string | null>(null)
   const [exportQueue, setExportQueue] = useState<ExportQueueJob[]>([])
   const [queueRunning, setQueueRunning] = useState(false)
+  const [queuePaused, setQueuePaused] = useState(false)
+  const [renderLogs, setRenderLogs] = useState<string[]>([])
   const activeQueueJobIdRef = useRef<string | null>(null)
+  const activeJobStartWallRef = useRef<number>(0)
   const [rippleMode, setRippleMode] = useState(false)
   const [autosaveStatus, setAutosaveStatus] = useState<AutosaveStatus | null>(null)
   const [statusToast, setStatusToast] = useState<string | null>(null)
@@ -332,7 +351,32 @@ export default function App() {
 
   const lib = useMediaLibrary()
   const mediaMap = useMemo(() => new Map(lib.items.map((m) => [m.id, m])), [lib.items])
-  const player = usePlayer(clips, lanes, lib.items, autoDucking)
+  const player = usePlayer(clips, lanes, lib.items, autoDucking, proxyPlaybackMode)
+
+  const handleProxyPlaybackModeChange = useCallback(
+    (mode: ProxyPlaybackMode) => {
+      setProxyPlaybackMode(mode)
+      void window.noircut?.setProxyConfig?.({ playbackMode: mode })
+    },
+    []
+  )
+
+  const handleProxyScaleChange = useCallback(
+    (scale: ProxyResolutionScale) => {
+      setProxyScale(scale)
+      void window.noircut?.setProxyConfig?.({ resolutionScale: scale })
+    },
+    []
+  )
+
+  const handleBatchProxyGenerate = useCallback(async () => {
+    const res = await window.noircut?.generateBatchProxies?.(undefined, proxyScale)
+    if (res && res.started > 0) {
+      setStatusToast(`${res.started} medya için toplu proxy üretimi başlatıldı (${proxyScale})`)
+    } else {
+      setStatusToast('Proxy üretilecek video bulunamadı')
+    }
+  }, [proxyScale])
 
   const makeClip = useCallback(
     (m: MediaItem, lane: LaneId, start: number): TimelineClip => ({
@@ -382,8 +426,10 @@ export default function App() {
       setExportProgress(pct)
       const qid = activeQueueJobIdRef.current
       if (qid) {
+        const elapsedSec = Math.max(0.1, (performance.now() - activeJobStartWallRef.current) / 1000)
+        const etaSec = pct >= 4 && pct < 100 ? ((100 - pct) / pct) * elapsedSec : null
         setExportQueue((prev) =>
-          prev.map((j) => (j.id === qid ? { ...j, progress: pct } : j))
+          prev.map((j) => (j.id === qid ? { ...j, progress: pct, etaSec } : j))
         )
       }
     })
@@ -724,18 +770,183 @@ export default function App() {
       if (!curTarget || !isVideoLane(curTarget.lane) || isCreditClip(curTarget) || curTarget.audioDetached) {
         return cs
       }
+      const newAudioId = `clip-${nextId.current++}`
       const audioClip: TimelineClip = {
         ...curTarget,
-        id: `clip-${nextId.current++}`,
+        id: newAudioId,
         lane: 'A1',
         audioDetached: false,
-        grade: undefined
+        grade: undefined,
+        linkedClipId: curTarget.id
       }
       return cs
-        .map((c) => (c.id === curTarget.id ? { ...c, audioDetached: true } : c))
+        .map((c) =>
+          c.id === curTarget.id ? { ...c, audioDetached: true, linkedClipId: newAudioId } : c
+        )
         .concat(audioClip)
     })
   }, [recordHistory, selectedClipId])
+
+  // Belirli bir klibi (ve bağlı A/V veya grup eşlerini) verilen saniyeden böl (Razor Aracı)
+  const cutClipAt = useCallback(
+    (clipId: string, splitTime: number) => {
+      const t = round3(splitTime)
+      const cs = stateSnapshotRef.current.clips
+      const primary = cs.find((c) => c.id === clipId)
+      if (!primary) return
+      const canSplit = (c: TimelineClip) =>
+        !stateSnapshotRef.current.lanes[c.lane]?.locked &&
+        t > c.start + 0.05 &&
+        t < clipEndExact(c) - 0.05
+      const targets = cs.filter(
+        (c) =>
+          canSplit(c) &&
+          (c.id === primary.id ||
+            (primary.linkedClipId && c.id === primary.linkedClipId) ||
+            c.linkedClipId === primary.id ||
+            (primary.groupId && c.groupId === primary.groupId))
+      )
+      if (targets.length === 0) return
+
+      recordHistory('Klip Kesme (Jilet)')
+      const targetIds = new Set(targets.map((c) => c.id))
+      setClips((prev) =>
+        prev.flatMap((c) => {
+          if (!targetIds.has(c.id)) return [c]
+          const leftDur = round3(t - c.start)
+          const rightDur = round3(clipEndExact(c) - t)
+          const spd = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
+          const leftKfs = c.keyframes
+            ? c.keyframes.filter((k) => k.time <= leftDur).map((k) => ({ ...k }))
+            : undefined
+          const rightKfs = c.keyframes
+            ? c.keyframes
+                .filter((k) => k.time > leftDur)
+                .map((k) => ({ ...k, time: round3(k.time - leftDur) }))
+            : undefined
+          const left: TimelineClip = {
+            ...c,
+            duration: leftDur,
+            fadeIn: Math.min(c.fadeIn, leftDur),
+            fadeOut: 0,
+            grade: c.grade ? cloneColorGrade(c.grade) : undefined,
+            transform: c.transform ? { ...c.transform } : undefined,
+            keyframes: leftKfs
+          }
+          const right: TimelineClip = {
+            ...c,
+            id: `clip-${nextId.current++}`,
+            start: t,
+            in: round3(c.in + leftDur * spd),
+            duration: rightDur,
+            fadeIn: 0,
+            fadeOut: Math.min(c.fadeOut, rightDur),
+            grade: c.grade ? cloneColorGrade(c.grade) : undefined,
+            transform: c.transform ? { ...c.transform } : undefined,
+            keyframes: rightKfs,
+            linkedClipId: null
+          }
+          return [left, right]
+        })
+      )
+    },
+    [recordHistory]
+  )
+
+  const handleGroupSelected = useCallback(() => {
+    const ids = stateSnapshotRef.current.selectedClipIds
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    const selClips = stateSnapshotRef.current.clips.filter((c) => idSet.has(c.id))
+    const allAlreadyGrouped =
+      selClips.length > 0 &&
+      Boolean(selClips[0].groupId) &&
+      selClips.every((c) => c.groupId === selClips[0].groupId)
+
+    if (allAlreadyGrouped) {
+      const targetGroup = selClips[0].groupId
+      recordHistory('Klip Grubunu Çöz')
+      setClips((cs) =>
+        cs.map((c) => (c.groupId === targetGroup ? { ...c, groupId: null } : c))
+      )
+      showToast('Klip grubu çözüldü')
+    } else if (selClips.length >= 2) {
+      const newGroupId = `grp-${Date.now()}`
+      recordHistory(`Klipleri Grupla (${selClips.length})`)
+      setClips((cs) =>
+        cs.map((c) => (idSet.has(c.id) ? { ...c, groupId: newGroupId } : c))
+      )
+      showToast(`${selClips.length} klip gruplandı`)
+    }
+  }, [recordHistory, showToast])
+
+  const handleLinkSelected = useCallback(() => {
+    const ids = stateSnapshotRef.current.selectedClipIds
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    const selClips = stateSnapshotRef.current.clips.filter((c) => idSet.has(c.id))
+    const hasLinked = selClips.some((c) => Boolean(c.linkedClipId))
+    if (hasLinked) {
+      const linkedTargets = new Set<string>()
+      for (const c of selClips) {
+        linkedTargets.add(c.id)
+        if (c.linkedClipId) linkedTargets.add(c.linkedClipId)
+      }
+      recordHistory('Video & Ses Bağını Çöz')
+      setClips((cs) =>
+        cs.map((c) =>
+          linkedTargets.has(c.id) || (c.linkedClipId && linkedTargets.has(c.linkedClipId))
+            ? { ...c, linkedClipId: null }
+            : c
+        )
+      )
+      showToast('Video ve ses bağı çözüldü')
+      return
+    }
+    if (selClips.length >= 2) {
+      const vClip = selClips.find((c) => isVideoLane(c.lane)) ?? selClips[0]
+      const aClip = selClips.find((c) => c.id !== vClip.id && isAudioLane(c.lane)) ?? selClips[1]
+      recordHistory('Video & Ses Bağla (A/V Link)')
+      setClips((cs) =>
+        cs.map((c) => {
+          if (c.id === vClip.id) return { ...c, linkedClipId: aClip.id }
+          if (c.id === aClip.id) return { ...c, linkedClipId: vClip.id }
+          return c
+        })
+      )
+      showToast(`${vClip.name} ve ${aClip.name} A/V olarak bağlandı`)
+    }
+  }, [recordHistory, showToast])
+
+  const handleNestSelected = useCallback(() => {
+    const ids = stateSnapshotRef.current.selectedClipIds
+    if (ids.length < 2) return
+    const idSet = new Set(ids)
+    const selClips = stateSnapshotRef.current.clips
+      .filter((c) => idSet.has(c.id))
+      .sort((a, b) => a.start - b.start)
+    if (selClips.length < 2) return
+
+    const primary = selClips.find((c) => isVideoLane(c.lane) && !isCreditClip(c)) ?? selClips[0]
+    const minStart = round3(Math.min(...selClips.map((c) => c.start)))
+    const maxEnd = round3(Math.max(...selClips.map((c) => clipEndExact(c))))
+    const totalDur = Math.max(0.2, round3(maxEnd - minStart))
+    const nestedId = `clip-${nextId.current++}`
+    const nestedClip: TimelineClip = {
+      ...cloneClipItem(primary),
+      id: nestedId,
+      name: `İç İçe Sekans (${selClips.length} Klip)`,
+      start: minStart,
+      duration: totalDur,
+      groupId: null,
+      linkedClipId: null,
+      nestedClips: selClips.map(cloneClipItem)
+    }
+    recordHistory(`İç İçe Sekans Oluştur (${selClips.length} klip)`)
+    setClips((cs) => cs.filter((c) => !idSet.has(c.id)).concat(nestedClip))
+    setSelectedClipIds([nestedId])
+    showToast(`İç İçe Sekans oluşturuldu (${totalDur.toFixed(2)}s)`)
+  }, [recordHistory, showToast])
 
   const updateClip = useCallback(
     (id: string, patch: Partial<TimelineClip>) => {
@@ -813,6 +1024,86 @@ export default function App() {
       setLanes((ls) => {
         const cur = ls[lane] ?? { muted: false, solo: false }
         return { ...ls, [lane]: { ...cur, solo: !cur.solo } }
+      })
+    },
+    [recordHistory]
+  )
+
+  const toggleLockLane = useCallback(
+    (lane: LaneId) => {
+      recordHistory(`${lane} Kilitle/Aç`)
+      setLanes((ls) => {
+        const cur = ls[lane] ?? { muted: false, solo: false }
+        return { ...ls, [lane]: { ...cur, locked: !cur.locked } }
+      })
+    },
+    [recordHistory]
+  )
+
+  const toggleHideLane = useCallback(
+    (lane: LaneId) => {
+      recordHistory(`${lane} Gizle/Göster`)
+      setLanes((ls) => {
+        const cur = ls[lane] ?? { muted: false, solo: false }
+        return { ...ls, [lane]: { ...cur, hidden: !cur.hidden } }
+      })
+    },
+    [recordHistory]
+  )
+
+  const duplicateLane = useCallback(
+    (lane: LaneId) => {
+      const isVid = isVideoLane(lane)
+      const newLane = isVid
+        ? nextVideoLaneId(stateSnapshotRef.current.lanes)
+        : nextAudioLaneId(stateSnapshotRef.current.lanes)
+      recordHistory(`Kanalı Çoğalt (${lane} → ${newLane})`)
+      setLanes((ls) => ({
+        ...ls,
+        [newLane]: { ...(ls[lane] ?? { muted: false, solo: false }) }
+      }))
+      setClips((cs) => {
+        const sourceClips = cs.filter((c) => c.lane === lane)
+        const copies = sourceClips.map((c) => ({
+          ...cloneClipItem(c),
+          id: `clip-${nextId.current++}`,
+          lane: newLane,
+          linkedClipId: null,
+          groupId: null
+        }))
+        return [...cs, ...copies]
+      })
+      showToast(`${lane} kanalı ${newLane} olarak çoğaltıldı`)
+    },
+    [recordHistory, showToast]
+  )
+
+  const reorderLane = useCallback(
+    (lane: LaneId, dir: -1 | 1) => {
+      const isVid = isVideoLane(lane)
+      const curLanes = stateSnapshotRef.current.lanes
+      const group = Object.keys(curLanes)
+        .filter((k) => (isVid ? isVideoLane(k) : isAudioLane(k)))
+        .sort((a, b) => {
+          const oa = curLanes[a]?.order
+          const ob = curLanes[b]?.order
+          if (typeof oa === 'number' && typeof ob === 'number' && oa !== ob) return oa - ob
+          return isVid ? laneNumber(b) - laneNumber(a) : laneNumber(a) - laneNumber(b)
+        })
+      const idx = group.indexOf(lane)
+      const targetIdx = idx + dir
+      if (idx < 0 || targetIdx < 0 || targetIdx >= group.length) return
+      const swapped = [...group]
+      const tmp = swapped[idx]
+      swapped[idx] = swapped[targetIdx]
+      swapped[targetIdx] = tmp
+      recordHistory(`Kanal Sırası Değiştir (${lane})`)
+      setLanes((ls) => {
+        const next = { ...ls }
+        swapped.forEach((lid, i) => {
+          next[lid] = { ...(next[lid] ?? { muted: false, solo: false }), order: i }
+        })
+        return next
       })
     },
     [recordHistory]
@@ -1371,6 +1662,137 @@ export default function App() {
     [activeGrade, showToast, updateActiveGrade]
   )
 
+  // Sessizlik Algılama (Silence Detection) Aksiyonları (Kullanıcı Onaylı)
+  const handleAddMarkersFromSilence = useCallback(
+    (regions: SilenceRegion[]) => {
+      if (regions.length === 0) return
+      recordHistory(`Sessizlik İşaretçileri (${regions.length})`)
+      setMarkers((ms) => {
+        const added: CaseMarker[] = regions.map((r, idx) => ({
+          id: `marker-${nextId.current++}`,
+          time: round3(r.start),
+          title: `Sessiz #${idx + 1} (${r.duration.toFixed(2)}s)`,
+          note: `${r.avgDb} dB · ${r.start.toFixed(2)}s – ${r.end.toFixed(2)}s`,
+          color: 'cyan'
+        }))
+        return [...ms, ...added].sort((a, b) => a.time - b.time)
+      })
+      showToast(`${regions.length} sessiz bölge için timeline işaretçisi eklendi`)
+    },
+    [recordHistory, showToast]
+  )
+
+  const handleSplitClipsAtSilence = useCallback(
+    (regions: SilenceRegion[], syncLinked: boolean) => {
+      if (regions.length === 0) return
+      recordHistory('Sessizlik Sınırlarından Klipleri Böl')
+      const cutTimes = Array.from(
+        new Set(regions.flatMap((r) => [round3(r.start), round3(r.end)]))
+      ).sort((a, b) => a - b)
+
+      setClips((prev) => {
+        let current = prev
+        for (const t of cutTimes) {
+          current = current.flatMap((c) => {
+            if (stateSnapshotRef.current.lanes[c.lane]?.locked) return [c]
+            if (!syncLinked && isVideoLane(c.lane) && c.audioDetached) return [c]
+            if (t <= c.start + 0.06 || t >= clipEndExact(c) - 0.06) return [c]
+            const leftDur = round3(t - c.start)
+            const rightDur = round3(clipEndExact(c) - t)
+            const spd = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
+            const left: TimelineClip = {
+              ...c,
+              duration: leftDur,
+              fadeIn: Math.min(c.fadeIn, leftDur),
+              fadeOut: 0
+            }
+            const right: TimelineClip = {
+              ...c,
+              id: `clip-${nextId.current++}`,
+              start: t,
+              in: round3(c.in + leftDur * spd),
+              duration: rightDur,
+              fadeIn: 0,
+              fadeOut: Math.min(c.fadeOut, rightDur),
+              linkedClipId: null
+            }
+            return [left, right]
+          })
+        }
+        return current
+      })
+      showToast(`${regions.length} sessiz bölge sınırından klipler bölündü`)
+    },
+    [recordHistory, showToast]
+  )
+
+  const handleRemoveDetectedSilence = useCallback(
+    (regions: SilenceRegion[], syncLinked: boolean) => {
+      if (regions.length === 0) return
+      recordHistory('Sessiz Bölgeleri Çıkar & Boşlukları Kapat')
+      const sortedRegs = [...regions].sort((a, b) => a.start - b.start)
+
+      setClips((prev) => {
+        let current = prev
+        for (const reg of sortedRegs) {
+          current = current.flatMap((c) => {
+            if (stateSnapshotRef.current.lanes[c.lane]?.locked) return [c]
+            if (!syncLinked && isVideoLane(c.lane) && c.audioDetached) return [c]
+            const cEnd = clipEndExact(c)
+            if (reg.end <= c.start + 0.04 || reg.start >= cEnd - 0.04) return [c]
+            const spd = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
+            const pieces: TimelineClip[] = []
+            if (reg.start > c.start + 0.08) {
+              const leftDur = round3(reg.start - c.start)
+              pieces.push({
+                ...c,
+                duration: leftDur,
+                fadeIn: Math.min(c.fadeIn, leftDur),
+                fadeOut: 0
+              })
+            }
+            if (reg.end < cEnd - 0.08) {
+              const offset = round3(reg.end - c.start)
+              const rightDur = round3(cEnd - reg.end)
+              pieces.push({
+                ...c,
+                id: pieces.length === 0 ? c.id : `clip-${nextId.current++}`,
+                start: round3(reg.end),
+                in: round3(c.in + offset * spd),
+                duration: rightDur,
+                fadeIn: 0,
+                fadeOut: Math.min(c.fadeOut, rightDur),
+                linkedClipId: null
+              })
+            }
+            return pieces
+          })
+        }
+        // Her kanalda oluşan boşlukları sırayla kapat
+        const byLane = new Map<LaneId, TimelineClip[]>()
+        for (const c of current) {
+          const arr = byLane.get(c.lane) ?? []
+          arr.push(c)
+          byLane.set(c.lane, arr)
+        }
+        const repositioned = new Map<string, number>()
+        for (const [, laneList] of byLane.entries()) {
+          laneList.sort((a, b) => a.start - b.start)
+          let cursor = 0
+          for (const c of laneList) {
+            repositioned.set(c.id, round3(cursor))
+            cursor = round3(cursor + c.duration)
+          }
+        }
+        return current.map((c) =>
+          repositioned.has(c.id) ? { ...c, start: repositioned.get(c.id)! } : c
+        )
+      })
+      showToast(`${regions.length} sessiz bölge çıkarıldı ve senkron korundu`)
+    },
+    [recordHistory, showToast]
+  )
+
   const buildCurrentProject = useCallback(
     (): NoirCutProject => ({
       version: 1,
@@ -1381,6 +1803,9 @@ export default function App() {
       lanes,
       markers,
       stills,
+      subtitles,
+      subtitleStyle,
+      masterGainDb,
       autoDucking,
       customLuts,
       draftCredit,
@@ -1398,7 +1823,10 @@ export default function App() {
       lib.activeId,
       lib.items,
       markers,
-      stills
+      masterGainDb,
+      stills,
+      subtitleStyle,
+      subtitles
     ]
   )
 
@@ -1440,6 +1868,9 @@ export default function App() {
       setMarkers(proj.markers ?? [])
       setActiveMarkerId(null)
       setStills(proj.stills ?? [])
+      setSubtitles(proj.subtitles ?? [])
+      setSubtitleStyle(proj.subtitleStyle ?? defaultSubtitleStyle())
+      setMasterGainDb(typeof proj.masterGainDb === 'number' ? proj.masterGainDb : 0)
       setAutoDucking(Boolean(proj.autoDucking))
       setCustomLuts(proj.customLuts ?? {})
       setDraftCredit(proj.draftCredit ?? defaultCreditConfig('noir-opening'))
@@ -1546,6 +1977,9 @@ export default function App() {
         lanes,
         customLuts,
         creditOverlays,
+        subtitles,
+        subtitleStyle,
+        masterGainDb,
         settings: exportSettings,
         autoDucking,
         rangeStart: useRange ? (inPoint ?? 0) : null,
@@ -1554,13 +1988,34 @@ export default function App() {
       if (res.canceled) return
       if (res.ok && res.path) {
         setExportResultPath(res.path)
+        setRenderLogs((prev) => [
+          ...prev,
+          `[${new Date().toLocaleTimeString()}] TAMAMLANDI: ${res.path}`
+        ])
       } else {
         setExportError(res.error ?? 'Bilinmeyen hata')
+        setRenderLogs((prev) => [
+          ...prev,
+          `[${new Date().toLocaleTimeString()}] HATA: ${res.error ?? 'Bilinmeyen hata'}`
+        ])
       }
     } finally {
       setExporting(false)
     }
-  }, [autoDucking, buildCreditOverlays, clips, customLuts, exportSettings, exporting, inPoint, lanes, outPoint])
+  }, [
+    autoDucking,
+    buildCreditOverlays,
+    clips,
+    customLuts,
+    exportSettings,
+    exporting,
+    inPoint,
+    lanes,
+    masterGainDb,
+    outPoint,
+    subtitleStyle,
+    subtitles
+  ])
 
   const handleAddToQueue = useCallback(async () => {
     if (!window.noircut?.selectExportPath) return
@@ -1575,7 +2030,7 @@ export default function App() {
     const useRange = Boolean(exportSettings.useInOutRange && (inPoint !== null || outPoint !== null))
     const job: ExportQueueJob = {
       id: `qjob-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      label: `${EXPORT_RESOLUTION_DIM[exportSettings.resolution].label} · ${exportSettings.fps}fps · ${exportSettings.format.toUpperCase()}`,
+      label: `${EXPORT_RESOLUTION_DIM[exportSettings.resolution].label} · ${exportSettings.fps}fps · ${(exportSettings.codec ?? 'h264').toUpperCase()} · ${exportSettings.format.toUpperCase()}`,
       outputPath: targetPath,
       settings: { ...exportSettings },
       rangeStart: useRange ? (inPoint ?? 0) : null,
@@ -1587,18 +2042,71 @@ export default function App() {
     showToast('Render kuyruğuna eklendi')
   }, [clips, exportSettings, inPoint, outPoint, showToast])
 
+  const handlePauseResumeQueue = useCallback(async () => {
+    if (!queueRunning) return
+    if (!queuePaused) {
+      await window.noircut?.pauseExport?.()
+      setQueuePaused(true)
+      const qid = activeQueueJobIdRef.current
+      if (qid) {
+        setExportQueue((prev) =>
+          prev.map((j) => (j.id === qid ? { ...j, status: 'paused' } : j))
+        )
+      }
+      showToast('Render duraklatıldı')
+    } else {
+      await window.noircut?.resumeExport?.()
+      setQueuePaused(false)
+      const qid = activeQueueJobIdRef.current
+      if (qid) {
+        setExportQueue((prev) =>
+          prev.map((j) => (j.id === qid ? { ...j, status: 'running' } : j))
+        )
+      }
+      showToast('Render devam ediyor')
+    }
+  }, [queuePaused, queueRunning, showToast])
+
+  const handleRetryQueueJob = useCallback((jobId: string) => {
+    setExportQueue((prev) =>
+      prev.map((j) =>
+        j.id === jobId ? { ...j, status: 'pending', progress: 0, error: undefined, etaSec: null } : j
+      )
+    )
+  }, [])
+
+  const handleCancelQueueJob = useCallback(async (jobId: string) => {
+    if (activeQueueJobIdRef.current === jobId) {
+      await window.noircut?.cancelExport?.()
+    } else {
+      setExportQueue((prev) =>
+        prev.map((j) => (j.id === jobId ? { ...j, status: 'canceled' } : j))
+      )
+    }
+  }, [])
+
   const handleStartQueue = useCallback(async () => {
     if (queueRunning || exporting || !window.noircut?.exportProject) return
     const pendingJobs = exportQueue.filter((j) => j.status === 'pending')
     if (pendingJobs.length === 0) return
     setQueueRunning(true)
+    setQueuePaused(false)
     setExporting(true)
     try {
       for (const job of pendingJobs) {
         activeQueueJobIdRef.current = job.id
+        activeJobStartWallRef.current = performance.now()
         setExportProgress(0)
+        setRenderLogs((prev) => [
+          ...prev,
+          `[${new Date().toLocaleTimeString()}] BAŞLATILDI: ${job.label} → ${job.outputPath}`
+        ])
         setExportQueue((prev) =>
-          prev.map((j) => (j.id === job.id ? { ...j, status: 'running', progress: 0 } : j))
+          prev.map((j) =>
+            j.id === job.id
+              ? { ...j, status: 'running', progress: 0, startedAt: Date.now(), etaSec: null }
+              : j
+          )
         )
         const creditOverlays = await buildCreditOverlays(job.settings.resolution)
         const res = await window.noircut.exportProject({
@@ -1606,12 +2114,21 @@ export default function App() {
           lanes,
           customLuts,
           creditOverlays,
+          subtitles,
+          subtitleStyle,
+          masterGainDb,
           settings: job.settings,
           autoDucking,
           outputPath: job.outputPath,
           rangeStart: job.rangeStart,
           rangeEnd: job.rangeEnd
         })
+        setRenderLogs((prev) => [
+          ...prev,
+          res.ok
+            ? `[${new Date().toLocaleTimeString()}] TAMAMLANDI: ${job.outputPath}`
+            : `[${new Date().toLocaleTimeString()}] ${res.canceled ? 'İPTAL' : 'HATA'}: ${res.error ?? job.outputPath}`
+        ])
         setExportQueue((prev) =>
           prev.map((j) =>
             j.id === job.id
@@ -1619,6 +2136,7 @@ export default function App() {
                   ...j,
                   status: res.canceled ? 'canceled' : res.ok ? 'done' : 'error',
                   progress: res.ok ? 100 : j.progress,
+                  etaSec: null,
                   error: res.error
                 }
               : j
@@ -1630,8 +2148,21 @@ export default function App() {
       activeQueueJobIdRef.current = null
       setExporting(false)
       setQueueRunning(false)
+      setQueuePaused(false)
     }
-  }, [autoDucking, buildCreditOverlays, clips, customLuts, exportQueue, exporting, lanes, queueRunning])
+  }, [
+    autoDucking,
+    buildCreditOverlays,
+    clips,
+    customLuts,
+    exportQueue,
+    exporting,
+    lanes,
+    masterGainDb,
+    queueRunning,
+    subtitleStyle,
+    subtitles
+  ])
 
   // Profesyonel NLE Klavye Kısayolları:
   // Space = oynat/durdur, J = geri sar (1x/2x), K = durdur, L = ileri oynat (1x/2x/4x),
@@ -1677,6 +2208,11 @@ export default function App() {
       if ((e.ctrlKey || e.metaKey) && keyLower === 'a') {
         e.preventDefault()
         handleSelectAllClips()
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && keyLower === 'g') {
+        e.preventDefault()
+        handleGroupSelected()
         return
       }
       if (e.key === 'Escape') {
@@ -1740,6 +2276,7 @@ export default function App() {
     handleRedo,
     handleSaveProject,
     handleSelectAllClips,
+    handleGroupSelected,
     handleClearSelection,
     handleUndo,
     player.shuttleForward,
@@ -1925,6 +2462,7 @@ export default function App() {
           error={exportError}
           clipCount={clips.length}
           totalDuration={total}
+          subtitleCount={subtitles.length}
           onStart={handleStartExport}
           onCancel={() => window.noircut?.cancelExport()}
           onReveal={(p) => window.noircut?.revealInFolder(p)}
@@ -1933,13 +2471,20 @@ export default function App() {
           outPoint={outPoint}
           exportQueue={exportQueue}
           queueRunning={queueRunning}
+          queuePaused={queuePaused}
+          renderLogs={renderLogs}
           onAddToQueue={handleAddToQueue}
           onStartQueue={handleStartQueue}
+          onPauseResumeQueue={handlePauseResumeQueue}
+          onRetryQueueJob={handleRetryQueueJob}
+          onCancelQueueJob={handleCancelQueueJob}
           onRemoveQueueJob={(id) =>
             setExportQueue((prev) => prev.filter((j) => j.id !== id))
           }
           onClearFinishedQueue={() =>
-            setExportQueue((prev) => prev.filter((j) => j.status === 'pending' || j.status === 'running'))
+            setExportQueue((prev) =>
+              prev.filter((j) => j.status === 'pending' || j.status === 'running' || j.status === 'paused')
+            )
           }
         />
         </div>
@@ -1951,6 +2496,12 @@ export default function App() {
                 activeClip={targetEditClip}
                 clips={clips}
                 lanes={lanes}
+                peaksMap={lib.peaksMap}
+                playing={player.playing}
+                time={player.time}
+                subscribeTime={player.subscribeTime}
+                masterGainDb={masterGainDb}
+                onMasterGainChange={setMasterGainDb}
                 onToggleLane={(laneId, key) => {
                   if (key === 'muted') toggleMute(laneId)
                   else toggleSolo(laneId)
@@ -1960,6 +2511,26 @@ export default function App() {
                 onToggleAutoDucking={handleToggleAutoDucking}
                 onAddSoundscapeClip={handleAddSoundscapeClip}
                 onSelectClip={setSelectedClipId}
+              />
+            ) : tab === 'SUBTITLES' ? (
+              <SubtitlesWorkspace
+                clips={clips}
+                mediaMap={mediaMap}
+                peaksMap={lib.peaksMap}
+                subtitles={subtitles}
+                subtitleStyle={subtitleStyle}
+                time={player.time}
+                fps={monitorMedia?.fps || 25}
+                onUpdateSubtitles={(next) => {
+                  recordHistory('Altyazı Güncelleme', 'subtitles')
+                  setSubtitles(next)
+                }}
+                onUpdateSubtitleStyle={setSubtitleStyle}
+                onSeek={player.seek}
+                onAddMarkersFromSilence={handleAddMarkersFromSilence}
+                onSplitClipsAtSilence={handleSplitClipsAtSilence}
+                onRemoveDetectedSilence={handleRemoveDetectedSilence}
+                onShowToast={showToast}
               />
             ) : (
               <>
@@ -2027,6 +2598,13 @@ export default function App() {
               onCopyGrade={handleCopyGrade}
               onPasteGrade={handlePasteGrade}
               hasCopiedGrade={copiedGrade !== null}
+              proxyPlaybackMode={proxyPlaybackMode}
+              onProxyPlaybackModeChange={handleProxyPlaybackModeChange}
+              proxyScale={proxyScale}
+              onProxyScaleChange={handleProxyScaleChange}
+              onBatchProxyGenerate={handleBatchProxyGenerate}
+              subtitles={subtitles}
+              subtitleStyle={subtitleStyle}
             />
             <div
               data-testid="right-panel-resizer"
@@ -2122,10 +2700,18 @@ export default function App() {
             onBatchUpdateClips={batchUpdateClips}
             onToggleMute={toggleMute}
             onToggleSolo={toggleSolo}
+            onToggleLockLane={toggleLockLane}
+            onToggleHideLane={toggleHideLane}
+            onDuplicateLane={duplicateLane}
+            onReorderLane={reorderLane}
             onAddVideoLane={addVideoLane}
             onAddAudioLane={addAudioLane}
             onRemoveLane={removeLane}
             onDropMediaToLane={dropMediaToLane}
+            onCutClipAt={cutClipAt}
+            onGroupSelected={handleGroupSelected}
+            onLinkSelected={handleLinkSelected}
+            onNestSelected={handleNestSelected}
           />
         </>
       )}

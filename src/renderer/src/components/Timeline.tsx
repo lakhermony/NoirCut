@@ -131,10 +131,18 @@ export default function Timeline({
   onBatchUpdateClips,
   onToggleMute,
   onToggleSolo,
+  onToggleLockLane,
+  onToggleHideLane,
+  onDuplicateLane,
+  onReorderLane,
   onAddVideoLane,
   onAddAudioLane,
   onRemoveLane,
   onDropMediaToLane,
+  onCutClipAt,
+  onGroupSelected,
+  onLinkSelected,
+  onNestSelected,
   height = 284
 }: {
   clips: TimelineClip[]
@@ -185,10 +193,18 @@ export default function Timeline({
   onBatchUpdateClips?: (updates: Array<{ id: string; patch: Partial<TimelineClip> }>) => void
   onToggleMute: (lane: LaneId) => void
   onToggleSolo: (lane: LaneId) => void
+  onToggleLockLane?: (lane: LaneId) => void
+  onToggleHideLane?: (lane: LaneId) => void
+  onDuplicateLane?: (lane: LaneId) => void
+  onReorderLane?: (lane: LaneId, dir: -1 | 1) => void
   onAddVideoLane?: () => void
   onAddAudioLane?: () => void
   onRemoveLane?: (lane: LaneId) => void
   onDropMediaToLane: (mediaId: string, lane: LaneId) => void
+  onCutClipAt?: (clipId: string, splitTime: number) => void
+  onGroupSelected?: () => void
+  onLinkSelected?: () => void
+  onNestSelected?: () => void
   height?: number
 }) {
   const area = useRef<HTMLDivElement>(null)
@@ -201,6 +217,7 @@ export default function Timeline({
   const [width, setWidth] = useState(800)
   const [zoom, setZoom] = useState(1)
   const [snap, setSnap] = useState(true)
+  const [editTool, setEditTool] = useState<'select' | 'razor' | 'slip' | 'roll'>('select')
   const [showGuide, setShowGuide] = useState(false)
   const [selectedKeyframeId, setSelectedKeyframeId] = useState<string | null>(null)
   const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null)
@@ -253,6 +270,30 @@ export default function Timeline({
       window.removeEventListener('scroll', close, true)
     }
   }, [gapMenu, clipMenu])
+
+  useEffect(() => {
+    const onToolKey = (ev: KeyboardEvent) => {
+      const el = ev.target as HTMLElement | null
+      if (
+        el &&
+        (el.tagName === 'TEXTAREA' ||
+          el.isContentEditable ||
+          (el.tagName === 'INPUT' &&
+            (el as HTMLInputElement).type !== 'range' &&
+            (el as HTMLInputElement).type !== 'checkbox'))
+      ) {
+        return
+      }
+      if (ev.ctrlKey || ev.metaKey || ev.altKey) return
+      const k = ev.key.toLowerCase()
+      if (k === 'v') setEditTool('select')
+      else if (k === 'b') setEditTool('razor')
+      else if (k === 'y') setEditTool('slip')
+      else if (k === 'n') setEditTool('roll')
+    }
+    window.addEventListener('keydown', onToolKey)
+    return () => window.removeEventListener('keydown', onToolKey)
+  }, [])
 
   const orderedLanes = orderLanes(lanes, clips)
 
@@ -388,7 +429,7 @@ export default function Timeline({
     window.addEventListener('pointerup', onUp)
   }
 
-  // Klip taşıma (Tekli veya Çoklu Grup Taşıma) ve sol/sağ kenar kırpma (Trim)
+  // Klip taşıma (Tekli / Çoklu Grup / Bağlı A-V), Slip, Roll ve Sol/Sağ Kenar Kırpma (Trim + Ripple Trim)
   const startClipDrag = (
     e: React.PointerEvent,
     clip: TimelineClip,
@@ -397,18 +438,52 @@ export default function Timeline({
     if (e.button !== 0) return
     e.stopPropagation()
 
+    // Kilitli kanalda düzenlemeyi engelle
+    if (lanes[clip.lane]?.locked) return
+
+    // Razor / Blade aracı aktifken klibe tıklandığında tıklanan zaman noktasından böl
+    if (editTool === 'razor' && mode === 'move') {
+      if (area.current) {
+        const r = area.current.getBoundingClientRect()
+        const x = e.clientX - r.left + area.current.scrollLeft
+        const clickTime = round3(Math.max(clip.start + 0.05, Math.min(clipEndExact(clip) - 0.05, x / Math.max(1, pps))))
+        if (onCutClipAt) {
+          onCutClipAt(clip.id, clickTime)
+        } else {
+          onSeek(clickTime)
+          onCut()
+        }
+      }
+      return
+    }
+
     // Shift veya Ctrl/Cmd ile tıklandıysa çoklu seçime ekle/çıkar (sürükleme başlatma)
     if (mode === 'move' && (e.shiftKey || e.ctrlKey || e.metaKey)) {
       onSelectClip(clip.id, { toggle: true })
       return
     }
 
+    // Klip bir gruba (groupId) veya bağlı A/V eşine (linkedClipId) sahipse otomatik olarak grup seçimine dahil et
+    const linkedAndGroupedIds = clipsRef.current
+      .filter(
+        (c) =>
+          c.id === clip.id ||
+          (clip.groupId && c.groupId === clip.groupId) ||
+          (clip.linkedClipId && c.id === clip.linkedClipId) ||
+          c.linkedClipId === clip.id
+      )
+      .map((c) => c.id)
+
     const isAlreadyInMultiSelect = mode === 'move' && selectedSet.size > 1 && selectedSet.has(clip.id)
     if (!isAlreadyInMultiSelect) {
-      onSelectClip(clip.id)
+      if (linkedAndGroupedIds.length > 1 && onSelectClips) {
+        onSelectClips(linkedAndGroupedIds)
+      } else {
+        onSelectClip(clip.id)
+      }
     }
 
-    if (mode !== 'move') {
+    if (mode !== 'move' || editTool === 'slip') {
       const target = e.currentTarget as HTMLElement
       try {
         target.setPointerCapture(e.pointerId)
@@ -418,19 +493,20 @@ export default function Timeline({
     }
 
     const activeGroupIds = isAlreadyInMultiSelect
-      ? Array.from(selectedSet)
-      : [clip.id]
+      ? Array.from(new Set([...selectedSet, ...linkedAndGroupedIds]))
+      : linkedAndGroupedIds
     const activeGroupSet = new Set(activeGroupIds)
     const groupInitialClips = clipsRef.current
-      .filter((c) => activeGroupSet.has(c.id))
+      .filter((c) => activeGroupSet.has(c.id) && !lanes[c.lane]?.locked)
       .map((c) => ({
         id: c.id,
         lane: c.lane,
         initStart: round3(c.start),
+        initIn: round3(c.in),
         duration: round3(c.duration),
         initEnd: clipEndExact(c)
       }))
-    const isGroupMove = mode === 'move' && groupInitialClips.length > 1
+    const isGroupMove = mode === 'move' && editTool === 'select' && groupInitialClips.length > 1
     const minGroupStart = isGroupMove
       ? Math.min(...groupInitialClips.map((g) => g.initStart))
       : clip.start
@@ -450,7 +526,8 @@ export default function Timeline({
     const isUnbounded = isClipCredit || m?.mediaKind === 'image'
     const isClipAudioOnly = !isClipCredit && (m?.mediaKind === 'audio' || isAudioLane(clip.lane))
     const canMoveToLane = (targetLane: LaneId): boolean =>
-      isClipAudioOnly ? isAudioLane(targetLane) : isVideoLane(targetLane)
+      !lanes[targetLane]?.locked &&
+      (isClipAudioOnly ? isAudioLane(targetLane) : isVideoLane(targetLane))
     const mediaDur = m?.duration ?? initIn + initDur * spd + 120
 
     const getLanePeers = (targetLane: LaneId) =>
@@ -579,6 +656,24 @@ export default function Timeline({
       moved = true
       const deltaSec = dx / Math.max(1, pps)
 
+      // SLIP ARACI (Slip Tool): Klibin timeline üzerindeki yerini ve süresini değiştirmeden kaynak giriş/çıkış (in) noktasını kaydırır
+      if (mode === 'move' && editTool === 'slip') {
+        if (isUnbounded) return
+        const maxSlipIn = Math.max(0, mediaDur - initDur * spd)
+        const nextIn = round3(Math.max(0, Math.min(maxSlipIn, initIn - deltaSec * spd)))
+        const inDelta = round3(nextIn - initIn)
+        const updates = groupInitialClips.map((g) => ({
+          id: g.id,
+          patch: { in: round3(Math.max(0, g.initIn + inDelta)) }
+        }))
+        if (onBatchUpdateClips && updates.length > 1) {
+          onBatchUpdateClips(updates)
+        } else {
+          onUpdateClip(clip.id, { in: nextIn })
+        }
+        return
+      }
+
       if (mode === 'move' && isGroupMove) {
         let groupDelta = Math.max(-minGroupStart, deltaSec)
         if (snap) {
@@ -689,11 +784,14 @@ export default function Timeline({
         return
       }
 
-      // trim-right
+      // trim-right (Roll Edit ve Ripple Trim destekli)
       const maxMediaEnd = isUnbounded
         ? initStart + 600
         : initStart + Math.max(0.1, (mediaDur - initIn) / spd)
-      const hi = round3(Math.min(maxTrimEnd, maxMediaEnd))
+      const isRollRight = editTool === 'roll' && Boolean(nextNeighbor)
+      const hi = isRollRight
+        ? round3(Math.min(clipEndExact(nextNeighbor!) - 0.1, maxMediaEnd))
+        : round3(Math.min(rippleMode ? maxMediaEnd : maxTrimEnd, maxMediaEnd))
       const lo = round3(initStart + 0.1)
       let nextEnd = Math.max(lo, Math.min(hi, initEnd + deltaSec))
       const snapped = findSnap(nextEnd, clip.lane)
@@ -705,10 +803,60 @@ export default function Timeline({
         setSnapGuideTime(null)
       }
       const newDur = Math.max(0.1, round3(nextEnd - initStart))
+      const durDelta = round3(newDur - initDur)
       const nextKfs = initKeyframes
         ? initKeyframes.filter((k) => k.time <= newDur + 0.001)
         : undefined
       const nextFadeOut = Math.min(clip.fadeOut, Math.max(0, newDur - clip.fadeIn))
+
+      if (isRollRight && nextNeighbor && onBatchUpdateClips) {
+        const rightEnd = clipEndExact(nextNeighbor)
+        const rightNewStart = round3(nextEnd)
+        const rightNewDur = Math.max(0.1, round3(rightEnd - rightNewStart))
+        const rightSpd = Math.max(0.25, Math.min(4.0, (nextNeighbor.speed ?? 100) / 100))
+        const rightNewIn = Math.max(0, round3(nextNeighbor.in + durDelta * rightSpd))
+        onBatchUpdateClips([
+          {
+            id: clip.id,
+            patch: {
+              duration: newDur,
+              fadeOut: nextFadeOut,
+              ...(nextKfs ? { keyframes: nextKfs } : {})
+            }
+          },
+          {
+            id: nextNeighbor.id,
+            patch: {
+              start: rightNewStart,
+              in: rightNewIn,
+              duration: rightNewDur
+            }
+          }
+        ])
+        return
+      }
+
+      if (rippleMode && Math.abs(durDelta) > 0.001 && onBatchUpdateClips) {
+        const downstream = lanePeers.filter((o) => o.start >= initEnd - 0.02)
+        const updates: Array<{ id: string; patch: Partial<TimelineClip> }> = [
+          {
+            id: clip.id,
+            patch: {
+              duration: newDur,
+              fadeOut: nextFadeOut,
+              ...(nextKfs ? { keyframes: nextKfs } : {}),
+              ...(clip.credit ? { credit: { ...clip.credit, duration: newDur } } : {})
+            }
+          },
+          ...downstream.map((o) => ({
+            id: o.id,
+            patch: { start: Math.max(0, round3(o.start + durDelta)) }
+          }))
+        ]
+        onBatchUpdateClips(updates)
+        return
+      }
+
       onUpdateClip(clip.id, {
         duration: newDur,
         fadeOut: nextFadeOut,
@@ -1003,6 +1151,36 @@ export default function Timeline({
           </div>
         )}
 
+        {/* Profesyonel Kurgu Araçları Seçici: Select (V) · Razor (B) · Slip (Y) · Roll (N) */}
+        <div
+          data-testid="editing-tools-selector"
+          className="flex items-center gap-0.5 rounded-full bg-white/[0.04] p-0.5"
+        >
+          {(
+            [
+              ['select', 'Seç (V)', 'Seçim ve Taşıma Aracı (V)'],
+              ['razor', 'Jilet (B)', 'Razor / Blade Kesim Aracı — Klibe tıklayarak böl (B)'],
+              ['slip', 'Slip (Y)', 'Slip Aracı — Klip konumunu değiştirmeden kaynak In/Out kaydır (Y)'],
+              ['roll', 'Roll (N)', 'Roll Edit — Bitişik iki klibin kesişim sınırını kaydır (N)']
+            ] as const
+          ).map(([toolId, lbl, ttl]) => (
+            <button
+              key={toolId}
+              type="button"
+              data-testid={`tool-${toolId}-btn`}
+              onClick={() => setEditTool(toolId)}
+              title={ttl}
+              className={`rounded-full px-2 py-0.5 font-mono text-[9.5px] font-semibold transition ${
+                editTool === toolId
+                  ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow-[0_0_8px_var(--accent-glow)]'
+                  : 'text-white/65 hover:bg-white/[0.08] hover:text-white'
+              }`}
+            >
+              {lbl}
+            </button>
+          ))}
+        </div>
+
         <button
           data-testid="cut-btn"
           onClick={onCut}
@@ -1274,8 +1452,8 @@ export default function Timeline({
 
       {/* Gövde: Sol Kanal Mikseri + Sağ Zaman Çizelgesi */}
       <div className="flex min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-        {/* Sol: Track Mixer (V1..Vn, A1..An Mute/Solo + Kanal Ekle) */}
-        <div className="flex w-[132px] shrink-0 flex-col border-r border-white/[0.06] bg-white/[0.015]">
+        {/* Sol: Track Mixer (V1..Vn, A1..An Mute/Solo/Lock/Hide/Duplicate/Reorder + Kanal Ekle) */}
+        <div className="flex w-[166px] shrink-0 flex-col border-r border-white/[0.06] bg-white/[0.015]">
           <div className="flex h-6 items-center justify-between border-b border-white/[0.06] px-2 text-[9px] font-semibold tracking-wider text-white/45">
             <span>KANALLAR</span>
             <div className="flex items-center gap-1">
@@ -1325,25 +1503,49 @@ export default function Timeline({
               <div
                 key={lane}
                 style={{ height: rowH }}
-                className={`relative flex items-center justify-between border-b border-white/[0.05] pl-3 pr-2 ${
+                className={`relative flex items-center justify-between border-b border-white/[0.05] pl-3 pr-1.5 ${
                   dropTargetLane === lane ? 'bg-[var(--accent-soft)]' : ''
-                }`}
+                } ${st.hidden ? 'opacity-45' : ''}`}
               >
                 <span
                   className="absolute inset-y-1 left-0 w-[3px] rounded-r"
                   style={{ backgroundColor: laneColor }}
                 />
                 <div className="flex min-w-0 flex-col">
-                  <span
-                    className={`font-mono text-[11px] font-bold ${
-                      audible ? 'text-white/85' : 'text-white/35 line-through'
-                    }`}
-                  >
-                    {lane}
+                  <div className="flex items-center gap-1">
+                    <span
+                      className={`font-mono text-[11px] font-bold ${
+                        audible ? 'text-white/85' : 'text-white/35 line-through'
+                      }`}
+                    >
+                      {lane}
+                    </span>
+                    {onReorderLane && (
+                      <div className="flex items-center">
+                        <button
+                          type="button"
+                          onClick={() => onReorderLane(lane, -1)}
+                          title={`${lane} Kanalını Yukarı Taşı`}
+                          className="px-0.5 text-[8px] text-white/30 hover:text-white"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onReorderLane(lane, 1)}
+                          title={`${lane} Kanalını Aşağı Taşı`}
+                          className="px-0.5 text-[8px] text-white/30 hover:text-white"
+                        >
+                          ↓
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <span className="truncate text-[8.5px] text-white/35">
+                    {st.locked ? `${laneSub} · Kilitli` : laneSub}
                   </span>
-                  <span className="truncate text-[8.5px] text-white/35">{laneSub}</span>
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-0.5">
                   {isExtraEmpty && (
                     <button
                       type="button"
@@ -1353,6 +1555,47 @@ export default function Timeline({
                       className="h-5 w-4 rounded text-[10px] text-white/40 transition hover:bg-rose-500/20 hover:text-rose-300"
                     >
                       ×
+                    </button>
+                  )}
+                  {onDuplicateLane && (
+                    <button
+                      type="button"
+                      data-testid={`dup-${lane}`}
+                      onClick={() => onDuplicateLane(lane)}
+                      title={`${lane} Kanalını Klipleriyle Çoğalt (Duplicate Track)`}
+                      className="h-5 w-4 rounded border border-[#71717A]/20 bg-white/5 text-[9px] text-[#71717A] transition hover:text-white"
+                    >
+                      ⧉
+                    </button>
+                  )}
+                  {onToggleLockLane && (
+                    <button
+                      type="button"
+                      data-testid={`lock-${lane}`}
+                      onClick={() => onToggleLockLane(lane)}
+                      title={`${lane} Kanalını Kilitle / Aç (Track Lock)`}
+                      className={`h-5 w-5 rounded text-[9px] font-bold transition ${
+                        st.locked
+                          ? 'bg-amber-400 text-[#0B0B0C]'
+                          : 'border border-[#71717A]/25 bg-white/5 text-[#71717A] hover:text-white'
+                      }`}
+                    >
+                      L
+                    </button>
+                  )}
+                  {onToggleHideLane && (
+                    <button
+                      type="button"
+                      data-testid={`hide-${lane}`}
+                      onClick={() => onToggleHideLane(lane)}
+                      title={`${lane} Kanalını Gizle / Göster (Track Hide)`}
+                      className={`h-5 w-5 rounded text-[9px] font-bold transition ${
+                        st.hidden
+                          ? 'bg-rose-400 text-[#0B0B0C]'
+                          : 'border border-[#71717A]/25 bg-white/5 text-[#71717A] hover:text-white'
+                      }`}
+                    >
+                      H
                     </button>
                   )}
                   <button
@@ -1692,16 +1935,35 @@ export default function Timeline({
                               style={{ height: headerH }}
                               className="pointer-events-none flex shrink-0 items-center justify-between gap-1.5 border-b border-[color:var(--clip-divider)] bg-[var(--clip-header)] px-2 transition-colors duration-150"
                             >
-                              <span className="truncate text-[10px] font-medium leading-none tracking-[0.01em] text-[color:var(--text-primary)]">
-                                {c.name}
-                              </span>
+                              <div className="flex min-w-0 items-center gap-1">
+                                <span className="truncate text-[10px] font-medium leading-none tracking-[0.01em] text-[color:var(--text-primary)]">
+                                  {c.name}
+                                </span>
+                                {c.nestedClips && c.nestedClips.length > 0 && (
+                                  <span className="shrink-0 rounded bg-[var(--accent-soft)] px-1 py-px font-mono text-[7.5px] font-bold text-[var(--accent)]">
+                                    NEST({c.nestedClips.length})
+                                  </span>
+                                )}
+                                {c.groupId && (
+                                  <span className="shrink-0 rounded bg-white/10 px-1 py-px font-mono text-[7.5px] text-white/80">
+                                    GRP
+                                  </span>
+                                )}
+                                {c.linkedClipId && (
+                                  <span className="shrink-0 rounded bg-cyan-500/20 px-1 py-px font-mono text-[7.5px] text-cyan-300">
+                                    A/V
+                                  </span>
+                                )}
+                              </div>
                               {clipW >= 72 && (
                                 <span className="shrink-0 font-mono text-[8.5px] leading-none text-[color:var(--text-muted)] transition-colors group-hover:text-[var(--accent)]">
-                                  {c.audioDetached
-                                    ? 'Sessiz'
-                                    : (c.speed ?? 100) !== 100
-                                      ? `${((c.speed ?? 100) / 100).toFixed(2)}x · ${formatDb(c.gainDb)}`
-                                      : formatDb(c.gainDb)}
+                                  {editTool === 'slip'
+                                    ? `In:${c.in.toFixed(2)}s`
+                                    : c.audioDetached
+                                      ? 'Sessiz'
+                                      : (c.speed ?? 100) !== 100
+                                        ? `${((c.speed ?? 100) / 100).toFixed(2)}x · ${formatDb(c.gainDb)}`
+                                        : formatDb(c.gainDb)}
                                 </span>
                               )}
                             </div>
@@ -1984,16 +2246,16 @@ export default function Timeline({
         </div>
       )}
 
-      {/* Seçili Klip(ler) Sağ Tık Menüsü: Toplu Silme ve Boşlukları Kapatma */}
+      {/* Seçili Klip(ler) Sağ Tık Menüsü: Gruplama, A/V Bağlama, İç İçe Sekans, Toplu Silme ve Boşlukları Kapatma */}
       {clipMenu && selectedSet.size > 0 && (
         <div
           data-testid="clip-context-menu"
           onPointerDown={(e) => e.stopPropagation()}
           style={{
             left: Math.min(window.innerWidth - 260, Math.max(12, clipMenu.x)),
-            top: Math.min(window.innerHeight - 130, Math.max(12, clipMenu.y - 12))
+            top: Math.min(window.innerHeight - 210, Math.max(12, clipMenu.y - 12))
           }}
-          className="fixed z-50 min-w-[244px] rounded-xl border border-[color:var(--border-subtle)] bg-[#14171D]/95 p-1.5 shadow-[0_14px_36px_rgba(0,0,0,0.75)] backdrop-blur-md"
+          className="fixed z-50 min-w-[252px] rounded-xl border border-[color:var(--border-subtle)] bg-[#14171D]/95 p-1.5 shadow-[0_14px_36px_rgba(0,0,0,0.75)] backdrop-blur-md"
         >
           <div className="flex items-center justify-between border-b border-white/[0.06] px-2.5 py-1 font-mono text-[9px] text-white/45">
             <span>
@@ -2003,6 +2265,48 @@ export default function Timeline({
             </span>
             <span className="text-[var(--accent)]">KURGU</span>
           </div>
+          {onGroupSelected && selectedSet.size >= 1 && (
+            <button
+              type="button"
+              data-testid="ctx-group-clips-btn"
+              onClick={() => {
+                onGroupSelected()
+                setClipMenu(null)
+              }}
+              className="mt-1 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium text-white/90 transition hover:bg-white/10"
+            >
+              <span>Klipleri Grupla / Grubu Çöz</span>
+              <span className="font-mono text-[9.5px] text-white/45">Ctrl+G</span>
+            </button>
+          )}
+          {onLinkSelected && selectedSet.size >= 1 && (
+            <button
+              type="button"
+              data-testid="ctx-link-av-btn"
+              onClick={() => {
+                onLinkSelected()
+                setClipMenu(null)
+              }}
+              className="mt-0.5 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium text-white/90 transition hover:bg-white/10"
+            >
+              <span>Video & Ses Bağla / Bağı Çöz (A/V)</span>
+              <span className="font-mono text-[9.5px] text-cyan-300/80">LINK</span>
+            </button>
+          )}
+          {onNestSelected && selectedSet.size >= 2 && (
+            <button
+              type="button"
+              data-testid="ctx-nest-clips-btn"
+              onClick={() => {
+                onNestSelected()
+                setClipMenu(null)
+              }}
+              className="mt-0.5 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-medium text-white/90 transition hover:bg-white/10"
+            >
+              <span>İç İçe Sekans Oluştur (Nested Sequence)</span>
+              <span className="font-mono text-[9.5px] text-[var(--accent)]">NEST</span>
+            </button>
+          )}
           <button
             type="button"
             data-testid="ctx-close-gaps-btn"
@@ -2010,7 +2314,7 @@ export default function Timeline({
               onCloseGaps?.(selectedSet.size > 1 ? undefined : clipMenu.lane)
               setClipMenu(null)
             }}
-            className="mt-1 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-white transition hover:bg-[var(--accent)] hover:text-[var(--accent-fg)]"
+            className="mt-0.5 flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-white transition hover:bg-[var(--accent)] hover:text-[var(--accent-fg)]"
           >
             <span>Aradaki Boşlukları Kapat</span>
             <span className="font-mono text-[9.5px] opacity-80">←</span>
