@@ -6,8 +6,9 @@ import { THEME_OPTIONS, type Tab, type ThemeId } from '../types'
 
 const MAIN_TABS: Array<{ id: Tab; label: string }> = [
   { id: 'CUT', label: 'EDIT' },
-  { id: 'GRADE', label: 'GRADE' },
+  { id: 'GRADE', label: 'COLOR' },
   { id: 'AUDIO', label: 'AUDIO' },
+  { id: 'SUBTITLES', label: 'SUBTITLES' },
   { id: 'EXPORT', label: 'EXPORT' }
 ]
 
@@ -36,6 +37,13 @@ function TabIcon({ id, active }: { id: Tab; active: boolean }) {
       return (
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className={cls}>
           <path d="M3 6.5v3M6 4v8M9 2.5v11M12 5v6M14.5 7v2" />
+        </svg>
+      )
+    case 'SUBTITLES':
+      return (
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={cls}>
+          <rect x="2" y="3" width="12" height="10" rx="2" />
+          <path d="M4.5 8.5h3M9.5 8.5h2M4.5 11h5" />
         </svg>
       )
     case 'EXPORT':

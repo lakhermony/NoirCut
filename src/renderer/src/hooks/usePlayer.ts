@@ -19,9 +19,14 @@ import {
   type TimelineClip
 } from '../../../shared/timeline'
 import type { MediaItem } from '../../../shared/types'
+import type { ProxyPlaybackMode } from '../types'
 
-export function getPlayableUrl(m: MediaItem | undefined | null): string | null {
+export function getPlayableUrl(
+  m: MediaItem | undefined | null,
+  mode: ProxyPlaybackMode = 'auto'
+): string | null {
   if (!m) return null
+  if (mode === 'original') return m.url
   if (m.proxyState === 'ready' && m.proxyUrl) return m.proxyUrl
   return m.url
 }
@@ -46,7 +51,8 @@ export function usePlayer(
   clips: TimelineClip[],
   lanes: LaneMap,
   mediaItems: MediaItem[],
-  autoDucking = false
+  autoDucking = false,
+  proxyPlaybackMode: ProxyPlaybackMode = 'auto'
 ) {
   /** Her zaman EKRANDAKİ (aktif) tamponu gösterir; WebGL2 motoru ve skoplar bunu okur. */
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -204,7 +210,7 @@ export function usePlayer(
     return c ? (mediaMap.get(c.mediaId) ?? null) : null
   }, [activeVClip, fallbackVClip, mediaMap])
 
-  const videoSrc = getPlayableUrl(currentMedia)
+  const videoSrc = getPlayableUrl(currentMedia, proxyPlaybackMode)
 
   const registerAudioEl = useCallback((laneId: LaneId, el: HTMLAudioElement | null) => {
     if (laneId === 'A1') audioA1Ref.current = el
@@ -280,7 +286,7 @@ export function usePlayer(
         el.dataset.preloadClipId = ''
         return
       }
-      const targetUrl = getPlayableUrl(m)
+      const targetUrl = getPlayableUrl(m, proxyPlaybackMode)
       let srcChanged = false
       if (targetUrl && el.getAttribute('src') !== targetUrl) {
         el.setAttribute('src', targetUrl)
@@ -345,7 +351,7 @@ export function usePlayer(
         el.pause()
       }
     },
-    [autoDucking, clips, lanes, mediaMap, scheduleSeek]
+    [autoDucking, clips, lanes, mediaMap, proxyPlaybackMode, scheduleSeek]
   )
 
   const preloadStandbyVideo = useCallback(
@@ -372,7 +378,7 @@ export function usePlayer(
       }
 
       const m = mediaMap.get(nextClip.mediaId)
-      const targetUrl = getPlayableUrl(m)
+      const targetUrl = getPlayableUrl(m, proxyPlaybackMode)
       if (!m || !targetUrl) return
 
       if (m.mediaKind === 'image') {
@@ -415,7 +421,7 @@ export function usePlayer(
         scheduleSeek(standbyEl, targetIn)
       }
     },
-    [clips, getVisualStackAt, mediaMap, scheduleSeek]
+    [clips, getVisualStackAt, mediaMap, proxyPlaybackMode, scheduleSeek]
   )
 
   const syncAllAt = useCallback(
@@ -837,7 +843,7 @@ export function usePlayer(
       setError(null)
       syncAllAt(timeRef.current, playingRef.current, true)
     }
-  }, [currentMedia?.proxyState, currentMedia?.proxyUrl, syncAllAt])
+  }, [currentMedia?.proxyState, currentMedia?.proxyUrl, proxyPlaybackMode, syncAllAt])
 
   return {
     videoRef,

@@ -83,6 +83,10 @@ uniform vec4 u_nfMist;
 uniform vec4 u_nfGrain1;
 uniform vec4 u_nfGrain2;
 uniform float u_compareMode;
+uniform vec4 u_ckParams; // x: enabled, y: tolerance, z: edgeSoftness, w: spillSuppression
+uniform vec3 u_ckColor;
+uniform vec3 u_ckBgColor;
+uniform vec2 u_ckModes; // x: mattePreview, y: opacity01
 
 float logLinear(float x, int p) {
   if (p == 1) {
@@ -253,6 +257,28 @@ void main() {
   }
   vec4 texel = texture(u_video, sampleUv);
   vec3 raw = texel.rgb;
+
+  if (u_ckParams.x > 0.5) {
+    float dist = distance(raw, u_ckColor);
+    float tol = max(0.01, u_ckParams.y);
+    float soft = max(0.005, u_ckParams.z);
+    float mask = smoothstep(tol, tol + soft, dist);
+    if (u_ckModes.x > 0.5) {
+      outColor = vec4(vec3(mask), 1.0);
+      return;
+    }
+    float spill = u_ckParams.w;
+    if (spill > 0.001) {
+      float avgRB = 0.5 * (raw.r + raw.b);
+      float avgRG = 0.5 * (raw.r + raw.g);
+      if (u_ckColor.g > u_ckColor.b && raw.g > avgRB) {
+        raw.g = mix(raw.g, avgRB, spill * (1.0 - mask * 0.5));
+      } else if (u_ckColor.b > u_ckColor.g && raw.b > avgRG) {
+        raw.b = mix(raw.b, avgRG, spill * (1.0 - mask * 0.5));
+      }
+    }
+    raw = mix(u_ckBgColor, raw, mask * u_ckModes.y);
+  }
 
   if (u_compareMode > 3.5) {
     outColor = vec4(raw, 1.0);
@@ -580,7 +606,11 @@ export class WebGLColorEngine {
       'u_nfMist',
       'u_nfGrain1',
       'u_nfGrain2',
-      'u_compareMode'
+      'u_compareMode',
+      'u_ckParams',
+      'u_ckColor',
+      'u_ckBgColor',
+      'u_ckModes'
     ]
     this.loc = {}
     for (const n of names) {
@@ -839,6 +869,24 @@ export class WebGLColorEngine {
       (tex?.colorGrain ?? 25) / 100
     )
     gl.uniform1f(this.loc['u_compareMode'], cmpVal)
+
+    const ck = nf?.chromaKey
+    const ckCol = hexToRgb01(ck?.keyColor ?? '#00B140')
+    const ckBg = hexToRgb01(ck?.bgColor ?? '#0B0D12')
+    gl.uniform4f(
+      this.loc['u_ckParams'],
+      ck?.enabled ? 1 : 0,
+      (ck?.tolerance ?? 32) / 100,
+      (ck?.edgeSoftness ?? 18) / 100,
+      (ck?.spillSuppression ?? 45) / 100
+    )
+    gl.uniform3f(this.loc['u_ckColor'], ckCol[0], ckCol[1], ckCol[2])
+    gl.uniform3f(this.loc['u_ckBgColor'], ckBg[0], ckBg[1], ckBg[2])
+    gl.uniform2f(
+      this.loc['u_ckModes'],
+      ck?.mattePreview ? 1 : 0,
+      (ck?.opacity ?? 100) / 100
+    )
 
     gl.drawArrays(gl.TRIANGLES, 0, 6)
     return true

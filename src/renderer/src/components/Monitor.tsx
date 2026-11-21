@@ -5,12 +5,15 @@ import type { Lut3D } from '../../../shared/lut'
 import {
   defaultClipTransform,
   evaluateClipTransformAt,
+  type SubtitleSegment,
+  type SubtitleStyleConfig,
   type TimelineClip
 } from '../../../shared/timeline'
 import type { MediaItem } from '../../../shared/types'
 import { fmt } from '../lib/format'
 import { WebGLColorEngine, type PlaybackQuality } from '../lib/webgl-grade'
 import { getPlayableUrl, type OverlayVisualLayer, type VideoSlot } from '../hooks/usePlayer'
+import type { ProxyPlaybackMode, ProxyResolutionScale } from '../types'
 import CreditOverlay from './CreditOverlay'
 import { MEDIA_DRAG_TYPE } from './LeftPanel'
 import type { ComparisonMode } from './noirfilm/LookComparisonViewer'
@@ -109,7 +112,14 @@ export default function Monitor({
   hasCopiedGrade = false,
   compareMode = 'none',
   externalWipe,
-  forceWebGL = false
+  forceWebGL = false,
+  proxyPlaybackMode = 'auto',
+  onProxyPlaybackModeChange,
+  proxyScale = '1/2',
+  onProxyScaleChange,
+  onBatchProxyGenerate,
+  subtitles = [],
+  subtitleStyle
 }: {
   media: MediaItem | null
   activeClip?: TimelineClip | null
@@ -152,6 +162,13 @@ export default function Monitor({
   compareMode?: ComparisonMode
   externalWipe?: number
   forceWebGL?: boolean
+  proxyPlaybackMode?: ProxyPlaybackMode
+  onProxyPlaybackModeChange?: (mode: ProxyPlaybackMode) => void
+  proxyScale?: ProxyResolutionScale
+  onProxyScaleChange?: (scale: ProxyResolutionScale) => void
+  onBatchProxyGenerate?: () => void
+  subtitles?: SubtitleSegment[]
+  subtitleStyle?: SubtitleStyleConfig
 }) {
   const [wipe, setWipe] = useState(50)
   const [split, setSplit] = useState(false)
@@ -641,6 +658,59 @@ export default function Monitor({
                 : 'PROXY'}
             </span>
           )}
+          {onProxyPlaybackModeChange && (
+            <div
+              data-testid="proxy-mode-selector"
+              className="flex items-center gap-0.5 rounded-full border border-[color:var(--border-subtle)] bg-[var(--bg-surface)] p-0.5"
+              title="Proxy Oynatma Modu (Otomatik / Proxy / Orijinal Kaynak)"
+            >
+              {(
+                [
+                  ['auto', 'OTO'],
+                  ['proxy', 'PROXY'],
+                  ['original', 'ORİJİNAL']
+                ] as Array<[ProxyPlaybackMode, string]>
+              ).map(([mId, mLbl]) => (
+                <button
+                  key={mId}
+                  type="button"
+                  data-testid={`proxy-mode-${mId}`}
+                  onClick={() => onProxyPlaybackModeChange(mId)}
+                  className={`rounded-full px-1.5 py-0.5 font-mono text-[8.5px] font-semibold transition ${
+                    proxyPlaybackMode === mId
+                      ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
+                      : 'text-[var(--text-muted)] hover:text-white'
+                  }`}
+                >
+                  {mLbl}
+                </button>
+              ))}
+              {onProxyScaleChange && (
+                <select
+                  data-testid="proxy-scale-select"
+                  value={proxyScale}
+                  onChange={(e) => onProxyScaleChange(e.target.value as ProxyResolutionScale)}
+                  title="Proxy Üretim Çözünürlük Ölçeği (1/2 · 1/4 · 1/8)"
+                  className="ml-0.5 cursor-pointer rounded-full bg-black/35 px-1.5 py-0.5 font-mono text-[8.5px] text-white/85 outline-none"
+                >
+                  <option value="1/2">1/2</option>
+                  <option value="1/4">1/4</option>
+                  <option value="1/8">1/8</option>
+                </select>
+              )}
+              {onBatchProxyGenerate && (
+                <button
+                  type="button"
+                  data-testid="batch-proxy-btn"
+                  onClick={onBatchProxyGenerate}
+                  title="Projedeki Tüm Videolar İçin Toplu Proxy Üret (Batch Proxy)"
+                  className="rounded-full px-1.5 py-0.5 font-mono text-[8.5px] text-[var(--accent)] hover:bg-white/10"
+                >
+                  ⚡
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-1.5">
           {/* Playback Kalitesi (Tam / 1/2 / 1/4) Seçici */}
@@ -1121,6 +1191,37 @@ export default function Monitor({
               isPreview={creditOverlay.isPreview}
             />
           )}
+
+          {/* Zaman Damgalı Altyazı (Subtitle) Canlı Önizleme Katmanı */}
+          {subtitles.length > 0 && (() => {
+            const curT = timeRef ? timeRef.current : time
+            const activeSub = subtitles.find((s) => curT >= s.start && curT <= s.end)
+            if (!activeSub) return null
+            const posCls =
+              subtitleStyle?.position === 'top'
+                ? 'top-6'
+                : subtitleStyle?.position === 'center'
+                  ? 'top-1/2 -translate-y-1/2'
+                  : 'bottom-6'
+            return (
+              <div
+                data-testid="monitor-subtitle-overlay"
+                className={`pointer-events-none absolute inset-x-6 z-30 flex justify-center ${posCls}`}
+              >
+                <span
+                  style={{
+                    fontFamily: subtitleStyle?.fontFamily ?? 'Inter, system-ui, sans-serif',
+                    fontSize: `${Math.max(12, Math.round((subtitleStyle?.fontSize ?? 26) * 0.72))}px`,
+                    color: subtitleStyle?.textColor ?? '#F1F2EE',
+                    backgroundColor: subtitleStyle?.backgroundColor ?? '#0A0B0E'
+                  }}
+                  className="max-w-[85%] rounded-lg bg-opacity-75 px-3.5 py-1.5 text-center font-medium shadow-lg"
+                >
+                  {activeSub.text}
+                </span>
+              </div>
+            )
+          })()}
 
           {wbPickerActive && (
             <>

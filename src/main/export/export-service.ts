@@ -66,6 +66,24 @@ export function cancelActiveExport(): void {
   }
 }
 
+export function pauseActiveExport(): boolean {
+  if (!activeProc || process.platform === 'win32') return false
+  try {
+    return activeProc.kill('SIGSTOP')
+  } catch {
+    return false
+  }
+}
+
+export function resumeActiveExport(): boolean {
+  if (!activeProc || process.platform === 'win32') return false
+  try {
+    return activeProc.kill('SIGCONT')
+  } catch {
+    return false
+  }
+}
+
 function sliceClipsToRange(
   rawClips: TimelineClip[],
   rangeStart?: number | null,
@@ -353,6 +371,13 @@ export async function exportTimeline(
       if (combinedGrain > 0) {
         const flags = (tex?.colorGrain ?? 0) > 30 ? 't+u' : 't'
         vChain.push(`noise=alls=${combinedGrain}:allf=${flags}`)
+      }
+      const ck = nf?.chromaKey
+      if (ck?.enabled) {
+        const hexClean = ck.keyColor.replace('#', '').trim() || '00B140'
+        const sim = Math.max(0.01, Math.min(0.85, (ck.tolerance || 30) / 100)).toFixed(3)
+        const bln = Math.max(0.0, Math.min(0.6, (ck.edgeSoftness || 15) / 100)).toFixed(3)
+        vChain.push(`colorkey=0x${hexClean}:${sim}:${bln}`)
       }
     }
 
@@ -696,11 +721,37 @@ export async function exportTimeline(
       chain.push(`pan=stereo|c0=${lGain.toFixed(3)}*c0|c1=${rGain.toFixed(3)}*c1`)
     }
 
-    // Ses Efekt Ön Ayarı (Denoise / Bass Boost)
-    if (c.audioPreset === 'denoise') {
+    // Ses Efekt Ön Ayarı (Denoise / Bass Boost) + Profesyonel Audio Effects Chain
+    if (c.audioPreset === 'denoise' || c.audioEffects?.noiseReduction) {
       chain.push('highpass=f=85', 'lowpass=f=11500')
     } else if (c.audioPreset === 'bass-boost') {
       chain.push('bass=g=7:f=100:w=0.6')
+    }
+    if (c.audioEffects) {
+      const fx = c.audioEffects
+      if (Math.abs(fx.eqLowDb) > 0.1) {
+        chain.push(`equalizer=f=100:t=h:w=120:g=${fx.eqLowDb.toFixed(1)}`)
+      }
+      if (Math.abs(fx.eqMidDb) > 0.1) {
+        chain.push(`equalizer=f=1000:t=q:w=1.2:g=${fx.eqMidDb.toFixed(1)}`)
+      }
+      if (Math.abs(fx.eqHighDb) > 0.1) {
+        chain.push(`equalizer=f=8000:t=h:w=2500:g=${fx.eqHighDb.toFixed(1)}`)
+      }
+      if (fx.compressorEnabled) {
+        const threshLin = Math.max(0.01, Math.min(1, Math.pow(10, fx.compressorThresholdDb / 20)))
+        const ratio = Math.max(1, Math.min(20, fx.compressorRatio))
+        chain.push(`acompressor=threshold=${threshLin.toFixed(4)}:ratio=${ratio.toFixed(1)}:attack=15:release=180`)
+      }
+      if (fx.reverbMix > 1) {
+        const outG = Math.max(0.3, 1 - (fx.reverbMix / 100) * 0.35).toFixed(2)
+        const dec = Math.max(0.05, Math.min(0.85, (fx.reverbMix / 100) * 0.65)).toFixed(2)
+        chain.push(`aecho=0.8:${outG}:60|110:${dec}|${(Number(dec) * 0.7).toFixed(2)}`)
+      }
+      if (fx.limiterEnabled) {
+        const limLin = Math.max(0.1, Math.min(1, Math.pow(10, fx.limiterCeilingDb / 20)))
+        chain.push(`alimiter=limit=${limLin.toFixed(4)}:level=disabled`)
+      }
     }
 
     if (c.fadeIn > 0.005) {
@@ -761,11 +812,18 @@ export async function exportTimeline(
     aLabels.push(`[${lbl}]`)
   })
 
+  const masterGain =
+    typeof req.masterGainDb === 'number' && Math.abs(req.masterGainDb) > 0.05
+      ? dbToGain(req.masterGainDb)
+      : 1
+  const masterVolFilter =
+    Math.abs(masterGain - 1) > 0.01 ? `,volume=${masterGain.toFixed(4)}` : ''
+
   if (aLabels.length === 1) {
-    filterParts.push(`[abase]anull[aout]`)
+    filterParts.push(`[abase]anull${masterVolFilter}[aout]`)
   } else {
     filterParts.push(
-      `${aLabels.join('')}amix=inputs=${aLabels.length}:duration=first:dropout_transition=0:normalize=0[aout]`
+      `${aLabels.join('')}amix=inputs=${aLabels.length}:duration=first:dropout_transition=0:normalize=0${masterVolFilter}[aout]`
     )
   }
 
@@ -794,16 +852,34 @@ export async function exportTimeline(
       preArgs.push('-vaapi_device', '/dev/dri/renderD128')
     }
 
+    const wantHevc = settings.codec === 'h265' || enc === 'libx265' || enc === 'hevc_nvenc'
+    const vBitrateArgs =
+      settings.videoBitrateMbps && settings.videoBitrateMbps > 0
+        ? [
+            '-b:v',
+            `${settings.videoBitrateMbps}M`,
+            '-maxrate',
+            `${Math.round(settings.videoBitrateMbps * 1.35)}M`,
+            '-bufsize',
+            `${Math.round(settings.videoBitrateMbps * 2)}M`
+          ]
+        : []
+    const aBitrateStr = `${settings.audioBitrateKbps ?? 192}k`
+
     const vCodecArgs =
-      enc === 'h264_nvenc'
-        ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', crf, '-pix_fmt', 'yuv420p']
-        : enc === 'h264_vaapi'
-          ? ['-c:v', 'h264_vaapi', '-qp', crf]
-          : enc === 'h264_qsv'
-            ? ['-c:v', 'h264_qsv', '-global_quality', crf, '-pix_fmt', 'yuv420p']
-            : enc === 'h264_amf'
-              ? ['-c:v', 'h264_amf', '-quality', 'balanced', '-qp_i', crf, '-qp_p', crf, '-pix_fmt', 'yuv420p']
-              : ['-c:v', 'libx264', '-preset', preset, '-crf', crf, '-pix_fmt', 'yuv420p']
+      enc === 'hevc_nvenc' || (wantHevc && enc === 'h264_nvenc')
+        ? ['-c:v', 'hevc_nvenc', '-preset', 'p4', '-cq', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
+        : enc === 'libx265' || (wantHevc && enc === 'libx264')
+          ? ['-c:v', 'libx265', '-preset', preset, '-crf', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
+          : enc === 'h264_nvenc'
+            ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
+            : enc === 'h264_vaapi'
+              ? ['-c:v', 'h264_vaapi', '-qp', crf, ...vBitrateArgs]
+              : enc === 'h264_qsv'
+                ? ['-c:v', 'h264_qsv', '-global_quality', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
+                : enc === 'h264_amf'
+                  ? ['-c:v', 'h264_amf', '-quality', 'balanced', '-qp_i', crf, '-qp_p', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
+                  : ['-c:v', 'libx264', '-preset', preset, '-crf', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
 
     return {
       bin,
@@ -822,7 +898,7 @@ export async function exportTimeline(
         '-c:a',
         'aac',
         '-b:a',
-        '192k',
+        aBitrateStr,
         '-ar',
         '48000',
         '-movflags',

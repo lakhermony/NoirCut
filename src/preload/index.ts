@@ -45,7 +45,15 @@ const api: NoirCutApi = {
   writeAutosave: (project, label) => ipcRenderer.invoke('autosave:write', { project, label }),
   getAutosaveStatus: () => ipcRenderer.invoke('autosave:status'),
   restoreAutosave: (snapshotId) => ipcRenderer.invoke('autosave:restore', snapshotId),
-  dismissAutosave: () => ipcRenderer.invoke('autosave:dismiss')
+  dismissAutosave: () => ipcRenderer.invoke('autosave:dismiss'),
+  getProxyConfig: () => ipcRenderer.invoke('proxy:get-config'),
+  setProxyConfig: (patch) => ipcRenderer.invoke('proxy:set-config', patch),
+  selectProxyDir: () => ipcRenderer.invoke('proxy:select-dir'),
+  generateBatchProxies: (mediaIds, scale) =>
+    ipcRenderer.invoke('proxy:batch-generate', { mediaIds, scale }),
+  reconnectMedia: (mediaId) => ipcRenderer.invoke('media:reconnect', mediaId),
+  pauseExport: () => ipcRenderer.invoke('export:pause'),
+  resumeExport: () => ipcRenderer.invoke('export:resume')
 }
 
 contextBridge.exposeInMainWorld('noircut', api)

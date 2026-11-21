@@ -26,7 +26,9 @@ export interface ExportQueueJob {
 const ENCODER_LABELS: Record<ExportEncoder, string> = {
   auto: 'Otomatik (GPU Öncelikli)',
   libx264: 'CPU (libx264)',
-  h264_nvenc: 'NVIDIA NVENC',
+  libx265: 'CPU HEVC (libx265)',
+  h264_nvenc: 'NVIDIA NVENC (H.264)',
+  hevc_nvenc: 'NVIDIA NVENC (HEVC)',
   h264_vaapi: 'Linux VAAPI',
   h264_qsv: 'Intel QuickSync',
   h264_amf: 'AMD AMF'

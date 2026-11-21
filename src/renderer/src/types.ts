@@ -1,4 +1,9 @@
-export type Tab = 'CUT' | 'GRADE' | 'AUDIO' | 'EXPORT' | 'CREDITS'
+export type Tab = 'CUT' | 'GRADE' | 'AUDIO' | 'SUBTITLES' | 'EXPORT' | 'CREDITS'
+
+export type EditingTool = 'select' | 'blade' | 'trim' | 'slip' | 'roll'
+
+export type ProxyPlaybackMode = 'auto' | 'proxy' | 'original'
+export type ProxyResolutionScale = '1/2' | '1/4' | '1/8'
 
 export type ThemeId = 'noir-green' | 'monochrome' | 'midnight-blue' | 'tungsten' | 'noir-crimson'
 

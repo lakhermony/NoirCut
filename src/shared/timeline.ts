@@ -44,7 +44,13 @@ export function normalizeLanesMap(
   if (lanes) {
     for (const [k, v] of Object.entries(lanes)) {
       if (isVideoLane(k) || isAudioLane(k)) {
-        result[k.toUpperCase()] = { muted: Boolean(v?.muted), solo: Boolean(v?.solo) }
+        result[k.toUpperCase()] = {
+          muted: Boolean(v?.muted),
+          solo: Boolean(v?.solo),
+          locked: Boolean(v?.locked),
+          hidden: Boolean(v?.hidden),
+          order: typeof v?.order === 'number' ? v.order : undefined
+        }
       }
     }
   }
@@ -68,10 +74,20 @@ export function orderLanes(lanes: LaneMap, clips?: Array<{ lane: LaneId }>): Lan
   const norm = normalizeLanesMap(lanes, clips)
   const vLanes = Object.keys(norm)
     .filter(isVideoLane)
-    .sort((a, b) => laneNumber(b) - laneNumber(a))
+    .sort((a, b) => {
+      const oa = norm[a]?.order
+      const ob = norm[b]?.order
+      if (typeof oa === 'number' && typeof ob === 'number' && oa !== ob) return oa - ob
+      return laneNumber(b) - laneNumber(a)
+    })
   const aLanes = Object.keys(norm)
     .filter(isAudioLane)
-    .sort((a, b) => laneNumber(a) - laneNumber(b))
+    .sort((a, b) => {
+      const oa = norm[a]?.order
+      const ob = norm[b]?.order
+      if (typeof oa === 'number' && typeof ob === 'number' && oa !== ob) return oa - ob
+      return laneNumber(a) - laneNumber(b)
+    })
   return [...vLanes, ...aLanes]
 }
 
@@ -264,6 +280,65 @@ export function buildFfmpegKeyframeExpr(
 export type TransitionType = 'none' | 'cross-dissolve' | 'dip-to-black'
 export type AudioFxPreset = 'none' | 'denoise' | 'bass-boost'
 
+export interface AudioEffectsChain {
+  eqLowDb: number // -12..+12 dB (100Hz Low Shelf)
+  eqMidDb: number // -12..+12 dB (1000Hz Peak)
+  eqHighDb: number // -12..+12 dB (8000Hz High Shelf)
+  compressorEnabled: boolean
+  compressorThresholdDb: number // -40..0 dB
+  compressorRatio: number // 1..12
+  limiterEnabled: boolean
+  limiterCeilingDb: number // -12..0 dB
+  reverbMix: number // 0..100 %
+  noiseReduction: boolean
+}
+
+export function defaultAudioEffectsChain(): AudioEffectsChain {
+  return {
+    eqLowDb: 0,
+    eqMidDb: 0,
+    eqHighDb: 0,
+    compressorEnabled: false,
+    compressorThresholdDb: -18,
+    compressorRatio: 3,
+    limiterEnabled: false,
+    limiterCeilingDb: -1,
+    reverbMix: 0,
+    noiseReduction: false
+  }
+}
+
+export interface SubtitleSegment {
+  id: string
+  start: number
+  end: number
+  text: string
+  speaker?: string
+  language?: string
+}
+
+export interface SubtitleStyleConfig {
+  fontFamily: string
+  fontSize: number
+  textColor: string
+  backgroundColor: string
+  backgroundOpacity: number // 0..100
+  position: 'bottom' | 'center' | 'top'
+  burnInOnExport: boolean
+}
+
+export function defaultSubtitleStyle(): SubtitleStyleConfig {
+  return {
+    fontFamily: 'Inter, system-ui, sans-serif',
+    fontSize: 26,
+    textColor: '#F1F2EE',
+    backgroundColor: '#0A0B0E',
+    backgroundOpacity: 72,
+    position: 'bottom',
+    burnInOnExport: true
+  }
+}
+
 export interface TimelineClip {
   id: string
   mediaId: string
@@ -306,11 +381,22 @@ export interface TimelineClip {
   pan?: number
   /** EDIT Workspace: Ses efekti ön ayarı (Gürültü azaltma / Sinematik Bas) */
   audioPreset?: AudioFxPreset
+  /** Profesyonel Ses Efekt Zinciri (EQ / Compressor / Limiter / Reverb / Denoise) */
+  audioEffects?: AudioEffectsChain
+  /** Klip Gruplama (Clip Grouping) kimliği */
+  groupId?: string | null
+  /** Bağlı Video/Ses (Linked A/V) eş klip kimliği */
+  linkedClipId?: string | null
+  /** İç İçe Sekans (Nested Sequence / Compound Clip) alt klipleri */
+  nestedClips?: TimelineClip[]
 }
 
 export interface LaneState {
   muted: boolean
   solo: boolean
+  locked?: boolean
+  hidden?: boolean
+  order?: number
 }
 export type LaneMap = Record<LaneId, LaneState>
 
@@ -333,18 +419,24 @@ export interface CreditExportOverlay {
 export type ExportResolution = '1080p' | '4k' | 'vertical'
 export type ExportFps = 24 | 30 | 60
 export type ExportFormat = 'mp4' | 'mov'
+export type ExportCodec = 'h264' | 'h265'
 export type ExportQuality = 'low' | 'medium' | 'high'
 export type ExportEncoder =
   | 'auto'
   | 'libx264'
+  | 'libx265'
   | 'h264_nvenc'
+  | 'hevc_nvenc'
   | 'h264_vaapi'
   | 'h264_qsv'
   | 'h264_amf'
 export type ExportPlatformPresetId =
   | 'custom'
+  | 'youtube-1080p'
   | 'youtube-4k'
+  | 'social-media'
   | 'social-vertical'
+  | 'high-quality-master'
   | 'cinema-24p'
   | 'fast-draft'
 
@@ -352,10 +444,14 @@ export interface ExportSettings {
   resolution: ExportResolution
   fps: ExportFps
   format: ExportFormat
+  codec?: ExportCodec
+  videoBitrateMbps?: number
+  audioBitrateKbps?: 128 | 192 | 320
   quality: ExportQuality
   encoder?: ExportEncoder
   presetId?: ExportPlatformPresetId
   useInOutRange?: boolean
+  burnInSubtitles?: boolean
 }
 
 export interface ExportPlatformPresetMeta {
@@ -367,34 +463,94 @@ export interface ExportPlatformPresetMeta {
 
 export const EXPORT_PLATFORM_PRESETS: ExportPlatformPresetMeta[] = [
   {
+    id: 'youtube-1080p',
+    label: 'YouTube 1080p',
+    hint: '1920×1080 · 30fps · H.264 16 Mbps',
+    patch: {
+      resolution: '1080p',
+      fps: 30,
+      format: 'mp4',
+      codec: 'h264',
+      videoBitrateMbps: 16,
+      audioBitrateKbps: 192,
+      quality: 'high',
+      presetId: 'youtube-1080p'
+    }
+  },
+  {
     id: 'youtube-4k',
-    label: 'YouTube 4K Master',
-    hint: '3840×2160 · 30fps · Yüksek',
-    patch: { resolution: '4k', fps: 30, format: 'mp4', quality: 'high', presetId: 'youtube-4k' }
+    label: 'YouTube 4K',
+    hint: '3840×2160 · 30fps · H.264 45 Mbps',
+    patch: {
+      resolution: '4k',
+      fps: 30,
+      format: 'mp4',
+      codec: 'h264',
+      videoBitrateMbps: 45,
+      audioBitrateKbps: 320,
+      quality: 'high',
+      presetId: 'youtube-4k'
+    }
+  },
+  {
+    id: 'social-media',
+    label: 'Social Media',
+    hint: '1920×1080 · 30fps · H.264 12 Mbps',
+    patch: {
+      resolution: '1080p',
+      fps: 30,
+      format: 'mp4',
+      codec: 'h264',
+      videoBitrateMbps: 12,
+      audioBitrateKbps: 192,
+      quality: 'medium',
+      presetId: 'social-media'
+    }
   },
   {
     id: 'social-vertical',
-    label: 'Reels / TikTok / Shorts',
-    hint: '1080×1920 · 60fps · Yüksek',
+    label: 'Instagram Reels',
+    hint: '1080×1920 · 60fps · H.264 18 Mbps',
     patch: {
       resolution: 'vertical',
       fps: 60,
       format: 'mp4',
+      codec: 'h264',
+      videoBitrateMbps: 18,
+      audioBitrateKbps: 192,
       quality: 'high',
       presetId: 'social-vertical'
     }
   },
   {
-    id: 'cinema-24p',
-    label: 'Sinema 24p Noir',
-    hint: '1920×1080 · 24fps · Yüksek',
-    patch: { resolution: '1080p', fps: 24, format: 'mov', quality: 'high', presetId: 'cinema-24p' }
+    id: 'high-quality-master',
+    label: 'High Quality Master',
+    hint: '3840×2160 · 24fps · MOV · 65 Mbps',
+    patch: {
+      resolution: '4k',
+      fps: 24,
+      format: 'mov',
+      codec: 'h264',
+      videoBitrateMbps: 65,
+      audioBitrateKbps: 320,
+      quality: 'high',
+      presetId: 'high-quality-master'
+    }
   },
   {
-    id: 'fast-draft',
-    label: 'Hızlı Taslak / İnceleme',
-    hint: '1920×1080 · 30fps · Düşük',
-    patch: { resolution: '1080p', fps: 30, format: 'mp4', quality: 'low', presetId: 'fast-draft' }
+    id: 'cinema-24p',
+    label: 'Sinema 24p Noir',
+    hint: '1920×1080 · 24fps · MOV · Yüksek',
+    patch: {
+      resolution: '1080p',
+      fps: 24,
+      format: 'mov',
+      codec: 'h264',
+      videoBitrateMbps: 24,
+      audioBitrateKbps: 320,
+      quality: 'high',
+      presetId: 'cinema-24p'
+    }
   }
 ]
 
@@ -409,10 +565,14 @@ export function defaultExportSettings(): ExportSettings {
     resolution: '1080p',
     fps: 30,
     format: 'mp4',
+    codec: 'h264',
+    videoBitrateMbps: 16,
+    audioBitrateKbps: 192,
     quality: 'high',
     encoder: 'auto',
     presetId: 'custom',
-    useInOutRange: false
+    useInOutRange: false,
+    burnInSubtitles: true
   }
 }
 
@@ -502,6 +662,9 @@ export interface ExportRequest {
   lanes: LaneMap
   customLuts?: Record<string, Lut3D>
   creditOverlays?: Record<string, CreditExportOverlay>
+  subtitles?: SubtitleSegment[]
+  subtitleStyle?: SubtitleStyleConfig
+  masterGainDb?: number
   settings?: ExportSettings
   autoDucking?: boolean
   outputPath?: string
@@ -578,7 +741,7 @@ export function computeAutoDuckMultiplierAt(
  */
 export function isLaneAudible(lanes: LaneMap, id: LaneId): boolean {
   const st = lanes[id]
-  if (st?.muted) return false
+  if (st?.muted || st?.hidden) return false
   const anySolo = Object.values(lanes).some((s) => Boolean(s?.solo))
   return !anySolo || Boolean(st?.solo)
 }

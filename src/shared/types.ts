@@ -3,7 +3,14 @@ import type { Lut3D } from './lut'
 import type { NoirCutProject } from './project'
 import type { ExportRequest, NoirSoundscapeId } from './timeline'
 
-export type VideoEncoderId = 'libx264' | 'h264_nvenc' | 'h264_vaapi' | 'h264_qsv' | 'h264_amf'
+export type VideoEncoderId =
+  | 'libx264'
+  | 'libx265'
+  | 'h264_nvenc'
+  | 'hevc_nvenc'
+  | 'h264_vaapi'
+  | 'h264_qsv'
+  | 'h264_amf'
 
 export interface EngineInfo {
   /** Kullanılan ffmpeg yürütülebilir dosyasının yolu */
@@ -141,6 +148,20 @@ export interface AutosaveStatus {
   snapshots: AutosaveEntry[]
 }
 
+export interface ProxyConfig {
+  resolutionScale: '1/2' | '1/4' | '1/8'
+  playbackMode: 'auto' | 'proxy' | 'original'
+  proxyDir: string
+}
+
+export interface SilenceRegion {
+  id: string
+  start: number
+  end: number
+  duration: number
+  avgDb: number
+}
+
 export interface NoirCutApi {
   getEngineInfo: () => Promise<EngineInfo>
   /** Dosya seçici açar, seçilen videoları analiz edip döndürür */
@@ -202,4 +223,13 @@ export interface NoirCutApi {
   restoreAutosave: (snapshotId: string) => Promise<ProjectLoadResult>
   /** Çökme kurtarma uyarısını yoksayar */
   dismissAutosave: () => Promise<void>
+  /** Proxy sistem ayarlarını getirir / günceller */
+  getProxyConfig?: () => Promise<ProxyConfig>
+  setProxyConfig?: (patch: Partial<ProxyConfig>) => Promise<ProxyConfig>
+  selectProxyDir?: () => Promise<string | null>
+  generateBatchProxies?: (mediaIds?: string[], scale?: '1/2' | '1/4' | '1/8') => Promise<{ started: number }>
+  reconnectMedia?: (mediaId: string) => Promise<MediaItem | null>
+  /** Render kuyruğunu duraklatır / devam ettirir */
+  pauseExport?: () => Promise<boolean>
+  resumeExport?: () => Promise<boolean>
 }

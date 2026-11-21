@@ -11,7 +11,7 @@ import { tmpdir } from 'os'
 import { basename, extname, join, resolve } from 'path'
 import { synthesizeNoirSoundscapeWav } from '../../shared/foley-wav'
 import { NOIR_SOUNDSCAPE_PRESETS, type NoirSoundscapeId } from '../../shared/timeline'
-import type { ImportResult, MediaItem, PeaksResult, ProxyUpdate } from '../../shared/types'
+import type { ImportResult, MediaItem, PeaksResult, ProxyConfig, ProxyUpdate } from '../../shared/types'
 import { getEngineInfo } from '../engine/ffmpeg-engine'
 import { extractPeaks, makeThumbnail, probeMedia, type ProbeResult } from './media-probe'
 
@@ -256,12 +256,99 @@ function broadcastProxyUpdate(update: ProxyUpdate): void {
   }
 }
 
+let customProxyDir: string | null = null
+let proxyResolutionScale: '1/2' | '1/4' | '1/8' = '1/2'
+let proxyPlaybackMode: 'auto' | 'proxy' | 'original' = 'auto'
+
 function getProxyCacheDir(): string {
+  if (customProxyDir && existsSync(customProxyDir)) return customProxyDir
   try {
     return join(app.getPath('userData'), 'proxy-cache')
   } catch {
     return join(tmpdir(), 'noircut-proxies')
   }
+}
+
+export function getProxyConfig(): ProxyConfig {
+  return {
+    resolutionScale: proxyResolutionScale,
+    playbackMode: proxyPlaybackMode,
+    proxyDir: getProxyCacheDir()
+  }
+}
+
+export function setProxyConfig(patch: Partial<ProxyConfig>): ProxyConfig {
+  if (patch.resolutionScale) proxyResolutionScale = patch.resolutionScale
+  if (patch.playbackMode) proxyPlaybackMode = patch.playbackMode
+  if (patch.proxyDir) {
+    try {
+      mkdirSync(patch.proxyDir, { recursive: true })
+      customProxyDir = resolve(patch.proxyDir)
+    } catch {
+      // yoksay
+    }
+  }
+  return getProxyConfig()
+}
+
+export async function selectProxyDirectory(win: BrowserWindow | null): Promise<string | null> {
+  const opts: Electron.OpenDialogOptions = {
+    title: 'Proxy Önbellek Klasörü Seç',
+    defaultPath: getProxyCacheDir(),
+    properties: ['openDirectory', 'createDirectory']
+  }
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  if (res.canceled || res.filePaths.length === 0) return null
+  setProxyConfig({ proxyDir: res.filePaths[0] })
+  return getProxyCacheDir()
+}
+
+export async function generateBatchProxies(
+  mediaIds?: string[],
+  scale?: '1/2' | '1/4' | '1/8'
+): Promise<{ started: number }> {
+  if (scale) proxyResolutionScale = scale
+  const targets =
+    mediaIds && mediaIds.length > 0
+      ? mediaIds.map((id) => mediaRegistry.get(id)).filter((m): m is MediaItem => Boolean(m))
+      : Array.from(mediaRegistry.values()).filter((m) => m.mediaKind === 'video')
+  let started = 0
+  for (const item of targets) {
+    if (item.mediaKind !== 'video') continue
+    started++
+    void startProxyGeneration(item, proxyResolutionScale, true)
+  }
+  return { started }
+}
+
+export async function reconnectMediaItem(
+  mediaId: string,
+  win: BrowserWindow | null
+): Promise<MediaItem | null> {
+  const existing = mediaRegistry.get(mediaId)
+  if (!existing) return null
+  if (existsSync(existing.path)) return existing
+  const opts: Electron.OpenDialogOptions = {
+    title: `Eksik Medyayı Yeniden Bağla: ${existing.name}`,
+    properties: ['openFile'],
+    filters: [
+      {
+        name: 'Tüm Desteklenen Medya',
+        extensions: [...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS, ...IMAGE_EXTENSIONS]
+      }
+    ]
+  }
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  if (res.canceled || res.filePaths.length === 0) return null
+  const newPath = resolve(res.filePaths[0])
+  approvedPaths.add(newPath)
+  existing.path = newPath
+  existing.name = basename(newPath)
+  existing.url = mediaUrl(newPath)
+  if (existing.needsProxy) {
+    void startProxyGeneration(existing, proxyResolutionScale, true)
+  }
+  return existing
 }
 
 /**
@@ -292,17 +379,30 @@ function checkNeedsProxy(filePath: string, info: ProbeResult): boolean {
  * arka planda 720p, yuv420p, -g 1 (All-Intra) ultra hızlı çözülen Smart Proxy üretir.
  * NVIDIA h264_nvenc varsa GPU ile, yoksa -preset ultrafast ile kodlar.
  */
-export function startProxyGeneration(item: MediaItem): Promise<void> {
+export function startProxyGeneration(
+  item: MediaItem,
+  scaleOverride?: '1/2' | '1/4' | '1/8',
+  forceRebuild = false
+): Promise<void> {
   const existingJob = proxyJobs.get(item.id)
-  if (existingJob) return existingJob
+  if (existingJob && !forceRebuild) return existingJob
+
+  const activeScale = scaleOverride ?? proxyResolutionScale
+  const scaleTag = activeScale === '1/8' ? 's8' : activeScale === '1/4' ? 's4' : 's2'
+  const vfScaleExpr =
+    activeScale === '1/8'
+      ? 'scale=max(240\\,trunc(iw/8)*2):-2,format=yuv420p'
+      : activeScale === '1/4'
+        ? 'scale=max(360\\,trunc(iw/4)*2):-2,format=yuv420p'
+        : 'scale=min(1280\\,max(480\\,trunc(iw/2)*2)):-2,format=yuv420p'
 
   const job = (async () => {
     try {
       const proxyDir = getProxyCacheDir()
       await mkdir(proxyDir, { recursive: true })
-      const outPath = resolve(join(proxyDir, `${item.id}-smartproxy-v2.mp4`))
+      const outPath = resolve(join(proxyDir, `${item.id}-smartproxy-${scaleTag}.mp4`))
 
-      if (existsSync(outPath)) {
+      if (!forceRebuild && existsSync(outPath)) {
         approvedPaths.add(outPath)
         const url = mediaUrl(outPath)
         item.proxyState = 'ready'
@@ -333,7 +433,7 @@ export function startProxyGeneration(item: MediaItem): Promise<void> {
             '-i',
             item.path,
             '-vf',
-            'scale=min(1280\\,iw):-2,format=yuv420p'
+            vfScaleExpr
           ]
           if (useNvenc) {
             args.push(
@@ -441,7 +541,9 @@ async function buildItem(rawPath: string): Promise<MediaItem> {
         )
   const id = createHash('sha1').update(filePath).digest('hex').slice(0, 12)
   const needsProxy = info.mediaKind === 'video' ? checkNeedsProxy(filePath, info) : false
-  const cachedProxyPath = resolve(join(getProxyCacheDir(), `${id}-smartproxy-v2.mp4`))
+  const scaleTag =
+    proxyResolutionScale === '1/8' ? 's8' : proxyResolutionScale === '1/4' ? 's4' : 's2'
+  const cachedProxyPath = resolve(join(getProxyCacheDir(), `${id}-smartproxy-${scaleTag}.mp4`))
   const hasCachedProxy = needsProxy && existsSync(cachedProxyPath)
   if (hasCachedProxy) {
     approvedPaths.add(cachedProxyPath)

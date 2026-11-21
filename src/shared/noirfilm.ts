@@ -95,6 +95,37 @@ export interface LightEffectsConfig {
   mist: MistEffectConfig
 }
 
+export interface ChromaKeyConfig {
+  enabled: boolean
+  /** Hex anahtar rengi (varsayılan yeşil ekran: #00B140, mavi ekran: #0047BB) */
+  keyColor: string
+  /** 0..100 Renk toleransı / eşik */
+  tolerance: number
+  /** 0..100 Kenar yumuşatma (Edge Refinement / Softness) */
+  edgeSoftness: number
+  /** 0..100 Yeşil/Mavi taşma giderme (Spill Suppression) */
+  spillSuppression: number
+  /** 0..100 Opaklık / Arka plan şeffaflığı */
+  opacity: number
+  /** Matte (Siyah/Beyaz Alfa Maskesi) Önizlemesi */
+  mattePreview: boolean
+  /** Arka plan değiştirme rengi (hex) veya şeffaf (alt video kanalı) */
+  bgMode: 'transparent' | 'color'
+  bgColor: string
+}
+
+export const defaultChromaKey = (): ChromaKeyConfig => ({
+  enabled: false,
+  keyColor: '#00B140',
+  tolerance: 32,
+  edgeSoftness: 18,
+  spillSuppression: 45,
+  opacity: 100,
+  mattePreview: false,
+  bgMode: 'transparent',
+  bgColor: '#0B0D12'
+})
+
 export interface NoirFilmConfig {
   activeLookId: string | null
   /** 0..100 Tüm NoirFilm görünüm yoğunluğu */
@@ -102,6 +133,7 @@ export interface NoirFilmConfig {
   filmEmulation: FilmEmulationConfig
   texture: FilmTextureConfig
   lightEffects: LightEffectsConfig
+  chromaKey?: ChromaKeyConfig
 }
 
 export const NOIR_LOOK_CATEGORIES = [
@@ -230,7 +262,8 @@ export function defaultNoirFilmConfig(): NoirFilmConfig {
     lookIntensity: 100,
     filmEmulation: defaultFilmEmulation(),
     texture: defaultFilmTexture(),
-    lightEffects: defaultLightEffects()
+    lightEffects: defaultLightEffects(),
+    chromaKey: defaultChromaKey()
   }
 }
 
@@ -247,12 +280,14 @@ export function cloneNoirFilmConfig(nf?: NoirFilmConfig): NoirFilmConfig {
       bloom: { ...base.lightEffects.bloom, ...(nf.lightEffects?.bloom ?? {}) },
       diffusion: { ...base.lightEffects.diffusion, ...(nf.lightEffects?.diffusion ?? {}) },
       mist: { ...base.lightEffects.mist, ...(nf.lightEffects?.mist ?? {}) }
-    }
+    },
+    chromaKey: { ...(base.chromaKey ?? defaultChromaKey()), ...(nf.chromaKey ?? {}) }
   }
 }
 
 export function isNeutralNoirFilm(nf?: NoirFilmConfig): boolean {
   if (!nf) return true
+  if (nf.chromaKey?.enabled) return false
   if ((nf.lookIntensity ?? 100) <= 0.01) return true
   const emu = nf.filmEmulation
   const tex = nf.texture

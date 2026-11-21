@@ -9,6 +9,8 @@ import type {
   ExportSettings,
   GradeStill,
   LaneMap,
+  SubtitleSegment,
+  SubtitleStyleConfig,
   TimelineClip
 } from './timeline'
 
@@ -34,4 +36,10 @@ export interface NoirCutProject {
   stills?: GradeStill[]
   /** Diyalog Önceliği (Auto-Ducking) */
   autoDucking?: boolean
+  /** Zaman Damgalı Altyazı Segmentleri */
+  subtitles?: SubtitleSegment[]
+  /** Altyazı Görünüm ve Gömme (Burn-In) Ayarları */
+  subtitleStyle?: SubtitleStyleConfig
+  /** Master Ses Çıkış Kazancı (dB) */
+  masterGainDb?: number
 }

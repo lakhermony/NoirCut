@@ -3,11 +3,13 @@ import type { ColorGrade } from '../../../../shared/color'
 import type { Lut3D } from '../../../../shared/lut'
 import {
   cloneNoirFilmConfig,
+  defaultChromaKey,
   defaultNoirFilmConfig,
   type NoirFilmConfig,
   type NoirLookPreset
 } from '../../../../shared/noirfilm'
 import BloomPanel from './BloomPanel'
+import ChromaKeyPanel from './ChromaKeyPanel'
 import DiffusionPanel from './DiffusionPanel'
 import FilmEmulationPanel from './FilmEmulationPanel'
 import FilmGrainPanel from './FilmGrainPanel'
@@ -26,6 +28,7 @@ export type NoirFilmSection =
   | 'film'
   | 'texture'
   | 'light'
+  | 'chromakey'
   | 'mylooks'
 
 const STORAGE_MY_LOOKS = 'noircut.noirfilm.mylooks.v1'
@@ -36,6 +39,7 @@ const NAV_TABS: Array<{ id: NoirFilmSection; label: string }> = [
   { id: 'film', label: 'FILM EMULATION' },
   { id: 'texture', label: 'FILM TEXTURE' },
   { id: 'light', label: 'LIGHT EFFECTS' },
+  { id: 'chromakey', label: 'CHROMA KEY' },
   { id: 'mylooks', label: 'MY LOOKS' }
 ]
 
@@ -310,6 +314,15 @@ export default function NoirFilmPanel({
               }
             />
           </div>
+        )}
+
+        {section === 'chromakey' && (
+          <ChromaKeyPanel
+            config={nf.chromaKey ?? defaultChromaKey()}
+            onChange={(chromaKey) =>
+              updateNf((cur) => ({ ...cur, chromaKey }))
+            }
+          />
         )}
 
         {section === 'mylooks' && (

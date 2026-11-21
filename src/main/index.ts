@@ -6,14 +6,24 @@ import { parseCubeLut } from '../shared/lut'
 import type { NoirCutProject } from '../shared/project'
 import type { ExportRequest, NoirSoundscapeId } from '../shared/timeline'
 import { getEngineInfo, initEngine } from './engine/ffmpeg-engine'
-import { cancelActiveExport, exportTimeline } from './export/export-service'
+import {
+  cancelActiveExport,
+  exportTimeline,
+  pauseActiveExport,
+  resumeActiveExport
+} from './export/export-service'
 import {
   ensureSoundscapeItemSync,
+  generateBatchProxies,
   getPeaksForMedia,
+  getProxyConfig,
   importFromDialog,
   importPaths,
+  reconnectMediaItem,
   registerMediaProtocol,
-  registerMediaScheme
+  registerMediaScheme,
+  selectProxyDirectory,
+  setProxyConfig
 } from './media/media-service'
 import {
   dismissAutosaveRecovery,
@@ -138,6 +148,21 @@ app.whenReady().then(async () => {
     exportTimeline(req, BrowserWindow.fromWebContents(e.sender))
   )
   ipcMain.handle('export:cancel', () => cancelActiveExport())
+  ipcMain.handle('export:pause', () => pauseActiveExport())
+  ipcMain.handle('export:resume', () => resumeActiveExport())
+  ipcMain.handle('proxy:get-config', () => getProxyConfig())
+  ipcMain.handle('proxy:set-config', (_e, patch) => setProxyConfig(patch))
+  ipcMain.handle('proxy:select-dir', (e) =>
+    selectProxyDirectory(BrowserWindow.fromWebContents(e.sender))
+  )
+  ipcMain.handle(
+    'proxy:batch-generate',
+    (_e, args: { mediaIds?: string[]; scale?: '1/2' | '1/4' | '1/8' }) =>
+      generateBatchProxies(args?.mediaIds, args?.scale)
+  )
+  ipcMain.handle('media:reconnect', (e, mediaId: string) =>
+    reconnectMediaItem(mediaId, BrowserWindow.fromWebContents(e.sender))
+  )
   ipcMain.handle('lut:import', async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     const opts: Electron.OpenDialogOptions = {
