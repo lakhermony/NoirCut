@@ -57,8 +57,8 @@ export default function NoirLauncher({
   const gpu = useMemo(() => detectWebGL2(), [])
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
     state: 'idle',
-    currentVersion: appVersion || '1.0.4',
-    message: `NoirCut v${appVersion || '1.0.4'} — En güncel sürümü kullanıyorsunuz`
+    currentVersion: appVersion || '1.0.5',
+    message: `NoirCut v${appVersion || '1.0.5'} — En güncel sürümü kullanıyorsunuz`
   })
 
   useEffect(() => {
@@ -77,7 +77,7 @@ export default function NoirLauncher({
 
   if (!open) return null
 
-  const versionLabel = `v${updateStatus.currentVersion || appVersion || '1.0.4'} Studio`
+  const versionLabel = `v${updateStatus.currentVersion || appVersion || '1.0.5'} Studio`
   const ffmpegReady = engine && engine.source !== 'missing'
 
   const handleCheckUpdates = async () => {

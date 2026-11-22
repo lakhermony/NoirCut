@@ -316,7 +316,7 @@ export default function App() {
   const [statusToast, setStatusToast] = useState<string | null>(null)
   const [wbPickerActive, setWbPickerActive] = useState(false)
   const [showLauncher, setShowLauncher] = useState(true)
-  const [appVersion, setAppVersion] = useState('1.0.4')
+  const [appVersion, setAppVersion] = useState('1.0.5')
   const [recentProjects, setRecentProjects] = useState<RecentProjectEntry[]>(() => {
     try {
       const raw = window.localStorage.getItem('noircut.recentProjects.v1')
@@ -2448,10 +2448,30 @@ export default function App() {
         <audio
           key={laneId}
           ref={(el) => player.registerAudioEl(laneId, el)}
+          crossOrigin="anonymous"
           className="hidden"
           preload="auto"
         />
       ))}
+
+      {(tab === 'AUDIO' || tab === 'SUBTITLES' || tab === 'EXPORT') && (
+        <div className="pointer-events-none fixed -left-[9999px] top-0 h-px w-px overflow-hidden opacity-0" aria-hidden="true">
+          <video
+            {...player.videoProps}
+            ref={(el) => player.registerVideoBufferEl('A', el)}
+            crossOrigin="anonymous"
+            playsInline
+            preload="auto"
+          />
+          <video
+            {...player.videoProps}
+            ref={(el) => player.registerVideoBufferEl('B', el)}
+            crossOrigin="anonymous"
+            playsInline
+            preload="auto"
+          />
+        </div>
+      )}
 
       {tab === 'GRADE' ? (
         <div key="grade-ws" className="workspace-enter flex min-h-0 flex-1 flex-col">

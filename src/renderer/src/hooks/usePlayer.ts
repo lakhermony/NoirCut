@@ -21,6 +21,7 @@ import {
   type TimelineClip
 } from '../../../shared/timeline'
 import type { MediaItem } from '../../../shared/types'
+import { noirAudioEngine } from '../lib/noir-audio-engine'
 import type { ProxyPlaybackMode } from '../types'
 
 export function getPlayableUrl(
@@ -273,8 +274,11 @@ export function usePlayer(
       if (!el) return
       if (!clip) {
         if (!el.paused) el.pause()
-        el.muted = true
-        el.volume = 0
+        const handled = noirAudioEngine.syncElementAudio(el, undefined, 0, 0, masterGainDb, true)
+        if (!handled) {
+          el.muted = true
+          el.volume = 0
+        }
         el.dataset.effectiveGain = '0'
         el.dataset.clipId = ''
         return
@@ -283,8 +287,11 @@ export function usePlayer(
       const m = mediaMap.get(clip.mediaId)
       if (el.tagName === 'VIDEO' && (m?.mediaKind === 'image' || m?.mediaKind === 'audio')) {
         if (!el.paused) el.pause()
-        el.muted = true
-        el.volume = 0
+        const handled = noirAudioEngine.syncElementAudio(el, undefined, 0, 0, masterGainDb, true)
+        if (!handled) {
+          el.muted = true
+          el.volume = 0
+        }
         el.dataset.effectiveGain = '0'
         el.dataset.clipId = clip.id
         el.dataset.preloadClipId = ''
@@ -337,13 +344,23 @@ export function usePlayer(
           ? computeAutoDuckMultiplierAt(clips, lanes, t, autoDucking)
           : 1
       const masterMult = dbToGain(masterGainDb)
-      const effectiveGain =
-        !embeddedMuted && laneAudible && (m?.hasAudio ?? true)
-          ? clipGainAt(clip, local) * duckMult * masterMult
-          : 0
+      const clipLinGain = clipGainAt(clip, local)
+      const isAudibleSource = !embeddedMuted && laneAudible && (m?.hasAudio ?? true)
+      const effectiveGain = isAudibleSource ? clipLinGain * duckMult * masterMult : 0
+      const isSilent = effectiveGain <= 0.0001 || isReverseShuttle
 
-      el.muted = effectiveGain <= 0.0001 || isReverseShuttle
-      el.volume = Math.max(0, Math.min(1, effectiveGain))
+      const handledByWebAudio = noirAudioEngine.syncElementAudio(
+        el,
+        clip,
+        clipLinGain,
+        isAudibleSource ? duckMult : 0,
+        masterGainDb,
+        isSilent
+      )
+      if (!handledByWebAudio) {
+        el.muted = isSilent
+        el.volume = Math.max(0, Math.min(1, effectiveGain))
+      }
       el.dataset.effectiveGain = effectiveGain.toFixed(4)
       el.dataset.clipId = clip.id
       el.dataset.preloadClipId = ''
@@ -449,8 +466,18 @@ export function usePlayer(
           standbyEl.dataset.clipId === baseVClip.id)
       ) {
         if (!activeEl.paused) activeEl.pause()
-        activeEl.muted = true
-        activeEl.volume = 0
+        const handled = noirAudioEngine.syncElementAudio(
+          activeEl,
+          undefined,
+          0,
+          0,
+          masterGainDb,
+          true
+        )
+        if (!handled) {
+          activeEl.muted = true
+          activeEl.volume = 0
+        }
         activeEl.dataset.effectiveGain = '0'
         activeEl.dataset.clipId = ''
 
@@ -537,6 +564,7 @@ export function usePlayer(
       fallbackVClip,
       getVisualStackAt,
       lanes,
+      masterGainDb,
       orderedAudioLanes,
       preloadStandbyVideo,
       syncElement
@@ -693,6 +721,7 @@ export function usePlayer(
   const toggle = useCallback(() => {
     if (total <= 0) return
     setError(null)
+    noirAudioEngine.resume()
     const next = !playingRef.current
     playingRef.current = next
     const nextRate = next ? 1 : 0
@@ -766,6 +795,7 @@ export function usePlayer(
   const shuttleForward = useCallback((): number => {
     if (total <= 0) return 0
     setError(null)
+    noirAudioEngine.resume()
     const curRate = playingRef.current ? shuttleRateRef.current : 0
     const nextRate = curRate <= 0 ? 1 : curRate === 1 ? 2 : 4
     if (timeRef.current >= total - 0.05) {

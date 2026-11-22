@@ -20,6 +20,7 @@ import {
   type TimelineClip
 } from '../../../shared/timeline'
 import type { PeaksResult } from '../../../shared/types'
+import { noirAudioEngine } from '../lib/noir-audio-engine'
 import WaveformCanvas from './WaveformCanvas'
 
 function fmtDb(db: number): string {
@@ -95,15 +96,26 @@ export default function AudioWorkspace({
     })
   }
 
-  // Canlı Kanal ve Master Peak/VU seviye hesaplaması (peaksMap + aktif klip kazancı üzerinden)
+  // Canlı Kanal ve Master Peak/VU seviye hesaplaması (NoirAudioEngine AnalyserNode + peaksMap üzerinden)
   const computeLaneLevelPct = (laneId: LaneId): { levelPct: number; peakDb: number } => {
     if (!isLaneAudible(lanes, laneId)) return { levelPct: 0, peakDb: -60 }
     const c = clipAt(clips, laneId, liveTime)
     if (!c || isCreditClip(c) || (isVideoLane(c.lane) && c.audioDetached)) {
       return { levelPct: 8, peakDb: -48 }
     }
+    if (playing) {
+      const liveAnalyserDb = noirAudioEngine.readLanePeakDb(laneId)
+      if (liveAnalyserDb !== null && liveAnalyserDb > -59) {
+        const pct = Math.max(6, Math.min(100, ((liveAnalyserDb + 60) / 66) * 100))
+        return { levelPct: Math.round(pct), peakDb: Number(liveAnalyserDb.toFixed(1)) }
+      }
+    }
     const local = Math.max(0, Math.min(c.duration, liveTime - c.start))
     const gainLin = clipGainAt(c, local)
+    const cFx = c.audioEffects
+    const eqBoostDb = cFx
+      ? Math.max(0, (cFx.eqLowDb + cFx.eqMidDb + cFx.eqHighDb) / 3)
+      : 0
     const pk = peaksMap[c.mediaId]
     let sampleNorm = 0.55
     if (pk && pk.peaks.length > 0) {
@@ -114,17 +126,24 @@ export default function AudioWorkspace({
       sampleNorm = Math.max(0.08, pk.peaks[idx] / 255)
     }
     const jitter = playing ? 0.92 + Math.sin(liveTime * 29 + laneId.charCodeAt(1)) * 0.08 : 1
-    const eff = Math.min(1.4, sampleNorm * gainLin * jitter)
-    const db = eff <= 0.001 ? -60 : Math.max(-60, Math.min(6, 20 * Math.log10(eff)))
+    const eff = Math.min(1.8, sampleNorm * gainLin * jitter)
+    let db = eff <= 0.001 ? -60 : Math.max(-60, Math.min(6, 20 * Math.log10(eff) + eqBoostDb))
+    if (cFx?.limiterEnabled) {
+      db = Math.min(db, cFx.limiterCeilingDb)
+    }
     const pct = Math.max(6, Math.min(100, ((db + 60) / 66) * 100))
     return { levelPct: Math.round(pct), peakDb: Number(db.toFixed(1)) }
   }
 
   const laneMeters = mixerLanes.map((lid) => ({ laneId: lid, ...computeLaneLevelPct(lid) }))
-  const masterPeakDb = Math.min(
-    6,
-    laneMeters.reduce((m, x) => Math.max(m, x.peakDb), -60) + masterGainDb
-  )
+  const liveMasterAnalyserDb = playing ? noirAudioEngine.readMasterPeakDb() : null
+  const masterPeakDb =
+    liveMasterAnalyserDb !== null && liveMasterAnalyserDb > -59
+      ? Number(liveMasterAnalyserDb.toFixed(1))
+      : Math.min(
+          6,
+          laneMeters.reduce((m, x) => Math.max(m, x.peakDb), -60) + masterGainDb
+        )
   const masterLevelPct = Math.max(6, Math.min(100, Math.round(((masterPeakDb + 60) / 66) * 100)))
 
   return (
