@@ -171,6 +171,14 @@ app.whenReady().then(async () => {
       error: 'Whisper CLI bulunamadı; ses zarfı (VAD) ile devam edildi.'
     }
   })
+  ipcMain.handle('project:archive', async () => ({
+    ok: false,
+    error: 'Proje paketleme masaüstü Tauri motorunda desteklenir.'
+  }))
+  ipcMain.handle('snapshot:save', async () => ({
+    ok: false,
+    error: 'Snapshot masaüstü Tauri motorunda desteklenir.'
+  }))
   ipcMain.handle('lut:import', async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     const opts: Electron.OpenDialogOptions = {

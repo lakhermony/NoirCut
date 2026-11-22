@@ -563,8 +563,41 @@ export async function exportTimeline(
       }
     }
 
-    vChain.push(`trim=duration=${c.duration.toFixed(4)}`, `setpts=PTS-STARTPTS`, `format=yuv420p`)
-    filterParts.push(`${streamLabel}${vChain.join(',')}[${lbl}]`)
+    // Maskeleme / Sansür / Vignette (Power Window)
+    let postMaskLabel: string | null = null
+    if (c.mask?.enabled) {
+      const m = c.mask
+      const strength = Math.max(5, Math.min(100, m.strength ?? 65))
+      if (m.mode === 'vignette') {
+        vChain.push(`vignette=angle=${((strength / 100) * 1.25).toFixed(3)}`)
+      } else {
+        const cw = Math.max(16, Math.round(((m.w ?? 32) / 100) * width) & ~1)
+        const ch = Math.max(16, Math.round(((m.h ?? 32) / 100) * height) & ~1)
+        const cx = Math.max(0, Math.min(width - cw, Math.round(((m.x ?? 50) / 100) * width - cw / 2)))
+        const cy = Math.max(0, Math.min(height - ch, Math.round(((m.y ?? 50) / 100) * height - ch / 2)))
+        const pre = `mpre${segCounter}`
+        const bg = `mbg${segCounter}`
+        const fg = `mfg${segCounter}`
+        const fx = `mfx${segCounter}`
+        vChain.push(`trim=duration=${c.duration.toFixed(4)}`, `setpts=PTS-STARTPTS`, `format=yuv420p`)
+        filterParts.push(`${streamLabel}${vChain.join(',')}[${pre}]`)
+        const blurFilter =
+          m.mode === 'mosaic'
+            ? `scale=w=max(4\\,${Math.round(cw / Math.max(4, Math.round(strength / 4)))}):h=-1:flags=neighbor,scale=${cw}:${ch}:flags=neighbor`
+            : `boxblur=${Math.max(2, Math.round((strength / 100) * 28))}:2`
+        filterParts.push(
+          `[${pre}]split[${bg}][${fg}]`,
+          `[${fg}]crop=${cw}:${ch}:${cx}:${cy},${blurFilter}[${fx}]`,
+          `[${bg}][${fx}]overlay=${cx}:${cy}[${lbl}]`
+        )
+        postMaskLabel = lbl
+      }
+    }
+
+    if (!postMaskLabel) {
+      vChain.push(`trim=duration=${c.duration.toFixed(4)}`, `setpts=PTS-STARTPTS`, `format=yuv420p`)
+      filterParts.push(`${streamLabel}${vChain.join(',')}[${lbl}]`)
+    }
     vSegLabels.push(`[${lbl}]`)
     cursor = c.start + c.duration
   }

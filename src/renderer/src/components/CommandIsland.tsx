@@ -70,6 +70,7 @@ export default function CommandIsland({
   onRedo,
   onSaveProject,
   onLoadProject,
+  onArchiveProject,
   onExport,
   onOpenLauncher,
   exportSettings,
@@ -87,6 +88,7 @@ export default function CommandIsland({
   onRedo?: () => void
   onSaveProject: () => void
   onLoadProject: () => void
+  onArchiveProject?: () => void
   onExport: () => void
   onOpenLauncher?: () => void
   exportSettings: ExportSettings
@@ -214,6 +216,16 @@ export default function CommandIsland({
           >
             Kaydet
           </button>
+          {onArchiveProject && (
+            <button
+              data-testid="archive-project-btn"
+              onClick={onArchiveProject}
+              title="Projeyi ve Tüm Medyaları Tek Klasörde Paketle (Consolidate / Archive)"
+              className="rounded-full bg-[var(--bg-elevated,#292E36)] px-3 py-1 text-[10px] font-medium text-[var(--text-primary,#F1F2EE)]/85 transition duration-150 hover:scale-[1.02] hover:bg-white/[0.12] hover:text-white active:scale-[0.97]"
+            >
+              Paketle
+            </button>
+          )}
           <button
             data-testid="nav-tab-credits"
             onClick={() => onTab('CREDITS')}

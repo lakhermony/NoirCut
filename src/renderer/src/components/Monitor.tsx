@@ -158,7 +158,10 @@ export default function Monitor({
   onProxyScaleChange,
   onBatchProxyGenerate,
   subtitles = [],
-  subtitleStyle
+  subtitleStyle,
+  sourceMedia = null,
+  onInsertFromSource,
+  onShowToast
 }: {
   media: MediaItem | null
   activeClip?: TimelineClip | null
@@ -208,9 +211,53 @@ export default function Monitor({
   onBatchProxyGenerate?: () => void
   subtitles?: SubtitleSegment[]
   subtitleStyle?: SubtitleStyleConfig
+  sourceMedia?: MediaItem | null
+  onInsertFromSource?: (m: MediaItem, inTime: number, outTime: number) => void
+  onShowToast?: (msg: string) => void
 }) {
   const [wipe, setWipe] = useState(50)
   const [split, setSplit] = useState(false)
+  const [dualMonitor, setDualMonitor] = useState(false)
+  const [srcIn, setSrcIn] = useState(0)
+  const [srcOut, setSrcOut] = useState(0)
+  const [srcTime, setSrcTime] = useState(0)
+  const srcVideoRef = useRef<HTMLVideoElement | null>(null)
+
+  useEffect(() => {
+    if (sourceMedia) {
+      setSrcIn(0)
+      setSrcOut(Math.max(0.5, sourceMedia.duration || 5))
+      setSrcTime(0)
+    }
+  }, [sourceMedia?.id])
+
+  const handleSnapshot = async () => {
+    const vid = videoRef.current
+    if (!vid || vid.videoWidth === 0 || vid.videoHeight === 0) {
+      onShowToast?.('Anlık görüntü alınacak aktif video karesi bulunamadı')
+      return
+    }
+    const canvas = document.createElement('canvas')
+    canvas.width = vid.videoWidth
+    canvas.height = vid.videoHeight
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.drawImage(vid, 0, 0, canvas.width, canvas.height)
+    const dataUrl = canvas.toDataURL('image/png')
+    const defaultName = `noircut-snapshot-${Math.round(time * 100)}.png`
+    if (window.noircut?.saveSnapshot) {
+      const res = await window.noircut.saveSnapshot(dataUrl, defaultName)
+      if (res.ok) {
+        onShowToast?.(`Kare kaydedildi: ${res.path?.split(/[\\/]/).pop() ?? defaultName}`)
+      }
+    } else {
+      const a = document.createElement('a')
+      a.href = dataUrl
+      a.download = defaultName
+      a.click()
+      onShowToast?.(`Kare indirildi: ${defaultName}`)
+    }
+  }
   const effCompareMode: ComparisonMode =
     compareMode !== 'none' ? compareMode : split ? 'v-wipe' : 'none'
   const effWipe = externalWipe ?? wipe
@@ -841,6 +888,26 @@ export default function Monitor({
           >
             Önce / Sonra
           </button>
+          <button
+            data-testid="dual-monitor-btn"
+            type="button"
+            onClick={() => setDualMonitor((d) => !d)}
+            title="İkili Monitör (Source + Program Monitor · 3-Point Editing I/O)"
+            className={`chip !py-0.5 !text-[9px] font-mono ${
+              dualMonitor ? '!border-[var(--accent)] !bg-[var(--accent)]/15 !text-[var(--accent)]' : ''
+            }`}
+          >
+            İkili Monitör
+          </button>
+          <button
+            data-testid="snapshot-btn"
+            type="button"
+            onClick={() => void handleSnapshot()}
+            title="Aktif Video Karesini PNG Olarak Kaydet (Snapshot)"
+            className="chip !py-0.5 !text-[9px] font-mono"
+          >
+            Snapshot
+          </button>
           <span
             ref={topTimecodeRef}
             className="rounded-full border border-[var(--accent)]/40 bg-[var(--bg-surface)] px-2.5 py-0.5 font-mono text-[10px] font-semibold text-[var(--accent)]"
@@ -1232,7 +1299,107 @@ export default function Monitor({
             />
           )}
 
-          {/* Zaman Damgalı Altyazı (Subtitle) Canlı Önizleme Katmanı */}
+          {/* Power Window / Blur / Mosaic / Vignette Canlı Maske Katmanı */}
+          {activeClip?.mask?.enabled && (() => {
+            const m = activeClip.mask
+            if (m.mode === 'vignette') {
+              const alpha = Math.min(0.88, (m.strength / 100) * 0.85)
+              return (
+                <div
+                  data-testid="monitor-mask-overlay"
+                  className="pointer-events-none absolute inset-0 z-20"
+                  style={{
+                    background: `radial-gradient(circle, transparent 36%, rgba(0,0,0,${alpha.toFixed(2)}) 100%)`
+                  }}
+                />
+              )
+            }
+            const blurPx =
+              m.mode === 'mosaic'
+                ? Math.max(3, Math.round((m.strength / 100) * 14))
+                : Math.max(2, Math.round((m.strength / 100) * 24))
+            return (
+              <div
+                data-testid="monitor-mask-overlay"
+                className="pointer-events-none absolute z-20 border border-dashed border-white/35"
+                style={{
+                  left: `${m.x - m.w / 2}%`,
+                  top: `${m.y - m.h / 2}%`,
+                  width: `${m.w}%`,
+                  height: `${m.h}%`,
+                  borderRadius: m.shape === 'ellipse' ? '50%' : '6px',
+                  backdropFilter:
+                    m.mode === 'mosaic' ? `blur(${blurPx}px) contrast(1.25)` : `blur(${blurPx}px)`,
+                  backgroundImage:
+                    m.mode === 'mosaic'
+                      ? 'repeating-linear-gradient(0deg, rgba(255,255,255,0.06) 0 4px, transparent 4px 8px), repeating-linear-gradient(90deg, rgba(255,255,255,0.06) 0 4px, transparent 4px 8px)'
+                      : undefined
+                }}
+              />
+            )
+          })()}
+
+          {/* İkili Monitör: Sol Source Monitor (3-Point Editing I / O) */}
+          {dualMonitor && (
+            <div
+              data-testid="source-monitor-panel"
+              onClick={(e) => e.stopPropagation()}
+              className="absolute bottom-3 left-3 top-11 z-30 flex w-[42%] flex-col overflow-hidden rounded-xl border border-white/15 bg-black/90 p-2 shadow-2xl backdrop-blur"
+            >
+              <div className="mb-1 flex items-center justify-between text-[9px] font-mono text-white/75">
+                <span className="truncate font-semibold text-[var(--accent)]">
+                  SOURCE · {sourceMedia?.name ?? 'Medya Seçilmedi'}
+                </span>
+                <span>
+                  I: {srcIn.toFixed(1)}s · O: {srcOut.toFixed(1)}s
+                </span>
+              </div>
+              <div className="relative flex-1 overflow-hidden rounded-lg bg-black">
+                {sourceMedia?.mediaKind === 'video' ? (
+                  <video
+                    ref={srcVideoRef}
+                    src={sourceMedia.url}
+                    controls
+                    onTimeUpdate={(e) => setSrcTime(e.currentTarget.currentTime)}
+                    className="h-full w-full object-contain"
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-[10px] text-white/45">
+                    Kütüphaneden bir video klibi seçin
+                  </div>
+                )}
+              </div>
+              {sourceMedia && (
+                <div className="mt-1.5 flex items-center justify-between gap-1 font-mono text-[9px]">
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setSrcIn(Math.min(srcTime, Math.max(0, srcOut - 0.2)))}
+                      className="rounded border border-white/20 bg-white/10 px-2 py-0.5 text-white hover:border-[var(--accent)]"
+                    >
+                      In (I)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSrcOut(Math.max(srcTime, srcIn + 0.2))}
+                      className="rounded border border-white/20 bg-white/10 px-2 py-0.5 text-white hover:border-[var(--accent)]"
+                    >
+                      Out (O)
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onInsertFromSource?.(sourceMedia, srcIn, srcOut)}
+                    className="rounded bg-[var(--accent)] px-2 py-0.5 font-semibold text-[var(--accent-fg)] hover:brightness-110"
+                  >
+                    Timeline&apos;a İndir
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Zaman Damgalı Altyazı (Subtitle) Canlı Önizleme Katmanı (Karaoke / Hormozi destekli) */}
           {subtitles.length > 0 && (() => {
             const curT = timeRef ? timeRef.current : time
             const activeSub = subtitles.find((s) => curT >= s.start && curT <= s.end)
@@ -1243,6 +1410,16 @@ export default function Monitor({
                 : subtitleStyle?.position === 'center'
                   ? 'top-1/2 -translate-y-1/2'
                   : 'bottom-6'
+            const anim = subtitleStyle?.animation ?? 'none'
+            const hiColor = subtitleStyle?.highlightColor ?? '#FACC15'
+            const words = activeSub.text.split(/\s+/).filter(Boolean)
+            const progress = Math.max(
+              0,
+              Math.min(0.999, (curT - activeSub.start) / Math.max(0.05, activeSub.end - activeSub.start))
+            )
+            const activeWordIdx = Math.floor(progress * Math.max(1, words.length))
+            const bgAlpha = Math.max(0, Math.min(1, (subtitleStyle?.backgroundOpacity ?? 72) / 100))
+
             return (
               <div
                 data-testid="monitor-subtitle-overlay"
@@ -1253,11 +1430,43 @@ export default function Monitor({
                     fontFamily: subtitleStyle?.fontFamily ?? 'Inter, system-ui, sans-serif',
                     fontSize: `${Math.max(12, Math.round((subtitleStyle?.fontSize ?? 26) * 0.72))}px`,
                     color: subtitleStyle?.textColor ?? '#F1F2EE',
-                    backgroundColor: subtitleStyle?.backgroundColor ?? '#0A0B0E'
+                    backgroundColor:
+                      bgAlpha > 0 ? (subtitleStyle?.backgroundColor ?? '#0A0B0E') : 'transparent',
+                    opacity: 1
                   }}
-                  className="max-w-[85%] rounded-lg bg-opacity-75 px-3.5 py-1.5 text-center font-medium shadow-lg"
+                  className={`max-w-[85%] rounded-lg px-3.5 py-1.5 text-center shadow-lg ${
+                    anim === 'hormozi' ? 'font-black uppercase tracking-wide drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)]' : 'font-medium'
+                  }`}
                 >
-                  {activeSub.text}
+                  {anim === 'none'
+                    ? activeSub.text
+                    : anim === 'typewriter'
+                      ? activeSub.text.slice(0, Math.max(1, Math.ceil(progress * activeSub.text.length)))
+                      : words.map((w, idx) => {
+                          const isCurrent = idx === activeWordIdx
+                          const isPast = idx < activeWordIdx
+                          return (
+                            <span
+                              key={`${w}-${idx}`}
+                              style={{
+                                color:
+                                  anim === 'hormozi'
+                                    ? isCurrent
+                                      ? hiColor
+                                      : subtitleStyle?.textColor ?? '#FFFFFF'
+                                    : isCurrent || isPast
+                                      ? hiColor
+                                      : subtitleStyle?.textColor ?? '#F1F2EE',
+                                transform: anim === 'hormozi' && isCurrent ? 'scale(1.14)' : undefined,
+                                display: 'inline-block',
+                                marginRight: '0.32em',
+                                transition: 'transform 80ms ease'
+                              }}
+                            >
+                              {w}
+                            </span>
+                          )
+                        })}
                 </span>
               </div>
             )

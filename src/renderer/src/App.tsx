@@ -1892,6 +1892,40 @@ export default function App() {
     }
   }, [buildCurrentProject, recordRecentProject, showToast])
 
+  const handleArchiveProject = useCallback(async () => {
+    if (!window.noircut?.archiveProject) return
+    const res = await window.noircut.archiveProject(buildCurrentProject())
+    if (res.canceled) return
+    if (res.ok) {
+      showToast(`Proje paketlendi (${res.copiedFiles ?? 0} medya): ${res.dirPath ?? ''}`)
+    } else {
+      alert(`Proje paketlenemedi:\n${res.error ?? 'Bilinmeyen hata'}`)
+    }
+  }, [buildCurrentProject, showToast])
+
+  const handleInsertFromSource = useCallback(
+    (m: MediaItem, inTime: number, outTime: number) => {
+      const dur = Math.max(0.2, outTime - inTime)
+      const lane = m.mediaKind === 'audio' ? 'A1' : 'V1'
+      const newClip: TimelineClip = {
+        id: `clip-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        mediaId: m.id,
+        name: m.name,
+        lane,
+        start: Math.max(0, player.time),
+        in: Math.max(0, inTime),
+        duration: dur,
+        gainDb: 0,
+        fadeIn: 0,
+        fadeOut: 0,
+        audioDetached: false
+      }
+      setClips((prev) => [...prev, newClip])
+      showToast(`3-Point Ekleme: ${m.name} (${inTime.toFixed(1)}s – ${outTime.toFixed(1)}s)`)
+    },
+    [player.time, showToast]
+  )
+
   const applyLoadedProjectResult = useCallback(
     (res: Awaited<ReturnType<NonNullable<typeof window.noircut>['loadProject']>>) => {
       if (!res.ok || !res.project) {
@@ -2399,6 +2433,7 @@ export default function App() {
         onRedo={handleRedo}
         onSaveProject={handleSaveProject}
         onLoadProject={handleLoadProject}
+        onArchiveProject={handleArchiveProject}
         onOpenLauncher={() => setShowLauncher(true)}
         exportSettings={exportSettings}
         mediaItems={lib.items}
@@ -2678,6 +2713,9 @@ export default function App() {
               onBatchProxyGenerate={handleBatchProxyGenerate}
               subtitles={subtitles}
               subtitleStyle={subtitleStyle}
+              sourceMedia={lib.active}
+              onInsertFromSource={handleInsertFromSource}
+              onShowToast={showToast}
             />
             <div
               data-testid="right-panel-resizer"

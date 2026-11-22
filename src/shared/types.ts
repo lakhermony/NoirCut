@@ -176,6 +176,14 @@ export interface TranscribeResult {
   error?: string
 }
 
+export interface ArchiveProjectResult {
+  ok: boolean
+  canceled?: boolean
+  dirPath?: string
+  copiedFiles?: number
+  error?: string
+}
+
 export interface NoirCutApi {
   getEngineInfo: () => Promise<EngineInfo>
   /** Dosya seçici açar, seçilen videoları analiz edip döndürür */
@@ -248,4 +256,11 @@ export interface NoirCutApi {
   resumeExport?: () => Promise<boolean>
   /** Çevrimdışı Whisper CLI (whisper.cpp / faster-whisper) ile konuşma deşifresi */
   transcribeMedia?: (mediaId: string, language: string) => Promise<TranscribeResult>
+  /** Projeyi ve tüm medya dosyalarını taşınabilir tek klasörde paketler */
+  archiveProject?: (project: NoirCutProject) => Promise<ArchiveProjectResult>
+  /** Monitörden alınan kare anlık görüntüsünü PNG olarak kaydeder */
+  saveSnapshot?: (
+    dataUrl: string,
+    defaultName: string
+  ) => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>
 }

@@ -721,8 +721,48 @@ pub fn run_full_export(
       }
     }
 
-    v_chain.extend([format!("trim=duration={:.4}", cd), "setpts=PTS-STARTPTS".into(), "format=yuv420p".into()]);
-    filter_parts.push(format!("{}{}[{}]", stream_label, v_chain.join(","), lbl));
+    let mut mask_handled = false;
+    if c["mask"]["enabled"].as_bool().unwrap_or(false) {
+      let mode = c["mask"]["mode"].as_str().unwrap_or("blur");
+      let strength = c["mask"]["strength"].as_f64().unwrap_or(65.0).clamp(5.0, 100.0);
+      if mode == "vignette" {
+        v_chain.push(format!("vignette=angle={:.3}", (strength / 100.0) * 1.25));
+      } else {
+        let mw = c["mask"]["w"].as_f64().unwrap_or(32.0).clamp(5.0, 100.0);
+        let mh = c["mask"]["h"].as_f64().unwrap_or(32.0).clamp(5.0, 100.0);
+        let mx = c["mask"]["x"].as_f64().unwrap_or(50.0).clamp(0.0, 100.0);
+        let my = c["mask"]["y"].as_f64().unwrap_or(50.0).clamp(0.0, 100.0);
+        let cw = ((((mw / 100.0) * width as f64).round() as u32).max(16)) & !1;
+        let ch = ((((mh / 100.0) * height as f64).round() as u32).max(16)) & !1;
+        let cx = (((mx / 100.0) * width as f64 - cw as f64 / 2.0).round() as i64)
+          .clamp(0, (width.saturating_sub(cw)) as i64);
+        let cy = (((my / 100.0) * height as f64 - ch as f64 / 2.0).round() as i64)
+          .clamp(0, (height.saturating_sub(ch)) as i64);
+        let pre = format!("mpre{}", seg_counter);
+        let bg = format!("mbg{}", seg_counter);
+        let fg = format!("mfg{}", seg_counter);
+        let fx = format!("mfx{}", seg_counter);
+        v_chain.extend([format!("trim=duration={:.4}", cd), "setpts=PTS-STARTPTS".into(), "format=yuv420p".into()]);
+        filter_parts.push(format!("{}{}[{}]", stream_label, v_chain.join(","), pre));
+        let blur_f = if mode == "mosaic" {
+          let div = ((strength / 4.0).round() as u32).max(4);
+          let sw = (cw / div).max(4);
+          format!("scale=w={}:h=-1:flags=neighbor,scale={}:{}:flags=neighbor", sw, cw, ch)
+        } else {
+          let rad = ((strength / 100.0) * 28.0).round() as u32;
+          format!("boxblur={}:2", rad.max(2))
+        };
+        filter_parts.push(format!("[{}]split[{}][{}]", pre, bg, fg));
+        filter_parts.push(format!("[{}]crop={}:{}:{}:{},{}[{}]", fg, cw, ch, cx, cy, blur_f, fx));
+        filter_parts.push(format!("[{}][{}]overlay={}:{}[{}]", bg, fx, cx, cy, lbl));
+        mask_handled = true;
+      }
+    }
+
+    if !mask_handled {
+      v_chain.extend([format!("trim=duration={:.4}", cd), "setpts=PTS-STARTPTS".into(), "format=yuv420p".into()]);
+      filter_parts.push(format!("{}{}[{}]", stream_label, v_chain.join(","), lbl));
+    }
     v_seg_labels.push(format!("[{}]", lbl));
     cursor = cs + cd;
   }

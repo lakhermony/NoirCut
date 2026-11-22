@@ -348,6 +348,9 @@ export interface SubtitleStyleConfig {
   backgroundOpacity: number // 0..100
   position: 'bottom' | 'center' | 'top'
   burnInOnExport: boolean
+  /** Motion Template: kelime kelime vurgulama (Karaoke / Hormozi / Typewriter) */
+  animation?: 'none' | 'karaoke' | 'hormozi' | 'typewriter'
+  highlightColor?: string
 }
 
 export function defaultSubtitleStyle(): SubtitleStyleConfig {
@@ -358,7 +361,37 @@ export function defaultSubtitleStyle(): SubtitleStyleConfig {
     backgroundColor: '#0A0B0E',
     backgroundOpacity: 72,
     position: 'bottom',
-    burnInOnExport: true
+    burnInOnExport: true,
+    animation: 'none',
+    highlightColor: '#FACC15'
+  }
+}
+
+export interface ClipMask {
+  enabled: boolean
+  shape: 'ellipse' | 'rect'
+  mode: 'blur' | 'mosaic' | 'vignette'
+  invert: boolean
+  x: number
+  y: number
+  w: number
+  h: number
+  feather: number
+  strength: number
+}
+
+export function defaultClipMask(): ClipMask {
+  return {
+    enabled: false,
+    shape: 'ellipse',
+    mode: 'blur',
+    invert: false,
+    x: 50,
+    y: 50,
+    w: 32,
+    h: 32,
+    feather: 12,
+    strength: 65
   }
 }
 
@@ -404,6 +437,8 @@ export interface TimelineClip {
   transitionDuration?: number
   /** TIMELINE: Ses seviyesi rubberband keyframe noktaları */
   gainKeyframes?: GainKeyframe[]
+  /** EDIT / COLOR: Power Window / Blur / Mosaic / Vignette maskesi */
+  mask?: ClipMask
   /** EDIT Workspace: Ses sağ/sol dengesi (-100 Sol .. +100 Sağ, varsayılan 0) */
   pan?: number
   /** EDIT Workspace: Ses efekti ön ayarı (Gürültü azaltma / Sinematik Bas) */

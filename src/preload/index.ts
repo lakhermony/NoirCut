@@ -55,7 +55,10 @@ const api: NoirCutApi = {
   pauseExport: () => ipcRenderer.invoke('export:pause'),
   resumeExport: () => ipcRenderer.invoke('export:resume'),
   transcribeMedia: (mediaId, language) =>
-    ipcRenderer.invoke('media:transcribe', { mediaId, language })
+    ipcRenderer.invoke('media:transcribe', { mediaId, language }),
+  archiveProject: (project) => ipcRenderer.invoke('project:archive', project),
+  saveSnapshot: (dataUrl, defaultName) =>
+    ipcRenderer.invoke('snapshot:save', { dataUrl, defaultName })
 }
 
 contextBridge.exposeInMainWorld('noircut', api)

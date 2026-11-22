@@ -226,7 +226,13 @@ export function initTauriBridgeIfNeeded(): void {
       tauriInvoke<MediaItem | null>('media_reconnect', { mediaId }),
 
     transcribeMedia: (mediaId: string, language: string) =>
-      tauriInvoke('transcribe_media', { mediaId, language })
+      tauriInvoke('transcribe_media', { mediaId, language }),
+
+    archiveProject: (project: NoirCutProject) =>
+      tauriInvoke('project_archive', { project }),
+
+    saveSnapshot: (dataUrl: string, defaultName: string) =>
+      tauriInvoke('snapshot_save', { dataUrl, defaultName })
   }
 
   window.noircut = api

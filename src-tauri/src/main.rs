@@ -955,10 +955,17 @@ fn load_project_from_file(
   };
   let mut media_items = Vec::new();
   let mut media_errors = Vec::new();
+  let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
   if let Some(refs) = project["mediaRefs"].as_array() {
     for r in refs {
       if let Some(p) = r["path"].as_str() {
-        match build_media_item(app, state, p) {
+        let resolved = if Path::new(p).is_absolute() {
+          PathBuf::from(p)
+        } else {
+          base_dir.join(p)
+        };
+        let resolved_str = resolved.to_string_lossy().to_string();
+        match build_media_item(app, state, &resolved_str) {
           Ok(item) => media_items.push(item),
           Err(e) => media_errors.push(format!("{}: {}", p, e)),
         }
@@ -1400,6 +1407,102 @@ fn transcribe_media(state: State<'_, Arc<AppState>>, media_id: String, language:
 }
 
 #[tauri::command]
+fn project_archive(mut project: Value) -> Value {
+  let Some(dest_root) = rfd::FileDialog::new()
+    .set_title("Proje Arşiv Klasörü Seç (Consolidate)")
+    .pick_folder()
+  else {
+    return json!({ "ok": false, "canceled": true });
+  };
+  let stamp = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .unwrap_or_default()
+    .as_secs();
+  let proj_name = project["name"]
+    .as_str()
+    .unwrap_or("NoirCut-Project")
+    .chars()
+    .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+    .collect::<String>();
+  let archive_dir = dest_root.join(format!("{}-Archive-{}", proj_name, stamp));
+  let media_dir = archive_dir.join("media");
+  if let Err(e) = fs::create_dir_all(&media_dir) {
+    return json!({ "ok": false, "error": e.to_string() });
+  }
+
+  let mut copied_files: usize = 0;
+  let mut used_names = std::collections::HashSet::<String>::new();
+  if let Some(refs) = project["mediaRefs"].as_array_mut() {
+    for r in refs.iter_mut() {
+      let Some(src_str) = r["path"].as_str().map(|s| s.to_string()) else {
+        continue;
+      };
+      let src_path = Path::new(&src_str);
+      if !src_path.is_file() {
+        continue;
+      }
+      let orig_name = src_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("media.bin")
+        .to_string();
+      let mut dest_name = orig_name.clone();
+      let mut counter = 1usize;
+      while used_names.contains(&dest_name) {
+        dest_name = format!("{}_{}", counter, orig_name);
+        counter += 1;
+      }
+      used_names.insert(dest_name.clone());
+      let dest_file = media_dir.join(&dest_name);
+      if fs::copy(src_path, &dest_file).is_ok() {
+        copied_files += 1;
+        r["path"] = json!(format!("./media/{}", dest_name));
+      }
+    }
+  }
+
+  let proj_file = archive_dir.join("project.noircut");
+  match serde_json::to_string_pretty(&project) {
+    Ok(text) => {
+      if let Err(e) = fs::write(&proj_file, text) {
+        return json!({ "ok": false, "error": e.to_string() });
+      }
+    }
+    Err(e) => return json!({ "ok": false, "error": e.to_string() }),
+  }
+
+  json!({
+    "ok": true,
+    "dirPath": archive_dir.to_string_lossy().to_string(),
+    "copiedFiles": copied_files
+  })
+}
+
+#[tauri::command]
+fn snapshot_save(data_url: String, default_name: String) -> Value {
+  use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+  let Some(path) = rfd::FileDialog::new()
+    .set_title("Kare Anlık Görüntüsü Kaydet (PNG)")
+    .set_file_name(&default_name)
+    .add_filter("PNG Görsel", &["png"])
+    .save_file()
+  else {
+    return json!({ "ok": false, "canceled": true });
+  };
+  let b64 = data_url
+    .split(',')
+    .nth(1)
+    .unwrap_or(data_url.as_str());
+  match BASE64.decode(b64) {
+    Ok(bytes) => match fs::write(&path, bytes) {
+      Ok(_) => json!({ "ok": true, "path": path.to_string_lossy().to_string() }),
+      Err(e) => json!({ "ok": false, "error": e.to_string() }),
+    },
+    Err(e) => json!({ "ok": false, "error": e.to_string() }),
+  }
+}
+
+#[tauri::command]
 fn soundscape_generate(state: State<'_, Arc<AppState>>, preset_id: String) -> Option<MediaItem> {
   let (label, dur, wav, peaks) = foley::synthesize_soundscape(&preset_id);
   let sfx_dir = std::env::temp_dir().join("noircut-soundscape");
@@ -1566,6 +1669,8 @@ fn main() {
       project_save,
       project_load,
       project_load_path,
+      project_archive,
+      snapshot_save,
       export_select_path,
       shell_reveal,
       autosave_write,

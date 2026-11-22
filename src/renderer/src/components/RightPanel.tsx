@@ -25,6 +25,7 @@ import {
   MAX_DB,
   MIN_DB,
   NOIR_SOUNDSCAPE_PRESETS,
+  defaultClipMask,
   defaultClipTransform,
   evaluateClipTransformAt,
   findKeyframeAt,
@@ -795,6 +796,137 @@ export default function RightPanel({
                 onChange={(transitionDuration) => patchClip({ transitionDuration })}
               />
             )}
+          </Accordion>
+
+          {/* 3B. MASKELEME & SANSÜR (POWER WINDOW / BLUR / VIGNETTE) */}
+          <Accordion
+            title="Maskeleme & Sansür (Power Window)"
+            right={
+              <label className="flex cursor-pointer items-center gap-1 text-[10px] text-white/75">
+                <input
+                  type="checkbox"
+                  checked={Boolean(activeClip?.mask?.enabled)}
+                  disabled={!activeClip}
+                  onChange={(e) => {
+                    const cur = activeClip?.mask ?? defaultClipMask()
+                    patchClip({ mask: { ...cur, enabled: e.target.checked } })
+                  }}
+                  className="accent-[var(--accent)]"
+                />
+                Aktif
+              </label>
+            }
+          >
+            {(() => {
+              const m = activeClip?.mask ?? defaultClipMask()
+              const patchMask = (p: Partial<typeof m>) =>
+                patchClip({ mask: { ...m, ...p, enabled: p.enabled ?? true } })
+              return (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-3 gap-1">
+                    {(
+                      [
+                        ['blur', 'Gaussian Blur'],
+                        ['mosaic', 'Mozaik Sansür'],
+                        ['vignette', 'Vignette']
+                      ] as const
+                    ).map(([id, lbl]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        disabled={!activeClip}
+                        onClick={() => patchMask({ mode: id })}
+                        className={`rounded border py-1 text-[9px] font-semibold transition ${
+                          m.mode === id
+                            ? 'border-[var(--accent)] bg-[var(--accent)]/20 text-[var(--accent)]'
+                            : 'border-white/10 bg-white/[0.03] text-white/60 hover:border-white/30'
+                        }`}
+                      >
+                        {lbl}
+                      </button>
+                    ))}
+                  </div>
+                  {m.mode !== 'vignette' && (
+                    <div className="grid grid-cols-2 gap-1">
+                      {(
+                        [
+                          ['ellipse', 'Elips / Yüz'],
+                          ['rect', 'Dikdörtgen / Plaka']
+                        ] as const
+                      ).map(([sh, lbl]) => (
+                        <button
+                          key={sh}
+                          type="button"
+                          disabled={!activeClip}
+                          onClick={() => patchMask({ shape: sh })}
+                          className={`rounded border py-1 text-[9px] font-semibold transition ${
+                            m.shape === sh
+                              ? 'border-white/40 bg-white/10 text-white'
+                              : 'border-white/10 bg-white/[0.02] text-white/55'
+                          }`}
+                        >
+                          {lbl}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <Slider
+                    label="Şiddet"
+                    value={m.strength}
+                    min={5}
+                    max={100}
+                    step={1}
+                    defaultValue={65}
+                    unit="%"
+                    onChange={(strength) => patchMask({ strength })}
+                  />
+                  {m.mode !== 'vignette' && (
+                    <>
+                      <Slider
+                        label="Konum X"
+                        value={m.x}
+                        min={0}
+                        max={100}
+                        step={1}
+                        defaultValue={50}
+                        unit="%"
+                        onChange={(x) => patchMask({ x })}
+                      />
+                      <Slider
+                        label="Konum Y"
+                        value={m.y}
+                        min={0}
+                        max={100}
+                        step={1}
+                        defaultValue={50}
+                        unit="%"
+                        onChange={(y) => patchMask({ y })}
+                      />
+                      <Slider
+                        label="Genişlik"
+                        value={m.w}
+                        min={5}
+                        max={100}
+                        step={1}
+                        defaultValue={32}
+                        unit="%"
+                        onChange={(w) => patchMask({ w })}
+                      />
+                      <Slider
+                        label="Yükseklik"
+                        value={m.h}
+                        min={5}
+                        max={100}
+                        step={1}
+                        defaultValue={32}
+                        unit="%"
+                        onChange={(h) => patchMask({ h })}
+                      />
+                    </>
+                  )}
+                </div>
+              )
+            })()}
           </Accordion>
 
           {/* 4. SES MİKSERİ & EFEKTLERİ (AUDIO MIXER & FX) */}

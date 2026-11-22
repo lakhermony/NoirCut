@@ -714,6 +714,55 @@ export default function SubtitlesWorkspace({
               </div>
             </div>
 
+            {/* Motion Templates: 9:16 Reels / Karaoke / Hormozi */}
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-[9.5px] font-semibold text-white/75">
+                  Motion Template (Reels / Shorts)
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateSubtitleStyle({
+                      ...subtitleStyle,
+                      animation: 'hormozi',
+                      position: 'center',
+                      fontSize: 36,
+                      textColor: '#FFFFFF',
+                      highlightColor: '#FACC15',
+                      backgroundOpacity: 0
+                    })
+                  }
+                  className="rounded border border-amber-400/35 bg-amber-400/15 px-1.5 py-0.5 text-[8.5px] font-semibold text-amber-300 hover:bg-amber-400/25"
+                >
+                  9:16 Hormozi Preset
+                </button>
+              </div>
+              <div className="grid grid-cols-4 gap-1">
+                {(
+                  [
+                    ['none', 'Sabit'],
+                    ['karaoke', 'Karaoke'],
+                    ['hormozi', 'Hormozi'],
+                    ['typewriter', 'Daktilo']
+                  ] as const
+                ).map(([anim, lbl]) => (
+                  <button
+                    key={anim}
+                    type="button"
+                    onClick={() => onUpdateSubtitleStyle({ ...subtitleStyle, animation: anim })}
+                    className={`rounded-xl border py-1 text-[9.5px] font-semibold transition ${
+                      (subtitleStyle.animation ?? 'none') === anim
+                        ? 'border-[var(--accent)] bg-[var(--accent)]/15 text-[var(--accent)]'
+                        : 'border-[color:var(--border-subtle)] bg-[var(--bg-panel)] text-white/65'
+                    }`}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <label className="flex cursor-pointer items-center justify-between rounded-2xl border border-white/[0.06] bg-black/25 px-3 py-2.5">
               <div>
                 <div className="text-[10.5px] font-semibold text-white">
