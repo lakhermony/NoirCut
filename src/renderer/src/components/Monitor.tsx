@@ -691,11 +691,12 @@ export default function Monitor({
                   value={proxyScale}
                   onChange={(e) => onProxyScaleChange(e.target.value as ProxyResolutionScale)}
                   title="Proxy Üretim Çözünürlük Ölçeği (1/2 · 1/4 · 1/8)"
-                  className="ml-0.5 cursor-pointer rounded-full bg-black/35 px-1.5 py-0.5 font-mono text-[8.5px] text-white/85 outline-none"
+                  style={{ colorScheme: 'dark' }}
+                  className="ml-0.5 cursor-pointer appearance-none rounded-full border border-white/10 bg-[#181b21] px-2 py-0.5 text-center font-mono text-[8.5px] font-semibold text-white/90 outline-none transition hover:border-[var(--accent)]/60"
                 >
-                  <option value="1/2">1/2</option>
-                  <option value="1/4">1/4</option>
-                  <option value="1/8">1/8</option>
+                  <option value="1/2" className="bg-[#181b21] text-white">1/2</option>
+                  <option value="1/4" className="bg-[#181b21] text-white">1/4</option>
+                  <option value="1/8" className="bg-[#181b21] text-white">1/8</option>
                 </select>
               )}
               {onBatchProxyGenerate && (

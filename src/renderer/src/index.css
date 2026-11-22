@@ -303,3 +303,20 @@ input[type='range']::-webkit-slider-thumb:active {
   box-shadow: 0 0 0 4px var(--accent-soft, rgba(183, 227, 106, 0.28)), 0 0 12px var(--accent-glow, rgba(183, 227, 106, 0.45));
   transform: scale(1.22);
 }
+
+/* WebKitGTK / Tauri üzerinde native <select> kutularının beyaz GTK temasıyla çizilmesini engelle */
+:root {
+  color-scheme: dark;
+}
+
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: var(--bg-panel, #181b21);
+  color: var(--text-primary, #f1f2ee);
+}
+
+select option {
+  background-color: var(--bg-panel, #181b21);
+  color: var(--text-primary, #f1f2ee);
+}
