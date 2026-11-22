@@ -3,12 +3,9 @@
  * gerçek ses dalga formu (PCM tepe genlikleri) çıkarma.
  */
 import { spawn } from 'child_process'
-import { randomUUID } from 'crypto'
-import { readFile, rm } from 'fs/promises'
-import { tmpdir } from 'os'
-import { extname, join } from 'path'
+import { extname } from 'path'
 import type { MediaKind, PeaksResult } from '../../shared/types'
-import { ffmpeg, getEngineInfo, probe } from '../engine/ffmpeg-engine'
+import { getEngineInfo, probe } from '../engine/ffmpeg-engine'
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
 const IMAGE_CODECS = new Set(['png', 'mjpeg', 'jpeg2000', 'webp', 'bmp', 'tiff'])
@@ -98,31 +95,45 @@ export async function probeMedia(filePath: string): Promise<ProbeResult> {
   }
 }
 
-/** Video veya statik görselden küçük resim üretir, data: URL olarak döndürür. Hata olursa null. */
-export function makeThumbnail(
+/** Video veya statik görselden hızlı girdi aramalı (-ss -i öncesi) ve bellekte (pipe:1) küçük resim üretir. */
+export async function makeThumbnail(
   filePath: string,
   atSeconds: number,
   isImage = false
 ): Promise<string | null> {
-  const out = join(tmpdir(), `noircut-thumb-${randomUUID()}.jpg`)
+  const engine = await getEngineInfo()
   return new Promise((resolve) => {
-    const cmd = ffmpeg(filePath)
-    if (!isImage) cmd.seekInput(atSeconds)
-    cmd
-      .frames(1)
-      .outputOptions(['-vf', 'scale=320:-2', '-q:v', '4'])
-      .output(out)
-      .on('end', async () => {
-        try {
-          const buf = await readFile(out)
-          await rm(out, { force: true })
-          resolve(`data:image/jpeg;base64,${buf.toString('base64')}`)
-        } catch {
-          resolve(null)
-        }
-      })
-      .on('error', () => resolve(null))
-      .run()
+    const args: string[] = ['-v', 'error']
+    if (!isImage && atSeconds > 0.05) {
+      args.push('-ss', atSeconds.toFixed(2))
+    }
+    args.push(
+      '-i',
+      filePath,
+      '-frames:v',
+      '1',
+      '-vf',
+      'scale=320:-2',
+      '-q:v',
+      '5',
+      '-f',
+      'image2pipe',
+      '-vcodec',
+      'mjpeg',
+      'pipe:1'
+    )
+    const proc = spawn(engine.ffmpegPath, args, { windowsHide: true })
+    const chunks: Buffer[] = []
+    proc.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
+    proc.on('close', (code) => {
+      if (code === 0 && chunks.length > 0) {
+        const buf = Buffer.concat(chunks)
+        resolve(`data:image/jpeg;base64,${buf.toString('base64')}`)
+      } else {
+        resolve(null)
+      }
+    })
+    proc.on('error', () => resolve(null))
   })
 }
 
@@ -147,6 +158,8 @@ export async function extractPeaks(
       [
         '-v',
         'error',
+        '-threads',
+        '1',
         '-i',
         filePath,
         '-vn',

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "NoirCut",
+  "version": "1.0.5",
+  "identifier": "com.noircut.studio",
+  "build": {
+    "beforeDevCommand": "npx vite --config vite.tauri.config.ts",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npx vite build --config vite.tauri.config.ts",
+    "frontendDist": "../out/renderer"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "NoirCut Studio",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 700,
+        "resizable": true,
+        "fullscreen": false,
+        "backgroundColor": "#08080A"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["appimage", "deb", "rpm"],
+    "icon": [
+      "icons/icon.png"
+    ],
+    "category": "Video",
+    "shortDescription": "NoirCut Studio - Cinema Darkroom Video Editor (Rust + WebGL2)",
+    "longDescription": "Professional multi-track non-linear video editor with WebGL2 NoirFilm color grading, NoirAudio DSP engine, and Rust multi-core backend."
+  }
+}

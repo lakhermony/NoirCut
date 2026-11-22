@@ -12,7 +12,7 @@
 import { ChildProcess, spawn } from 'child_process'
 import { app, BrowserWindow, dialog } from 'electron'
 import { copyFileSync, existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { cpus, tmpdir } from 'os'
 import { join, resolve } from 'path'
 
 function resolveExportFfmpegPath(fallbackPath: string): string {
@@ -53,10 +53,18 @@ import { getEngineInfo } from '../engine/ffmpeg-engine'
 import { getMediaItem } from '../media/media-service'
 
 let activeProc: ChildProcess | null = null
+let lastProgressSentAt = 0
+let lastProgressPct = -1
 
-function sendProgress(win: BrowserWindow | null, percent: number): void {
+function sendProgress(win: BrowserWindow | null, percent: number, force = false): void {
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)))
+  const now = Date.now()
+  if (!force && clamped < 100 && clamped === lastProgressPct) return
+  if (!force && clamped < 100 && now - lastProgressSentAt < 140) return
+  lastProgressSentAt = now
+  lastProgressPct = clamped
   if (win && !win.isDestroyed()) {
-    win.webContents.send('export:progress', Math.max(0, Math.min(100, Math.round(percent))))
+    win.webContents.send('export:progress', clamped)
   }
 }
 
@@ -136,8 +144,8 @@ export async function exportTimeline(
   const { width, height } = EXPORT_RESOLUTION_DIM[settings.resolution]
   const fps = settings.fps
   const ext = settings.format === 'mov' ? 'mov' : 'mp4'
-  const crf = settings.quality === 'high' ? '15' : settings.quality === 'low' ? '26' : '20'
-  const preset = settings.quality === 'high' ? 'medium' : settings.quality === 'low' ? 'veryfast' : 'faster'
+  const crf = settings.quality === 'high' ? '17' : settings.quality === 'low' ? '26' : '21'
+  const preset = settings.quality === 'high' ? 'faster' : settings.quality === 'low' ? 'ultrafast' : 'veryfast'
 
   const { clips, total, offset: rangeOffset } = sliceClipsToRange(req.clips, req.rangeStart, req.rangeEnd)
   if (clips.length === 0 || total <= 0.05) {
@@ -204,6 +212,7 @@ export async function exportTimeline(
   let tempLutDir: string | null = null
   const escapeFilterPath = (p: string): string =>
     p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'")
+  const bakedLutCache = new Map<string, string>()
 
   /** Trim, hız, LUT renk derecelendirme, Halation/Mist/NoirFilm ve grain katmanını oluşturan ortak yardımcı. */
   const buildClipGradedVideoStream = (
@@ -233,14 +242,14 @@ export async function exportTimeline(
     let fxOutLabel: string | null = null
     if (c.grade && !isNeutralGrade(c.grade)) {
       if (!tempLutDir) tempLutDir = mkdtempSync(join(tmpdir(), 'noircut-lut-'))
-      const cubeFileName = `grade-${segId}.cube`
-      const cubePath = join(tempLutDir, cubeFileName)
-      const hasLogProfile = !!c.grade.cameraProfile && c.grade.cameraProfile !== 'rec709'
-      writeFileSync(
-        cubePath,
-        bakeColorGradeToCube(c.grade, customLuts, hasLogProfile ? 65 : 33),
-        'utf-8'
-      )
+      const gradeKey = JSON.stringify(c.grade)
+      let cubeFileName = bakedLutCache.get(gradeKey)
+      if (!cubeFileName) {
+        cubeFileName = `grade-${segId}.cube`
+        const cubePath = join(tempLutDir, cubeFileName)
+        writeFileSync(cubePath, bakeColorGradeToCube(c.grade, customLuts, 33), 'utf-8')
+        bakedLutCache.set(gradeKey, cubeFileName)
+      }
       // tempLutDir çalışma dizini olarak verildiği için göreli dosya adı Windows/ASCII-dışı yollardaki ':' sorununu önler
       vChain.push(`format=rgb24`, `lut3d=file='${escapeFilterPath(cubeFileName)}':interp=trilinear`)
 
@@ -879,9 +888,19 @@ export async function exportTimeline(
 
   const avail = engine.availableEncoders ?? ['libx264']
   const reqEnc = settings.encoder ?? 'auto'
+  const wantHevcCodec = settings.codec === 'h265'
   const hwEncoder: VideoEncoderId =
     reqEnc === 'auto'
-      ? (avail.find((e) => e !== 'libx264') ?? 'libx264')
+      ? wantHevcCodec
+        ? (avail.find((e) => e === 'hevc_nvenc') ??
+          (avail.includes('libx265') ? 'libx265' : 'libx264'))
+        : (avail.find(
+            (e) =>
+              e === 'h264_nvenc' ||
+              e === 'h264_vaapi' ||
+              e === 'h264_qsv' ||
+              e === 'h264_amf'
+          ) ?? 'libx264')
       : avail.includes(reqEnc)
         ? reqEnc
         : 'libx264'
@@ -913,11 +932,12 @@ export async function exportTimeline(
         : []
     const aBitrateStr = `${settings.audioBitrateKbps ?? 192}k`
 
+    const cpuThreads = String(Math.max(2, cpus().length - 2))
     const vCodecArgs =
       enc === 'hevc_nvenc' || (wantHevc && enc === 'h264_nvenc')
         ? ['-c:v', 'hevc_nvenc', '-preset', 'p4', '-cq', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
         : enc === 'libx265' || (wantHevc && enc === 'libx264')
-          ? ['-c:v', 'libx265', '-preset', preset, '-crf', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
+          ? ['-c:v', 'libx265', '-preset', preset, '-crf', crf, '-threads', cpuThreads, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
           : enc === 'h264_nvenc'
             ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
             : enc === 'h264_vaapi'
@@ -926,7 +946,7 @@ export async function exportTimeline(
                 ? ['-c:v', 'h264_qsv', '-global_quality', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
                 : enc === 'h264_amf'
                   ? ['-c:v', 'h264_amf', '-quality', 'balanced', '-qp_i', crf, '-qp_p', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
-                  : ['-c:v', 'libx264', '-preset', preset, '-crf', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
+                  : ['-c:v', 'libx264', '-preset', preset, '-crf', crf, '-threads', cpuThreads, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
 
     return {
       bin,
@@ -1012,7 +1032,7 @@ export async function exportTimeline(
         } else if (code === 0 && existsSync(tempOutPath)) {
           try {
             commitTempToFinal()
-            sendProgress(win, 100)
+            sendProgress(win, 100, true)
             resolvePromise({ ok: true, path: outPath })
           } catch (moveErr) {
             cleanupTempOut()
@@ -1036,7 +1056,7 @@ export async function exportTimeline(
       })
     })
 
-  sendProgress(win, 0)
+  sendProgress(win, 0, true)
 
   try {
     const primary = buildArgsForEncoder(hwEncoder)

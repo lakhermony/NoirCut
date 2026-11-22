@@ -221,7 +221,7 @@ function pumpWorker(worker: VideoExtractorWorker): void {
 
     worker.busy = false
     // Ana iş parçacığını (UI thread) bloklamamak için bir sonraki kareyi boşta işle
-    setTimeout(() => pumpWorker(worker), 12)
+    setTimeout(() => pumpWorker(worker), 32)
   }
 
   const onSeeked = () => finish(true)
@@ -256,6 +256,12 @@ export function requestFilmstripFrame(
     return baseImg
   }
 
+  // Ağır video için arka planda Smart Proxy üretiliyorken ham 4K/Long-GOP videoya ardışık seek atıp arayüzü dondurma;
+  // proxy tamamlandığında (-g 1 All-Intra) filmstrip kareleri milisaniyeler içinde çıkarılır.
+  if (media.needsProxy && media.proxyState === 'building' && !media.proxyUrl) {
+    return baseImg
+  }
+
   const maxDur = media.duration > 0 ? Math.max(0, media.duration - 0.05) : sourceTimeSec
   const clamped = Math.max(0, Math.min(maxDur, sourceTimeSec))
   const bucket = quantizeTime(clamped)
@@ -270,7 +276,7 @@ export function requestFilmstripFrame(
   const worker = ensureWorker(media)
   if (worker && !worker.failed && !worker.queuedSet.has(bucket)) {
     // Kuyruk çok uzadıysa en eski talepleri kırp (zoom değişiminde güncel görünümü önceliklendir)
-    if (worker.queue.length > 24) {
+    if (worker.queue.length > 14) {
       const removed = worker.queue.shift()
       if (removed !== undefined) worker.queuedSet.delete(removed)
     }

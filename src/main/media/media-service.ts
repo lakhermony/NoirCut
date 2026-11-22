@@ -248,7 +248,17 @@ export function ensureSoundscapeItemSync(presetId: NoirSoundscapeId): MediaItem 
   return item
 }
 
+const lastProxyBroadcastAt = new Map<string, number>()
+
 function broadcastProxyUpdate(update: ProxyUpdate): void {
+  const now = Date.now()
+  if (update.state === 'building') {
+    const prev = lastProxyBroadcastAt.get(update.id) ?? 0
+    if (now - prev < 180) return
+    lastProxyBroadcastAt.set(update.id, now)
+  } else {
+    lastProxyBroadcastAt.delete(update.id)
+  }
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
       win.webContents.send('media:proxy-update', update)
@@ -419,25 +429,41 @@ export function startProxyGeneration(
 
       const engine = await getEngineInfo()
       const hasNvenc = Boolean(engine.availableEncoders?.includes('h264_nvenc'))
+      const hasVaapi = Boolean(engine.availableEncoders?.includes('h264_vaapi'))
 
-      const runProxyEncode = (useNvenc: boolean) =>
+      const runProxyEncode = (mode: 'nvenc' | 'vaapi' | 'cpu') =>
         new Promise<void>((resolvePromise, rejectPromise) => {
           const bin =
-            useNvenc && engine.gpuFfmpegPath ? engine.gpuFfmpegPath : engine.ffmpegPath
+            mode !== 'cpu' && engine.gpuFfmpegPath ? engine.gpuFfmpegPath : engine.ffmpegPath
           const args = [
             '-y',
             '-v',
             'error',
             '-progress',
             'pipe:1',
-            '-nostats',
-            '-i',
-            item.path,
-            '-vf',
-            vfScaleExpr
+            '-nostats'
           ]
-          if (useNvenc) {
+          if (mode === 'vaapi') {
+            args.push('-vaapi_device', '/dev/dri/renderD128')
+          } else if (mode === 'cpu') {
+            args.push('-threads', '2')
+          }
+          args.push('-i', item.path)
+          if (mode === 'vaapi') {
             args.push(
+              '-vf',
+              `scale=${targetW}:-2,format=nv12,hwupload`,
+              '-c:v',
+              'h264_vaapi',
+              '-qp',
+              '24',
+              '-g',
+              '1'
+            )
+          } else if (mode === 'nvenc') {
+            args.push(
+              '-vf',
+              vfScaleExpr,
               '-c:v',
               'h264_nvenc',
               '-preset',
@@ -451,6 +477,8 @@ export function startProxyGeneration(
             )
           } else {
             args.push(
+              '-vf',
+              vfScaleExpr,
               '-c:v',
               'libx264',
               '-preset',
@@ -458,15 +486,17 @@ export function startProxyGeneration(
               '-tune',
               'fastdecode',
               '-crf',
-              '23',
+              '24',
               '-g',
               '1',
               '-pix_fmt',
-              'yuv420p'
+              'yuv420p',
+              '-threads',
+              '2'
             )
           }
           if (item.hasAudio) {
-            args.push('-c:a', 'aac', '-b:a', '160k', '-ac', '2', '-ar', '48000')
+            args.push('-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '48000')
           } else {
             args.push('-an')
           }
@@ -496,12 +526,18 @@ export function startProxyGeneration(
 
       if (hasNvenc) {
         try {
-          await runProxyEncode(true)
+          await runProxyEncode('nvenc')
         } catch {
-          await runProxyEncode(false)
+          await runProxyEncode('cpu')
+        }
+      } else if (hasVaapi) {
+        try {
+          await runProxyEncode('vaapi')
+        } catch {
+          await runProxyEncode('cpu')
         }
       } else {
-        await runProxyEncode(false)
+        await runProxyEncode('cpu')
       }
 
       approvedPaths.add(outPath)
