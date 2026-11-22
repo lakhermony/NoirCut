@@ -127,7 +127,16 @@ function cloneMarkerList(ms: CaseMarker[]): CaseMarker[] {
   return ms.map((m) => ({ ...m }))
 }
 
-function cloneClipItem(c: TimelineClip): TimelineClip {
+function cloneClipItem(c: TimelineClip, seen: Set<TimelineClip> = new Set()): TimelineClip {
+  if (!c || typeof c !== 'object') return c
+  if (seen.has(c)) {
+    return {
+      ...c,
+      nestedClips: undefined
+    }
+  }
+  const nextSeen = new Set(seen)
+  nextSeen.add(c)
   return {
     ...c,
     grade: c.grade ? cloneColorGrade(c.grade) : undefined,
@@ -135,12 +144,14 @@ function cloneClipItem(c: TimelineClip): TimelineClip {
     transform: c.transform ? { ...c.transform } : undefined,
     keyframes: cloneKeyframes(c.keyframes),
     audioEffects: c.audioEffects ? { ...c.audioEffects } : undefined,
-    nestedClips: c.nestedClips ? c.nestedClips.map(cloneClipItem) : undefined
+    nestedClips: Array.isArray(c.nestedClips)
+      ? c.nestedClips.map((child) => cloneClipItem(child, nextSeen))
+      : undefined
   }
 }
 
 function cloneClipList(cs: TimelineClip[]): TimelineClip[] {
-  return cs.map(cloneClipItem)
+  return Array.isArray(cs) ? cs.map((c) => cloneClipItem(c)) : []
 }
 
 function cloneLaneMap(ls: LaneMap): LaneMap {
@@ -595,9 +606,21 @@ export default function App() {
   const cut = useCallback(() => {
     const t = round3(player.timeRef.current)
     const cs = stateSnapshotRef.current.clips
-    const canSplit = (c: TimelineClip) => t > c.start + 0.05 && t < clipEndExact(c) - 0.05
+    const canSplit = (c: TimelineClip) =>
+      !stateSnapshotRef.current.lanes[c.lane]?.locked &&
+      t > c.start + 0.05 &&
+      t < clipEndExact(c) - 0.05
     const selected = selectedClipId ? cs.find((c) => c.id === selectedClipId && canSplit(c)) : undefined
-    const targets = selected ? [selected] : cs.filter(canSplit)
+    const targets = selected
+      ? cs.filter(
+          (c) =>
+            canSplit(c) &&
+            (c.id === selected.id ||
+              (selected.linkedClipId && c.id === selected.linkedClipId) ||
+              c.linkedClipId === selected.id ||
+              (selected.groupId && c.groupId === selected.groupId))
+        )
+      : cs.filter(canSplit)
     if (targets.length === 0) return
 
     recordHistory('Klip Kesme')
@@ -951,10 +974,11 @@ export default function App() {
       id: nestedId,
       name: `İç İçe Sekans (${selClips.length} Klip)`,
       start: minStart,
+      in: 0,
       duration: totalDur,
       groupId: null,
       linkedClipId: null,
-      nestedClips: selClips.map(cloneClipItem)
+      nestedClips: selClips.map((c) => cloneClipItem(c))
     }
     recordHistory(`İç İçe Sekans Oluştur (${selClips.length} klip)`)
     setClips((cs) => cs.filter((c) => !idSet.has(c.id)).concat(nestedClip))

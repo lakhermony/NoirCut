@@ -7,6 +7,7 @@ import {
   computeAutoDuckMultiplierAt,
   dbToGain,
   findNextBaseClip,
+  flattenNestedClips,
   getOrderedAudioLanes,
   getOrderedVideoLanesAsc,
   isAudioLane,
@@ -49,13 +50,14 @@ const otherSlot = (s: VideoSlot): VideoSlot => (s === 'A' ? 'B' : 'A')
  * gizli tamponda hazırlanır; geçiş anında `videoRef.current` hazır tampona çevrilir (siyah kare yok).
  */
 export function usePlayer(
-  clips: TimelineClip[],
+  rawClips: TimelineClip[],
   lanes: LaneMap,
   mediaItems: MediaItem[],
   autoDucking = false,
   proxyPlaybackMode: ProxyPlaybackMode = 'auto',
   masterGainDb = 0
 ) {
+  const clips = useMemo(() => flattenNestedClips(rawClips), [rawClips])
   /** Her zaman EKRANDAKİ (aktif) tamponu gösterir; WebGL2 motoru ve skoplar bunu okur. */
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const slotElsRef = useRef<Record<VideoSlot, HTMLVideoElement | null>>({ A: null, B: null })

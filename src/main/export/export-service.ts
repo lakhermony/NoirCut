@@ -11,7 +11,7 @@
  */
 import { ChildProcess, spawn } from 'child_process'
 import { app, BrowserWindow, dialog } from 'electron'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { copyFileSync, existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 
@@ -37,6 +37,7 @@ import {
   buildFfmpegKeyframeExpr,
   dbToGain,
   defaultExportSettings,
+  flattenNestedClips,
   getOrderedVideoLanesAsc,
   getParamKeyframes,
   isAudioLane,
@@ -82,30 +83,6 @@ export function resumeActiveExport(): boolean {
   } catch {
     return false
   }
-}
-
-function flattenNestedClips(rawClips: TimelineClip[]): TimelineClip[] {
-  const out: TimelineClip[] = []
-  for (const c of rawClips) {
-    if (c.nestedClips && c.nestedClips.length > 0) {
-      const innerMinStart = Math.min(...c.nestedClips.map((nc) => nc.start))
-      const innerFlattened = flattenNestedClips(c.nestedClips)
-      for (const nc of innerFlattened) {
-        const relStart = Math.max(0, nc.start - innerMinStart)
-        if (relStart >= c.duration - 0.01) continue
-        const clippedDur = Math.min(nc.duration, c.duration - relStart)
-        if (clippedDur <= 0.02) continue
-        out.push({
-          ...nc,
-          start: Number((c.start + relStart).toFixed(3)),
-          duration: Number(clippedDur.toFixed(3))
-        })
-      }
-    } else {
-      out.push(c)
-    }
-  }
-  return out
 }
 
 function sliceClipsToRange(
@@ -973,13 +950,42 @@ export async function exportTimeline(
         '48000',
         '-movflags',
         '+faststart',
-        outPath
+        '-f',
+        ext === 'mov' ? 'mov' : 'mp4',
+        tempOutPath
       ]
+    }
+  }
+
+  const tempOutPath = `${outPath}.part-${process.pid}-${Date.now()}.${ext}`
+  const cleanupTempOut = () => {
+    try {
+      if (existsSync(tempOutPath)) rmSync(tempOutPath, { force: true })
+    } catch {
+      // yoksay
+    }
+  }
+  const commitTempToFinal = () => {
+    try {
+      renameSync(tempOutPath, outPath)
+    } catch {
+      if (process.platform === 'win32' && existsSync(outPath)) {
+        try {
+          rmSync(outPath, { force: true })
+          renameSync(tempOutPath, outPath)
+          return
+        } catch {
+          // copy fallback
+        }
+      }
+      copyFileSync(tempOutPath, outPath)
+      cleanupTempOut()
     }
   }
 
   const runSpawn = (bin: string, args: string[]): Promise<ExportResult> =>
     new Promise((resolvePromise) => {
+      cleanupTempOut()
       const proc = spawn(bin, args, {
         ...(tempLutDir ? { cwd: tempLutDir } : {}),
         windowsHide: true
@@ -1001,21 +1007,22 @@ export async function exportTimeline(
       proc.on('close', (code, signal) => {
         activeProc = null
         if (signal === 'SIGTERM') {
-          try {
-            if (existsSync(outPath)) rmSync(outPath, { force: true })
-          } catch {
-            // yoksay
-          }
+          cleanupTempOut()
           resolvePromise({ ok: false, canceled: true })
-        } else if (code === 0 && existsSync(outPath)) {
-          sendProgress(win, 100)
-          resolvePromise({ ok: true, path: outPath })
-        } else {
+        } else if (code === 0 && existsSync(tempOutPath)) {
           try {
-            if (existsSync(outPath)) rmSync(outPath, { force: true })
-          } catch {
-            // yoksay
+            commitTempToFinal()
+            sendProgress(win, 100)
+            resolvePromise({ ok: true, path: outPath })
+          } catch (moveErr) {
+            cleanupTempOut()
+            resolvePromise({
+              ok: false,
+              error: moveErr instanceof Error ? moveErr.message : String(moveErr)
+            })
           }
+        } else {
+          cleanupTempOut()
           resolvePromise({
             ok: false,
             error: stderr.trim() || `FFmpeg çıkış kodu: ${code}`
@@ -1024,6 +1031,7 @@ export async function exportTimeline(
       })
       proc.on('error', (err) => {
         activeProc = null
+        cleanupTempOut()
         resolvePromise({ ok: false, error: err.message })
       })
     })

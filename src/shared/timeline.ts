@@ -946,3 +946,64 @@ export function rippleCloseGap(
   )
   return { clips: next, shiftedLanes }
 }
+
+/**
+ * İç İçe Sekansları (Nested Sequence / Compound Clip) hem canlı önizleme (usePlayer)
+ * hem de dışa aktarma (export-service) için gerçek alt kliplerine açar (flatten).
+ * - Çok katmanlı (nested-in-nested) yapıları destekler.
+ * - Döngüsel referanslara ve aşırı derinliğe (maxDepth = 8) karşı korumalıdır.
+ * - Üst sekansın trim (`in`) ve `duration` sınırlarını alt kliplere uygular.
+ */
+export function flattenNestedClips(
+  rawClips: TimelineClip[],
+  visited: Set<string> = new Set(),
+  depth = 0
+): TimelineClip[] {
+  if (!Array.isArray(rawClips) || depth > 8) return Array.isArray(rawClips) ? rawClips : []
+  const out: TimelineClip[] = []
+  for (const c of rawClips) {
+    if (
+      Array.isArray(c.nestedClips) &&
+      c.nestedClips.length > 0 &&
+      !visited.has(c.id)
+    ) {
+      const nextVisited = new Set(visited)
+      nextVisited.add(c.id)
+      const innerFlattened = flattenNestedClips(c.nestedClips, nextVisited, depth + 1)
+      if (innerFlattened.length === 0) {
+        out.push(c)
+        continue
+      }
+      const innerMinStart = Math.min(...innerFlattened.map((nc) => nc.start))
+      const containerTrimIn = Math.max(0, c.in ?? 0)
+      const containerDur = Math.max(0.05, c.duration)
+
+      for (const nc of innerFlattened) {
+        const relStart = round3(nc.start - innerMinStart)
+        const relEnd = round3(relStart + nc.duration)
+        const visStart = Math.max(relStart, containerTrimIn)
+        const visEnd = Math.min(relEnd, containerTrimIn + containerDur)
+        const visDur = round3(visEnd - visStart)
+        if (visDur <= 0.02) continue
+
+        const headCut = Math.max(0, visStart - relStart)
+        const ncSpd = Math.max(0.25, Math.min(4.0, (nc.speed ?? 100) / 100))
+        const timelineStart = round3(c.start + (visStart - containerTrimIn))
+        out.push({
+          ...nc,
+          id: `${c.id}::${nc.id}`,
+          start: timelineStart,
+          in: round3(nc.in + headCut * ncSpd),
+          duration: visDur,
+          fadeIn: Math.max(0, round3(nc.fadeIn - headCut)),
+          fadeOut: Math.max(0, round3(nc.fadeOut - Math.max(0, relEnd - visEnd))),
+          nestedClips: undefined
+        })
+      }
+    } else {
+      out.push(c)
+    }
+  }
+  return out
+}
+
