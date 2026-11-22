@@ -1,6 +1,10 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod export;
+mod foley;
+mod lut_bake;
+
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -10,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use tauri::{
   http::{header, Response, StatusCode},
@@ -1010,42 +1014,191 @@ fn shell_reveal(file_path: String) {
   let _ = Command::new("explorer").arg("/select,").arg(&file_path).spawn();
 }
 
+fn autosave_base_dir() -> PathBuf {
+  let base = std::env::temp_dir().join("noircut-autosaves");
+  let _ = fs::create_dir_all(base.join("snapshots"));
+  base
+}
+
+fn atomic_write_json(target: &Path, val: &Value) -> std::io::Result<()> {
+  let tmp = target.with_extension(format!("tmp-{}-{}", std::process::id(), chrono::Utc::now().timestamp_millis()));
+  fs::write(&tmp, serde_json::to_string(val).unwrap_or_default())?;
+  fs::rename(&tmp, target)
+}
+
 #[tauri::command]
 fn autosave_write(project: Value, label: Option<String>) -> Value {
-  let dir = std::env::temp_dir().join("noircut-autosaves");
-  let _ = fs::create_dir_all(&dir);
-  let id = format!("snap-{}", chrono::Utc::now().timestamp_millis());
-  let payload = json!({
-    "meta": {
-      "id": id,
-      "savedAt": chrono::Utc::now().to_rfc3339(),
-      "clipCount": project["clips"].as_array().map(|a| a.len()).unwrap_or(0),
-      "duration": 0,
-      "label": label.unwrap_or_else(|| "Otomatik Yedek".to_string())
-    },
-    "project": project
+  let base = autosave_base_dir();
+  let snaps_dir = base.join("snapshots");
+  let now = chrono::Utc::now();
+  let id = format!("snap-{}", now.timestamp_millis());
+  let clips = project["clips"].as_array();
+  let clip_count = clips.map(|a| a.len()).unwrap_or(0);
+  let mut duration = 0.0_f64;
+  if let Some(arr) = clips {
+    for c in arr {
+      let s = c["start"].as_f64().unwrap_or(0.0);
+      let d = c["duration"].as_f64().unwrap_or(0.0);
+      if s + d > duration {
+        duration = s + d;
+      }
+    }
+  }
+  let meta = json!({
+    "id": id,
+    "savedAt": now.to_rfc3339(),
+    "clipCount": clip_count,
+    "duration": (duration * 100.0).round() / 100.0,
+    "label": label.unwrap_or_else(|| "Otomatik Yedek".to_string())
   });
-  let target = dir.join("latest.json");
-  let _ = fs::write(target, serde_json::to_string(&payload).unwrap_or_default());
+  let payload = json!({ "meta": meta, "project": project });
+  let snap_file = snaps_dir.join(format!("{}.json", id));
+  if atomic_write_json(&snap_file, &payload).is_err() {
+    return json!({ "ok": false });
+  }
+
+  let has_markers = project["markers"].as_array().map(|a| !a.is_empty()).unwrap_or(false);
+  let session = json!({
+    "active": clip_count > 0 || has_markers,
+    "updatedAt": now.to_rfc3339(),
+    "activeSnapshotId": id
+  });
+  let _ = atomic_write_json(&base.join("session.json"), &session);
+
+  if let Ok(entries) = fs::read_dir(&snaps_dir) {
+    let mut files: Vec<String> = entries
+      .filter_map(|e| e.ok())
+      .filter_map(|e| e.file_name().into_string().ok())
+      .filter(|n| n.ends_with(".json"))
+      .collect();
+    files.sort();
+    files.reverse();
+    for old in files.into_iter().skip(10) {
+      let _ = fs::remove_file(snaps_dir.join(old));
+    }
+  }
   json!({ "ok": true })
 }
 
 #[tauri::command]
 fn autosave_status() -> Value {
-  json!({ "hasUncleanExit": false, "latest": null, "snapshots": [] })
+  let base = autosave_base_dir();
+  let snaps_dir = base.join("snapshots");
+  let session_active = fs::read_to_string(base.join("session.json"))
+    .ok()
+    .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+    .and_then(|v| v["active"].as_bool())
+    .unwrap_or(false);
+
+  let mut entries: Vec<Value> = Vec::new();
+  if let Ok(rd) = fs::read_dir(&snaps_dir) {
+    for e in rd.flatten() {
+      if let Ok(raw) = fs::read_to_string(e.path()) {
+        if let Ok(parsed) = serde_json::from_str::<Value>(&raw) {
+          if parsed["meta"]["id"].is_string() {
+            entries.push(parsed["meta"].clone());
+          }
+        }
+      }
+    }
+  }
+  entries.sort_by(|a, b| {
+    let sa = a["savedAt"].as_str().unwrap_or("");
+    let sb = b["savedAt"].as_str().unwrap_or("");
+    sb.cmp(sa)
+  });
+  let latest = entries.first().cloned().unwrap_or(Value::Null);
+  let has_unclean = session_active && latest["clipCount"].as_u64().unwrap_or(0) > 0;
+  json!({
+    "hasUncleanExit": has_unclean,
+    "latest": latest,
+    "snapshots": entries
+  })
 }
 
 #[tauri::command]
-fn autosave_restore() -> Value {
-  json!({ "ok": false, "error": "Yedek bulunamadı." })
+fn autosave_restore(app: AppHandle, state: State<'_, Arc<AppState>>, snapshot_id: String) -> Value {
+  let safe_id: String = snapshot_id
+    .chars()
+    .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+    .collect();
+  if safe_id.is_empty() {
+    return json!({ "ok": false, "error": "Geçersiz yedek kimliği." });
+  }
+  let target = autosave_base_dir().join("snapshots").join(format!("{}.json", safe_id));
+  let Ok(raw) = fs::read_to_string(&target) else {
+    return json!({ "ok": false, "error": "Otomatik yedek bulunamadı." });
+  };
+  let Ok(parsed) = serde_json::from_str::<Value>(&raw) else {
+    return json!({ "ok": false, "error": "Otomatik yedek dosyası bozuk." });
+  };
+  let project = &parsed["project"];
+  let mut media_items = Vec::new();
+  let mut media_errors = Vec::new();
+  if let Some(refs) = project["mediaRefs"].as_array() {
+    for r in refs {
+      if let Some(p) = r["path"].as_str() {
+        match build_media_item(&app, &state, p) {
+          Ok(item) => media_items.push(item),
+          Err(e) => media_errors.push(format!("{}: {}", p, e)),
+        }
+      }
+    }
+  }
+  autosave_dismiss();
+  json!({
+    "ok": true,
+    "project": project,
+    "mediaItems": media_items,
+    "mediaErrors": media_errors
+  })
 }
 
 #[tauri::command]
-fn autosave_dismiss() {}
+fn autosave_dismiss() {
+  let base = autosave_base_dir();
+  let session = json!({
+    "active": false,
+    "updatedAt": chrono::Utc::now().to_rfc3339(),
+    "activeSnapshotId": Value::Null
+  });
+  let _ = atomic_write_json(&base.join("session.json"), &session);
+}
 
 #[tauri::command]
-fn soundscape_generate() -> Option<MediaItem> {
-  None
+fn soundscape_generate(state: State<'_, Arc<AppState>>, preset_id: String) -> Option<MediaItem> {
+  let (label, dur, wav, peaks) = foley::synthesize_soundscape(&preset_id);
+  let sfx_dir = std::env::temp_dir().join("noircut-soundscape");
+  let _ = fs::create_dir_all(&sfx_dir);
+  let id = format!("sfx-{}", preset_id);
+  let out_path = sfx_dir.join(format!("{}.wav", id)).to_string_lossy().to_string();
+  if !Path::new(&out_path).exists() {
+    let _ = fs::write(&out_path, &wav);
+  }
+  state.approved_paths.lock().unwrap().insert(out_path.clone());
+
+  let item = MediaItem {
+    id: id.clone(),
+    path: out_path.clone(),
+    name: format!("SFX · {}", label),
+    media_kind: "audio".into(),
+    duration: dur,
+    width: 0,
+    height: 0,
+    codec: "none".into(),
+    fps: 24.0,
+    has_audio: true,
+    audio_codec: Some("pcm_s16le".into()),
+    thumbnail: None,
+    url: media_url(&out_path),
+    needs_proxy: false,
+    proxy_state: "none".into(),
+    proxy_progress: 1.0,
+    proxy_url: None,
+  };
+  state.media_registry.lock().unwrap().insert(id.clone(), item.clone());
+  state.peaks_cache.lock().unwrap().insert(id, PeaksPayload { peaks, per_second: 50 });
+  Some(item)
 }
 
 #[tauri::command]
@@ -1082,141 +1235,8 @@ fn export_resume(state: State<'_, Arc<AppState>>) -> bool {
 
 #[tauri::command]
 fn export_run(app: AppHandle, state: State<'_, Arc<AppState>>, req: Value) -> ExportResult {
-  let settings = &req["settings"];
-  let ext = if settings["format"].as_str() == Some("mov") {
-    "mov"
-  } else {
-    "mp4"
-  };
-
-  let out_path = if let Some(p) = req["outputPath"].as_str().filter(|s| !s.is_empty()) {
-    p.to_string()
-  } else {
-    let Some(file) = rfd::FileDialog::new()
-      .set_title(&format!("Videoyu Dışa Aktar ({})", ext.to_uppercase()))
-      .set_file_name(&format!("NoirCut-Export.{}", ext))
-      .add_filter(&ext.to_uppercase(), &[ext])
-      .save_file()
-    else {
-      return ExportResult {
-        ok: false,
-        canceled: Some(true),
-        path: None,
-        error: None,
-      };
-    };
-    file.to_string_lossy().to_string()
-  };
-
-  let clips = req["clips"].as_array().cloned().unwrap_or_default();
-  if clips.is_empty() {
-    return ExportResult {
-      ok: false,
-      canceled: None,
-      path: None,
-      error: Some("Dışa aktarılacak klip bulunamadı.".into()),
-    };
-  }
-
-  let first_media_id = clips[0]["mediaId"].as_str().unwrap_or("");
-  let reg = state.media_registry.lock().unwrap();
-  let Some(first_media) = reg.get(first_media_id).cloned() else {
-    return ExportResult {
-      ok: false,
-      canceled: None,
-      path: None,
-      error: Some("Kaynak medya bulunamadı.".into()),
-    };
-  };
-  drop(reg);
-
   let engine = get_or_init_engine(&state);
-  let has_vaapi = engine.available_encoders.contains(&"h264_vaapi".to_string());
-  let bin = if has_vaapi {
-    engine.gpu_ffmpeg_path.unwrap_or(engine.ffmpeg_path)
-  } else {
-    engine.ffmpeg_path
-  };
-
-  let temp_out = format!("{}.part-{}.{}", out_path, std::process::id(), ext);
-  let mut args: Vec<String> = vec!["-y".into(), "-v".into(), "error".into()];
-  if has_vaapi {
-    args.extend(["-vaapi_device".into(), "/dev/dri/renderD128".into()]);
-  }
-  args.extend(["-i".into(), first_media.path.clone()]);
-  if has_vaapi {
-    args.extend([
-      "-vf".into(),
-      "format=nv12,hwupload".into(),
-      "-c:v".into(),
-      "h264_vaapi".into(),
-      "-qp".into(),
-      "18".into(),
-    ]);
-  } else {
-    args.extend([
-      "-c:v".into(),
-      "libx264".into(),
-      "-preset".into(),
-      "faster".into(),
-      "-crf".into(),
-      "18".into(),
-      "-pix_fmt".into(),
-      "yuv420p".into(),
-    ]);
-  }
-  args.extend([
-    "-c:a".into(),
-    "aac".into(),
-    "-b:a".into(),
-    "192k".into(),
-    "-movflags".into(),
-    "+faststart".into(),
-    "-f".into(),
-    ext.into(),
-    temp_out.clone(),
-  ]);
-
-  let _ = app.emit("export:progress", 0);
-  let Ok(mut child) = Command::new(&bin)
-    .args(&args)
-    .stdout(Stdio::null())
-    .stderr(Stdio::piped())
-    .spawn()
-  else {
-    return ExportResult {
-      ok: false,
-      canceled: None,
-      path: None,
-      error: Some("FFmpeg başlatılamadı.".into()),
-    };
-  };
-
-  *state.active_export_pid.lock().unwrap() = Some(child.id());
-  let status = child.wait();
-  *state.active_export_pid.lock().unwrap() = None;
-
-  match status {
-    Ok(st) if st.success() && Path::new(&temp_out).exists() => {
-      let _ = fs::rename(&temp_out, &out_path);
-      let _ = app.emit("export:progress", 100);
-      ExportResult {
-        ok: true,
-        canceled: None,
-        path: Some(out_path),
-        error: None,
-      }
-    }
-    _ => {
-      let _ = fs::remove_file(&temp_out);
-      ExportResult {
-        ok: false,
-        canceled: None,
-        path: None,
-        error: Some("Render iptal edildi veya hata oluştu.".into()),
-      }
-    }
-  }
+  export::run_full_export(&app, &state, &engine, &req)
 }
 
 fn main() {
