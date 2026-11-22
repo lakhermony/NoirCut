@@ -7,13 +7,13 @@
 **Sinema Karanlık Odası & Profesyonel Masaüstü Video Kurgu / Post-Prodüksiyon Sistemi**
 
 [![Sürüm](https://img.shields.io/badge/sürüm-v1.0.5_Studio-B7E36A?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
-[![Platform](https://img.shields.io/badge/platform-Linux_AppImage_%7C_Windows_x64-1B1E24?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
-[![Teknoloji](https://img.shields.io/badge/Electron_45-React_19_%7C_WebGL2_%7C_WebAudio_%7C_FFmpeg-242830?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
+[![Platform](https://img.shields.io/badge/platform-Linux_AppImage_%7C_DEB_%7C_Windows_x64-1B1E24?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
+[![Teknoloji](https://img.shields.io/badge/Tauri_v2_(Rust)-React_19_%7C_WebGL2_%7C_WebAudio_%7C_FFmpeg-242830?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
 [![Lisans](https://img.shields.io/badge/lisans-MIT-B7E36A?style=for-the-badge&labelColor=101114)](LICENSE)
 
-*Aboneliksiz, bulut kilitsiz, yerel WebGL2 GPU renk motoru, Web Audio API (`NoirAudio Engine`) ve gömülü/sistem FFmpeg gücüyle çalışan modern çok kanallı doğrusal olmayan video düzenleyici (NLE).*
+*Aboneliksiz, bulut kilitsiz, Tauri v2 (Rust) çekirdeği, yerel WebGL2 GPU renk motoru, Web Audio API (`NoirAudio Engine`) ve FFmpeg gücüyle çalışan modern çok kanallı doğrusal olmayan video düzenleyici (NLE).*
 
-[Özellik Envanteri](#özellik-envanteri-ve-olgunluk-durumu-v105) · [Çalışma Alanları](#çalışma-alanları) · [Kurulum & Geliştirme](#kurulum-ve-geliştirme) · [Klavye Kısayolları](#klavye-kısayolları) · [Dokümantasyon](#dokümantasyon)
+[İndirme & Boyutlar](#indirme-ve-paket-boyutları-v105) · [Özellik Envanteri](#özellik-envanteri-ve-olgunluk-durumu-v105) · [Çalışma Alanları](#çalışma-alanları) · [Kurulum & Geliştirme](#kurulum-ve-geliştirme) · [Klavye Kısayolları](#klavye-kısayolları) · [Dokümantasyon](#dokümantasyon)
 
 </div>
 
@@ -50,8 +50,12 @@ Her özelliğin mevcut gerçek durum etiketi aşağıda şeffaf biçimde belirti
 | **Klip Gruplama (`Ctrl+G`) & Bağlı A/V (`Link / Unlink`)** | `STABLE` | Video ve ses kliplerini bağlama/çözme; Razor kesimi sonrasında sol ve sağ parçaların `linkedClipId` eşleşmesini otomatik koruma. |
 | **İç İçe Sekanslar (`Nested Sequences / Compound Clips`)** | `STABLE` | Çok katmanlı iç içe sekans oluşturma/çözme; `flattenNestedClips` ile hem canlı önizlemede hem FFmpeg dışa aktarmada alt kliplerin tam zaman ofsetleriyle oynatılması. |
 | **Klip Transform & Keyframe Animasyonu** | `STABLE` | `Scale`, `Position X/Y`, `Rotation`, `Opacity` için `linear` ve `ease-in-out` keyframe interpolasyonu. |
+| **Speed Ramp (Değişken Hız Eğrisi)** | `STABLE` | Klip içi sabit hızın yanında çok noktalı keyframe hız eğrisi (`%25–%400` Slow-Mo / Pulse / Hızlan), önizleme integrasyonu ve FFmpeg export uyumu. |
+| **Sürüklenebilir Ses/Opaklık Keyframe Çizgisi (Rubberband)** | `STABLE` | Doğrudan timeline klibi üzerinde `Shift+Tık`/`Çift Tık` ile ses (dB) ve opaklık kontrol noktası ekleme, sürükleme ve silme. |
+| **Geçiş Efektleri Galerisi (`Transitions`)** | `STABLE` | `Cross Dissolve`, `Dip to Black`, `Wipe Left`, `Slide Left`, `Zoom In` ve `Film Burn` geçişleri (canlı önizleme + FFmpeg export). |
+| **İkili Monitör (Source + Program) & Kare Snapshot** | `STABLE` | Kütüphanedeki videoyu sol Source Monitörde izleyip `I`/`O` ile 3-Point Editing yapma ve tek tıkla PNG kare anlık görüntüsü (`Snapshot`) alma. |
 | **Otomatik Sessizlik Algılama (Silence Detection)** | `STABLE` | Ayarlanabilir dB eşiği, minimum süre ve `padding ms` ile sessiz bölgeleri tarama; işaretçi ekleme veya kullanıcı onaylı Ripple kesim. |
-| **Undo / Redo Geçmişi ve Otomatik Kayıt (`Autosave`)** | `STABLE` | Döngüsel referans korumalı derin kopyalama (`cloneClipItem`, `cloneLaneMap`), 8 saniyede bir atomik `.tmp` otomatik yedek ve çökme kurtarma. |
+| **Undo / Redo Geçmişi, Autosave & Proje Paketleme** | `STABLE` | Döngüsel referans korumalı derin kopyalama, 8 sn atomik `.tmp` autosave ve **Paketle (Archive/Consolidate)** ile tüm medyaları tek taşınabilir klasörde toplama. |
 
 ### 2. Akıllı Proxy ve Medya Yönetimi (`PROXY`)
 
@@ -65,7 +69,8 @@ Her özelliğin mevcut gerçek durum etiketi aşağıda şeffaf biçimde belirti
 
 | Özellik | Durum | Teknik Açıklama |
 | :--- | :---: | :--- |
-| **3D LUT Motoru (`17³`, `33³`, `65³` `.cube`)** | `STABLE` | 19 yerleşik LUT, özel `.cube` yükleme ve dışa aktarma için trilinear 3D LUT pişirme (`bakeColorGradeToCube`). |
+| **3D LUT Motoru (`17³`, `33³`, `65³` `.cube`) & Rayon Baker** | `STABLE` | 19 yerleşik LUT, özel `.cube` yükleme ve Rust `rayon` çok çekirdekli paralel 33³ `.cube` üretici. |
+| **Maskeleme & Sansür (`Power Window / Blur / Mosaic / Vignette`)** | `STABLE` | Elips veya dikdörtgen alan seçimiyle yüz/plaka sansürü (`Gaussian Blur`, `Mozaik`) ve ayarlanabilir `Vignette` (canlı önizleme + FFmpeg export). |
 | **Birincil & İkincil Renk Araçları (LGG, Offset, Curves, HSL)** | `STABLE` | Kamera Log profilleri (`Rec.709`, `S-Log3`, `C-Log3`, `V-Log`, `Arri LogC3`), Auto WB, Damlalık WB, Lift/Gamma/Gain/Offset, RGB/Luma eğrileri ve 8-vektör HSL seçici renk. |
 | **Film Emülasyonu & Optik Efektler** | `STABLE` | `Kodak 2383`, `Fujifilm 3513`, `Kodak 5219`, `Ilford HP5`, `Silver Noir` film stokları; Halation, Bloom, Mist/Diffusion ve Film Grain. |
 | **Chroma Key (Yeşil / Mavi Perde)** | `STABLE` | Özel anahtar renk, tolerans, kenar yumuşatma, spill bastırma; `V1` kanalında özel `bgColor` arka plan birleştirme ve `V2+` kanallarında şeffaf bindirme. |
@@ -87,8 +92,8 @@ Her özelliğin mevcut gerçek durum etiketi aşağıda şeffaf biçimde belirti
 
 | Özellik | Durum | Teknik Açıklama |
 | :--- | :---: | :--- |
-| **Altyazı Düzenleyici, `.srt` / `.vtt` ve PNG Burn-In Export** | `STABLE` | Zaman damgalı altyazı düzenleme, CPS analizi, `.srt`/`.vtt` içe-dışa aktarma, canlı önizleme ve `libass` gerektirmeyen yüksek çözünürlüklü PNG katmanlı Burn-In dışa aktarma. |
-| **Ses Zarfı Tabanlı Otomatik Altyazı Zamanlama** | `PARTIAL` | Mevcut otomatik oluşturucu PCM ses tepe zarfından konuşma aralıklarını (VAD) çıkarıp şablon metin yerleştirir; gerçek çevrimdışı sinirsel konuşma tanıma (Whisper ASR) henüz gömülü değildir (`PLANNED`). |
+| **Altyazı Düzenleyici, Karaoke/Hormozi Modu & Burn-In** | `STABLE` | Zaman damgalı altyazı düzenleme, 9:16 Reels/Shorts **Hormozi / Karaoke / Daktilo** kelime vurgusu, `.srt`/`.vtt` içe-dışa aktarma ve PNG Burn-In. |
+| **Çevrimdışı Konuşmadan Metne (`Whisper.cpp` + VAD)** | `STABLE` | Sistemde `whisper-cli` / `whisper` / `faster-whisper` varsa gerçek Türkçe/İngilizce konuşma deşifresi; yoksa otomatik PCM ses zarfı (VAD) zamanlaması. |
 | **Sinematik Tipografi & Jenerik Stüdyosu** | `STABLE` | 5 jenerik şablonu, 20 yerleşik font, özel `.ttf/.otf/.woff2` yükleme, TR→EN ASCII dönüştürücü, Neon Glow ve sentetik Foley ses senkronu. |
 
 ### 6. Dışa Aktarma, Donanım Hızlandırma ve Render Kuyruğu (`EXPORT`)
@@ -115,19 +120,31 @@ flowchart LR
 
 ---
 
+## İndirme ve Paket Boyutları (v1.0.5)
+
+Tauri v2 + Rust çekirdeğine geçiş ile Linux paket boyutları **%66 – %98** oranında küçültülmüştür. Tüm kurulum paketleri [Releases (v1.0.5)](https://github.com/lakhermony/NoirCut/releases/tag/v1.0.5) sayfasından indirilebilir:
+
+| Platform / Paket | Dosya Adı | Dosya Boyutu | Mimari |
+| :--- | :--- | :---: | :--- |
+| **Linux Taşınabilir (Önerilen)** | `NoirCut_1.0.5_amd64.AppImage` | **79.7 MiB** (83.6 MB) | Tauri v2 + Rust (`x86_64`) |
+| **Debian / Ubuntu / Mint** | `NoirCut_1.0.5_amd64.deb` | **3.78 MiB** (3.96 MB) | Tauri v2 + Rust (`x86_64`) |
+| **Windows Kurulum (NSIS)** | `NoirCut.Setup.1.0.5.exe` | **263.5 MiB** (276.3 MB) | Electron Legacy (`x64`) |
+| **Windows Taşınabilir** | `NoirCut.1.0.5.exe` | **230.7 MiB** (241.9 MB) | Electron Legacy (`x64`) |
+
 ## Kurulum ve Geliştirme
 
 ### Son Kullanıcı Kurulumu
-- **Linux (x64):** [Releases](https://github.com/lakhermony/NoirCut/releases) sayfasından `NoirCut-1.0.5.AppImage` dosyasını indirin, çalıştırma izni verin ve başlatın:
+- **Linux (x64 — AppImage):** [Releases](https://github.com/lakhermony/NoirCut/releases/tag/v1.0.5) sayfasından `NoirCut_1.0.5_amd64.AppImage` (79.7 MiB) dosyasını indirin, çalıştırma izni verin ve başlatın:
   ```bash
-  chmod +x NoirCut-1.0.5.AppImage
-  ./NoirCut-1.0.5.AppImage
+  chmod +x NoirCut_1.0.5_amd64.AppImage
+  ./NoirCut_1.0.5_amd64.AppImage
   ```
-- **Windows (x64):** Taşınabilir `.exe` (portable) veya NSIS kurulum sihirbazı ile çalıştırılabilir *(paketleme sırasında `resources/bin/win/ffmpeg.exe` gerektirir)*.
+- **Debian / Ubuntu (`.deb`):** `NoirCut_1.0.5_amd64.deb` (3.78 MiB) paketini `sudo apt install ./NoirCut_1.0.5_amd64.deb` ile kurun.
+- **Windows (x64):** `NoirCut.Setup.1.0.5.exe` veya taşınabilir `NoirCut.1.0.5.exe` ile çalıştırılabilir.
 
 ### Geliştirici Kurulumu ve Testler
 
-**Gereksinimler:** Node.js `>= 20` ve npm.
+**Gereksinimler:** Node.js `>= 20`, npm ve Rust toolchain (`cargo` + `rustc`).
 
 ```bash
 # 1. Depoyu klonlayın
@@ -137,22 +154,19 @@ cd NoirCut
 # 2. Bağımlılıkları yükleyin
 npm install
 
-# 3. Geliştirme modunda başlatın (Electron + Vite HMR)
-npm run dev
+# 3. Tauri v2 geliştirme modunda başlatın (Rust + Vite HMR)
+npx @tauri-apps/cli dev
 
-# 4. Tip kontrolü, üretim derlemesi ve regresyon testleri
+# 4. Tip kontrolü, regresyon testleri ve Rust testleri
 npm run typecheck
-npm run build
 npm test
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 ### Masaüstü Paketi Oluşturma
 ```bash
-# Linux AppImage (dist/NoirCut-1.0.5.AppImage)
-npm run dist:linux
-
-# Windows Portable & NSIS Setup (resources/bin/win/ffmpeg.exe mevcutsa)
-npm run dist:win
+# Tauri v2 Linux AppImage & DEB (src-tauri/target/release/bundle/)
+npx @tauri-apps/cli build --bundles appimage,deb
 ```
 
 ---
@@ -180,11 +194,16 @@ npm run dist:win
 ## Mimari Dizin Yapısı
 
 ```text
+src-tauri/src/
+├── main.rs                 # Tauri v2 Rust çekirdeği (medya protokolü, proxy, Whisper STT, archive, snapshot, autosave)
+├── export.rs               # Çok kanallı FFmpeg filter_complex dışa aktarım motoru
+├── lut_bake.rs             # Rayon paralel çok çekirdekli 33³ 3D LUT (.cube) üreticisi
+└── foley.rs                # Prosedürel WAV ses atmosferi sentezleyicisi
 src/
-├── main/                   # Electron ana süreç (FFmpeg motoru, Smart Proxy, medya protokolü, atomik export, autosave, updater)
+├── main/                   # Electron legacy ana süreç
 ├── preload/                # contextBridge IPC API (window.noircut)
-├── shared/                 # Renderer ve Main arası paylaşılan saf modeller & matematik (color, lut, noirfilm, timeline, credits)
-└── renderer/src/           # React 19 arayüzü, WebGL2 shader motoru, NoirAudio Engine, 5 çalışma alanı ve Canvas bileşenleri
+├── shared/                 # Renderer ve Backend arası paylaşılan saf modeller & matematik (color, lut, noirfilm, timeline, credits)
+└── renderer/src/           # React 19 arayüzü, WebGL2 shader motoru, NoirAudio Engine, Tauri köprüsü ve çalışma alanları
 tests/
 └── regression.test.mjs     # Otomatik regresyon, veri bütünlüğü ve FFmpeg doğrulama test paketi (npm test)
 docs/
