@@ -305,7 +305,7 @@ export default function App() {
   const [statusToast, setStatusToast] = useState<string | null>(null)
   const [wbPickerActive, setWbPickerActive] = useState(false)
   const [showLauncher, setShowLauncher] = useState(true)
-  const [appVersion, setAppVersion] = useState('1.0.3')
+  const [appVersion, setAppVersion] = useState('1.0.4')
   const [recentProjects, setRecentProjects] = useState<RecentProjectEntry[]>(() => {
     try {
       const raw = window.localStorage.getItem('noircut.recentProjects.v1')
