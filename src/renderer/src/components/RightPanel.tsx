@@ -656,6 +656,90 @@ export default function RightPanel({
                 className="accent-[var(--accent)]"
               />
             </label>
+
+            {/* Speed Ramp (Değişken Hız Eğrisi) */}
+            <div className="space-y-1.5 rounded-md border border-white/10 bg-black/25 p-2">
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="font-semibold text-white/80">Speed Ramp (Hız Eğrisi)</span>
+                {activeClip?.speedRamp && activeClip.speedRamp.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => patchClip({ speedRamp: undefined })}
+                    className="text-[9px] text-white/50 hover:text-white"
+                  >
+                    Temizle
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-4 gap-1">
+                {(
+                  [
+                    ['Sabit', null],
+                    ['Slow-Mo', [130, 35, 35, 150]],
+                    ['Pulse', [100, 240, 100]],
+                    ['Hızlan', [60, 240]]
+                  ] as Array<[string, number[] | null]>
+                ).map(([label, curve]) => {
+                  const isActive = curve
+                    ? Boolean(activeClip?.speedRamp?.length) &&
+                      activeClip?.speedRamp?.length === curve.length &&
+                      activeClip?.speedRamp?.every((pt, idx) => Math.round(pt.speed) === curve[idx])
+                    : !activeClip?.speedRamp?.length
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      disabled={!activeClip}
+                      onClick={() => {
+                        if (!activeClip) return
+                        if (!curve) {
+                          patchClip({ speedRamp: undefined })
+                          return
+                        }
+                        const dur = Math.max(0.2, activeClip.duration)
+                        const pts = curve.map((spd, i) => ({
+                          id: `sr-${Date.now()}-${i}`,
+                          time: Number(((i / Math.max(1, curve.length - 1)) * dur).toFixed(3)),
+                          speed: spd
+                        }))
+                        patchClip({ speedRamp: pts })
+                      }}
+                      className={`rounded border py-1 text-[9px] font-semibold transition disabled:opacity-30 ${
+                        isActive
+                          ? 'border-[var(--accent)] bg-[var(--accent)]/20 text-[var(--accent)]'
+                          : 'border-white/10 bg-white/[0.03] text-white/60 hover:border-white/30 hover:text-white'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+              {activeClip?.speedRamp && activeClip.speedRamp.length > 0 && (
+                <div className="space-y-1 pt-1">
+                  {activeClip.speedRamp.map((pt, idx) => (
+                    <div key={pt.id} className="flex items-center gap-2 text-[9px] text-white/70">
+                      <span className="w-10 font-mono text-white/45">{pt.time.toFixed(1)}s</span>
+                      <input
+                        type="range"
+                        min={25}
+                        max={400}
+                        step={5}
+                        value={pt.speed}
+                        onChange={(e) => {
+                          const next = activeClip.speedRamp!.map((p, i) =>
+                            i === idx ? { ...p, speed: Number(e.target.value) } : p
+                          )
+                          patchClip({ speedRamp: next })
+                        }}
+                        className="h-1 flex-1 accent-[var(--accent)]"
+                      />
+                      <span className="w-9 text-right font-mono">{Math.round(pt.speed)}%</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </Accordion>
 
           {/* 3. GEÇİŞ EFEKTLERİ (TRANSITIONS) */}
@@ -665,7 +749,11 @@ export default function RightPanel({
                 [
                   ['none', 'Kesme (Yok)', 'Doğrudan geçiş'],
                   ['cross-dissolve', 'Cross Dissolve', 'Yumuşak geçiş'],
-                  ['dip-to-black', 'Dip to Black', 'Siyaha kararma']
+                  ['dip-to-black', 'Dip to Black', 'Siyaha kararma'],
+                  ['wipe-left', 'Wipe Left', 'Soldan silme'],
+                  ['slide-left', 'Slide Left', 'Sola kaydırma'],
+                  ['zoom-in', 'Zoom In', 'Yakınlaşma'],
+                  ['film-burn', 'Film Burn', 'Işık patlaması']
                 ] as Array<[TransitionType, string, string]>
               ).map(([id, label, desc]) => {
                 const selected = (activeClip?.transitionType ?? 'none') === id

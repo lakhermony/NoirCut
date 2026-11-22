@@ -125,8 +125,8 @@ export default function SubtitlesWorkspace({
     [clips]
   )
 
-  // Gerçek PCM ses dalga formu (peaksMap) üzerinden konuşma zarflarını algılayıp otomatik zaman damgalı altyazı segmentleri üretir
-  const handleRunAutoTranscription = () => {
+  // Önce çevrimdışı Whisper CLI (whisper.cpp / faster-whisper) dener; yoksa gerçek PCM ses zarfı (VAD) ile segment üretir
+  const handleRunAutoTranscription = async () => {
     if (transcribing) return
     if (audibleTimelineClips.length === 0) {
       onShowToast?.('Altyazı üretmek için timeline üzerinde ses veya video klibi bulunmalı')
@@ -144,11 +144,65 @@ export default function SubtitlesWorkspace({
         onShowToast?.('Altyazı üretimi iptal edildi')
         return
       }
-      setTranscribeProgress((p) => {
-        if (p >= 92) return p
-        return p + 18
-      })
-    }, 120)
+      setTranscribeProgress((p) => (p >= 90 ? p : p + 12))
+    }, 180)
+
+    const whisperApi = window.noircut?.transcribeMedia
+    if (whisperApi) {
+      const mediaCache = new Map<string, Awaited<ReturnType<typeof whisperApi>>>()
+      let usedEngine: string | undefined
+      let engineMissing = false
+      const whisperSegments: SubtitleSegment[] = []
+
+      for (const clip of audibleTimelineClips) {
+        if (cancelTranscribeRef.current) break
+        let res = mediaCache.get(clip.mediaId)
+        if (!res) {
+          try {
+            res = await whisperApi(clip.mediaId, language)
+          } catch {
+            res = { ok: false, engineMissing: true }
+          }
+          mediaCache.set(clip.mediaId, res)
+        }
+        if (res.engineMissing) engineMissing = true
+        if (res.ok && res.segments && res.segments.length > 0) {
+          usedEngine = res.engine ?? 'Whisper'
+          const srcEnd = clip.in + clip.duration
+          for (const seg of res.segments) {
+            if (seg.end <= clip.in || seg.start >= srcEnd) continue
+            const sLocal = Math.max(0, seg.start - clip.in)
+            const eLocal = Math.min(clip.duration, seg.end - clip.in)
+            if (eLocal - sLocal < 0.25) continue
+            whisperSegments.push({
+              id: `sub-${Date.now()}-${whisperSegments.length}`,
+              start: round3(clip.start + sLocal),
+              end: round3(clip.start + eLocal),
+              text: seg.text,
+              language
+            })
+          }
+        }
+      }
+
+      if (cancelTranscribeRef.current) {
+        window.clearInterval(stepTimer)
+        return
+      }
+
+      if (usedEngine && whisperSegments.length > 0) {
+        window.clearInterval(stepTimer)
+        setTranscribing(false)
+        setTranscribeProgress(100)
+        onUpdateSubtitles(whisperSegments)
+        onShowToast?.(`${whisperSegments.length} altyazı ${usedEngine} ile üretildi (${language})`)
+        return
+      }
+
+      if (engineMissing) {
+        onShowToast?.('Whisper CLI bulunamadı; ses zarfı (VAD) ile devam ediliyor')
+      }
+    }
 
     window.setTimeout(() => {
       window.clearInterval(stepTimer)
@@ -218,7 +272,7 @@ export default function SubtitlesWorkspace({
       setTranscribeProgress(100)
       onUpdateSubtitles(generated)
       onShowToast?.(`${generated.length} konuşma segmenti otomatik oluşturuldu (${language})`)
-    }, 650)
+    }, 350)
   }
 
   const handleAddSubtitleAtPlayhead = () => {

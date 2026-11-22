@@ -37,6 +37,7 @@ import {
   buildFfmpegKeyframeExpr,
   dbToGain,
   defaultExportSettings,
+  effectiveAverageSpeedFactor,
   flattenNestedClips,
   getOrderedVideoLanesAsc,
   getParamKeyframes,
@@ -117,7 +118,7 @@ function sliceClipsToRange(
     const newDur = overlapEnd - overlapStart
     if (newDur <= 0.02) continue
     const headCut = overlapStart - c.start
-    const speedFactor = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
+    const speedFactor = effectiveAverageSpeedFactor(c)
     const shiftedKeyframes = c.keyframes
       ?.map((k) => ({ ...k, time: k.time - headCut }))
       .filter((k) => k.time >= -0.001 && k.time <= newDur + 0.001)
@@ -183,7 +184,7 @@ export async function exportTimeline(
     if (isCreditClip(c)) continue
     const m = getMediaItem(c.mediaId)
     if (m?.mediaKind === 'image') {
-      const speedFactor = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
+      const speedFactor = effectiveAverageSpeedFactor(c)
       const need = Math.max(1, c.duration * speedFactor + 1)
       imageMaxDur.set(c.mediaId, Math.max(imageMaxDur.get(c.mediaId) ?? 0, need))
     }
@@ -221,7 +222,7 @@ export async function exportTimeline(
   ): { streamLabel: string; pendingChain: string[] } => {
     const mediaItem = getMediaItem(c.mediaId)
     const inIdx = mediaInputIdx.get(c.mediaId)!
-    const speedFactor = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
+    const speedFactor = effectiveAverageSpeedFactor(c)
     const srcDur = Math.max(0.05, c.duration * speedFactor)
     const clipIn = mediaItem?.mediaKind === 'image' ? 0 : c.in
 
@@ -530,14 +531,36 @@ export async function exportTimeline(
       }
     }
 
-    // Geçiş Efektleri (Cross Dissolve / Dip to Black)
+    // Geçiş Efektleri (Cross Dissolve, Dip to Black, Wipe, Slide, Zoom In, Film Burn)
     if (c.transitionType && c.transitionType !== 'none' && (c.transitionDuration ?? 0) > 0.05) {
       const trDur = Math.min(c.duration * 0.48, c.transitionDuration ?? 0.8)
       const foStart = Math.max(0, c.duration - trDur)
-      vChain.push(
-        `fade=t=in:st=0:d=${trDur.toFixed(4)}:color=black`,
-        `fade=t=out:st=${foStart.toFixed(4)}:d=${trDur.toFixed(4)}:color=black`
-      )
+      const trS = trDur.toFixed(4)
+      const foS = foStart.toFixed(4)
+      if (c.transitionType === 'wipe-left') {
+        vChain.push(
+          `drawbox=x='iw*(t/${trS})':y=0:w=iw:h=ih:color=black:t=fill:enable='lt(t,${trS})'`,
+          `drawbox=x=0:y=0:w='iw*((t-${foS})/${trS})':h=ih:color=black:t=fill:enable='gt(t,${foS})'`
+        )
+      } else if (c.transitionType === 'film-burn') {
+        vChain.push(
+          `eq=brightness='if(lt(t,${trS}),0.45*(1-t/${trS}),if(gt(t,${foS}),0.45*((t-${foS})/${trS}),0))':saturation='if(lt(t,${trS}),1+0.8*(1-t/${trS}),if(gt(t,${foS}),1+0.8*((t-${foS})/${trS}),1))':eval=frame`,
+          `fade=t=in:st=0:d=${trS}:color=white`,
+          `fade=t=out:st=${foS}:d=${trS}:color=white`
+        )
+      } else if (c.transitionType === 'zoom-in') {
+        vChain.push(
+          `scale=w='trunc(iw*(1+0.35*max(0,1-t/${trS}))/2)*2':h='trunc(ih*(1+0.35*max(0,1-t/${trS}))/2)*2':eval=frame`,
+          `crop=${width}:${height}`,
+          `fade=t=in:st=0:d=${trS}:color=black`,
+          `fade=t=out:st=${foS}:d=${trS}:color=black`
+        )
+      } else {
+        vChain.push(
+          `fade=t=in:st=0:d=${trS}:color=black`,
+          `fade=t=out:st=${foS}:d=${trS}:color=black`
+        )
+      }
     }
 
     vChain.push(`trim=duration=${c.duration.toFixed(4)}`, `setpts=PTS-STARTPTS`, `format=yuv420p`)
@@ -737,7 +760,7 @@ export async function exportTimeline(
   audibleClips.forEach((c, idx) => {
     const inIdx = mediaInputIdx.get(c.mediaId)!
     const gain = dbToGain(c.gainDb)
-    const speedFactor = Math.max(0.25, Math.min(4.0, (c.speed ?? 100) / 100))
+    const speedFactor = effectiveAverageSpeedFactor(c)
     const srcDur = Math.max(0.05, c.duration * speedFactor)
 
     const chain: string[] = [
@@ -763,10 +786,11 @@ export async function exportTimeline(
       }
     }
 
+    const gainFilter = buildGainFilter(c)
     chain.push(
       `aresample=48000`,
       `aformat=sample_fmts=fltp:channel_layouts=stereo`,
-      `volume=${gain.toFixed(6)}`
+      gainFilter
     )
 
     // Pan (Sol/Sağ Denge: -100..+100)
@@ -1076,4 +1100,26 @@ export async function exportTimeline(
       tempLutDir = null
     }
   }
+}
+
+function buildGainFilter(c: TimelineClip): string {
+  const kfs = c.gainKeyframes
+  if (!kfs || kfs.length === 0) {
+    return `volume=${dbToGain(c.gainDb).toFixed(6)}`
+  }
+  const sorted = [...kfs].sort((a, b) => a.time - b.time)
+  let expr = dbToGain(sorted[sorted.length - 1].db).toFixed(5)
+  for (let i = sorted.length - 2; i >= 0; i--) {
+    const a = sorted[i]
+    const b = sorted[i + 1]
+    const gA = dbToGain(a.db)
+    const gB = dbToGain(b.db)
+    const span = Math.max(0.001, b.time - a.time)
+    const seg = `${gA.toFixed(5)}+(${(gB - gA).toFixed(5)})*((t-${a.time.toFixed(3)})/${span.toFixed(3)})`
+    expr = `if(lt(t,${b.time.toFixed(3)}),${seg},${expr})`
+  }
+  if (sorted[0].time > 0.001) {
+    expr = `if(lt(t,${sorted[0].time.toFixed(3)}),${dbToGain(sorted[0].db).toFixed(5)},${expr})`
+  }
+  return `volume='${expr}':eval=frame`
 }

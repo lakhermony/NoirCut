@@ -223,7 +223,10 @@ export function initTauriBridgeIfNeeded(): void {
       tauriInvoke<{ started: number }>('proxy_batch_generate', { mediaIds, scale }),
 
     reconnectMedia: (mediaId: string) =>
-      tauriInvoke<MediaItem | null>('media_reconnect', { mediaId })
+      tauriInvoke<MediaItem | null>('media_reconnect', { mediaId }),
+
+    transcribeMedia: (mediaId: string, language: string) =>
+      tauriInvoke('transcribe_media', { mediaId, language })
   }
 
   window.noircut = api

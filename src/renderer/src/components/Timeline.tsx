@@ -24,6 +24,7 @@ import {
 import type { MediaItem, PeaksResult } from '../../../shared/types'
 import { fmt } from '../lib/format'
 import FilmstripCanvas from './FilmstripCanvas'
+import ClipRubberbandOverlay from './ClipRubberbandOverlay'
 import { MEDIA_DRAG_TYPE } from './LeftPanel'
 import WaveformCanvas from './WaveformCanvas'
 
@@ -2047,6 +2048,13 @@ export default function Timeline({
                                 width={clipW}
                                 height={filmstripH}
                               />
+                              <ClipRubberbandOverlay
+                                clip={c}
+                                width={clipW}
+                                height={filmstripH}
+                                mode="opacity"
+                                onUpdateClip={onUpdateClip}
+                              />
                             </div>
 
                             {/* 3. Katman: Alt Ses Dalga Formu Şeridi + Referans Çizgisi */}
@@ -2063,6 +2071,13 @@ export default function Timeline({
                                   variant="embedded"
                                   muted={!laneAudible}
                                 />
+                                <ClipRubberbandOverlay
+                                  clip={c}
+                                  width={clipW}
+                                  height={waveformTrayH}
+                                  mode="gain"
+                                  onUpdateClip={onUpdateClip}
+                                />
                               </div>
                             )}
                           </div>
@@ -2078,6 +2093,13 @@ export default function Timeline({
                                 variant="track"
                                 color={lane === 'A1' ? '#38BDF8' : '#22D3EE'}
                                 muted={!laneAudible}
+                              />
+                              <ClipRubberbandOverlay
+                                clip={c}
+                                width={clipW}
+                                height={Math.max(14, clipInnerH - 14)}
+                                mode="gain"
+                                onUpdateClip={onUpdateClip}
                               />
                             </div>
                             <div className="pointer-events-none absolute inset-x-0 top-0 flex h-[15px] items-center justify-between gap-1 border-b border-white/[0.06] bg-black/35 px-2">

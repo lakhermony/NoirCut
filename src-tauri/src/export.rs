@@ -21,6 +21,46 @@ fn db_to_gain(db: f64) -> f64 {
   }
 }
 
+fn effective_speed_factor(c: &Value) -> f64 {
+  if let Some(arr) = c["speedRamp"].as_array() {
+    if !arr.is_empty() {
+      let sum: f64 = arr
+        .iter()
+        .map(|p| (p["speed"].as_f64().unwrap_or(100.0) / 100.0).clamp(0.25, 4.0))
+        .sum();
+      return (sum / arr.len() as f64).clamp(0.25, 4.0);
+    }
+  }
+  (c["speed"].as_f64().unwrap_or(100.0) / 100.0).clamp(0.25, 4.0)
+}
+
+fn build_gain_filter(c: &Value) -> String {
+  if let Some(arr) = c["gainKeyframes"].as_array() {
+    if !arr.is_empty() {
+      let mut pts: Vec<(f64, f64)> = arr
+        .iter()
+        .map(|p| (p["time"].as_f64().unwrap_or(0.0), p["db"].as_f64().unwrap_or(0.0)))
+        .collect();
+      pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+      let mut expr = format!("{:.5}", db_to_gain(pts.last().unwrap().1));
+      for i in (0..pts.len().saturating_sub(1)).rev() {
+        let (t0, d0) = pts[i];
+        let (t1, d1) = pts[i + 1];
+        let g0 = db_to_gain(d0);
+        let g1 = db_to_gain(d1);
+        let span = (t1 - t0).max(0.001);
+        let seg = format!("{:.5}+({:.5})*((t-{:.3})/{:.3})", g0, g1 - g0, t0, span);
+        expr = format!("if(lt(t,{:.3}),{},{})", t1, seg, expr);
+      }
+      if pts[0].0 > 0.001 {
+        expr = format!("if(lt(t,{:.3}),{:.5},{})", pts[0].0, db_to_gain(pts[0].1), expr);
+      }
+      return format!("volume='{}':eval=frame", expr);
+    }
+  }
+  format!("volume={:.6}", db_to_gain(c["gainDb"].as_f64().unwrap_or(0.0)))
+}
+
 fn lane_number(lane: &str) -> u32 {
   lane[1..].parse::<u32>().unwrap_or(1)
 }
@@ -160,7 +200,7 @@ fn slice_clips_to_range(
       continue;
     }
     let head_cut = (ov_start - cs).max(0.0);
-    let spd = (c["speed"].as_f64().unwrap_or(100.0) / 100.0).clamp(0.25, 4.0);
+    let spd = effective_speed_factor(&c);
     let mut nc = c.clone();
     nc["start"] = json!(ov_start - r_start);
     nc["in"] = json!(c["in"].as_f64().unwrap_or(0.0) + head_cut * spd);
@@ -348,7 +388,7 @@ pub fn run_full_export(
     let mid = c["mediaId"].as_str().unwrap_or("");
     if let Some(m) = reg_snapshot.get(mid) {
       if m.media_kind == "image" {
-        let spd = (c["speed"].as_f64().unwrap_or(100.0) / 100.0).clamp(0.25, 4.0);
+        let spd = effective_speed_factor(&c);
         let need = (c["duration"].as_f64().unwrap_or(5.0) * spd + 1.0).max(1.0);
         let cur = image_max_dur.get(mid).copied().unwrap_or(0.0);
         image_max_dur.insert(mid.to_string(), cur.max(need));
@@ -401,7 +441,7 @@ pub fn run_full_export(
     let mid = c["mediaId"].as_str().unwrap_or("");
     let media_item = reg_snapshot.get(mid);
     let in_idx = media_input_idx[mid];
-    let spd = (c["speed"].as_f64().unwrap_or(100.0) / 100.0).clamp(0.25, 4.0);
+    let spd = effective_speed_factor(&c);
     let dur = c["duration"].as_f64().unwrap_or(1.0);
     let src_dur = (dur * spd).max(0.05);
     let is_img = media_item.map(|m| m.media_kind == "image").unwrap_or(false);
@@ -660,8 +700,25 @@ pub fn run_full_export(
     if tr_type != "none" && tr_dur_raw > 0.05 {
       let tr_dur = tr_dur_raw.min(cd * 0.48);
       let fo_start = (cd - tr_dur).max(0.0);
-      v_chain.push(format!("fade=t=in:st=0:d={:.4}:color=black", tr_dur));
-      v_chain.push(format!("fade=t=out:st={:.4}:d={:.4}:color=black", fo_start, tr_dur));
+      if tr_type == "wipe-left" {
+        v_chain.push(format!("drawbox=x='iw*(t/{:.4})':y=0:w=iw:h=ih:color=black:t=fill:enable='lt(t,{:.4})'", tr_dur, tr_dur));
+        v_chain.push(format!("drawbox=x=0:y=0:w='iw*((t-{:.4})/{:.4})':h=ih:color=black:t=fill:enable='gt(t,{:.4})'", fo_start, tr_dur, fo_start));
+      } else if tr_type == "film-burn" {
+        v_chain.push(format!(
+          "eq=brightness='if(lt(t,{:.4}),0.45*(1-t/{:.4}),if(gt(t,{:.4}),0.45*((t-{:.4})/{:.4}),0))':saturation='if(lt(t,{:.4}),1+0.8*(1-t/{:.4}),if(gt(t,{:.4}),1+0.8*((t-{:.4})/{:.4}),1))':eval=frame",
+          tr_dur, tr_dur, fo_start, fo_start, tr_dur, tr_dur, tr_dur, fo_start, fo_start, tr_dur
+        ));
+        v_chain.push(format!("fade=t=in:st=0:d={:.4}:color=white", tr_dur));
+        v_chain.push(format!("fade=t=out:st={:.4}:d={:.4}:color=white", fo_start, tr_dur));
+      } else if tr_type == "zoom-in" {
+        v_chain.push(format!("scale=w='trunc(iw*(1+0.35*max(0,1-t/{:.4}))/2)*2':h='trunc(ih*(1+0.35*max(0,1-t/{:.4}))/2)*2':eval=frame", tr_dur, tr_dur));
+        v_chain.push(format!("crop={}:{}", width, height));
+        v_chain.push(format!("fade=t=in:st=0:d={:.4}:color=black", tr_dur));
+        v_chain.push(format!("fade=t=out:st={:.4}:d={:.4}:color=black", fo_start, tr_dur));
+      } else {
+        v_chain.push(format!("fade=t=in:st=0:d={:.4}:color=black", tr_dur));
+        v_chain.push(format!("fade=t=out:st={:.4}:d={:.4}:color=black", fo_start, tr_dur));
+      }
     }
 
     v_chain.extend([format!("trim=duration={:.4}", cd), "setpts=PTS-STARTPTS".into(), "format=yuv420p".into()]);
@@ -868,8 +925,7 @@ pub fn run_full_export(
   for (idx, c) in audible_clips.iter().enumerate() {
     let mid = c["mediaId"].as_str().unwrap_or("");
     let in_idx = media_input_idx[mid];
-    let gain = db_to_gain(c["gainDb"].as_f64().unwrap_or(0.0));
-    let spd = (c["speed"].as_f64().unwrap_or(100.0) / 100.0).clamp(0.25, 4.0);
+    let spd = effective_speed_factor(&c);
     let dur = c["duration"].as_f64().unwrap_or(1.0);
     let src_dur = (dur * spd).max(0.05);
     let c_in = c["in"].as_f64().unwrap_or(0.0);
@@ -899,7 +955,7 @@ pub fn run_full_export(
     chain.extend([
       "aresample=48000".into(),
       "aformat=sample_fmts=fltp:channel_layouts=stereo".into(),
-      format!("volume={:.6}", gain),
+      build_gain_filter(c),
     ]);
 
     let pan_val = c["pan"].as_f64().unwrap_or(0.0).clamp(-100.0, 100.0) / 100.0;

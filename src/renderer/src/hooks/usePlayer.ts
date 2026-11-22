@@ -6,6 +6,7 @@ import {
   clipSourceTimeAt,
   computeAutoDuckMultiplierAt,
   dbToGain,
+  evaluateClipSpeedAt,
   findNextBaseClip,
   flattenNestedClips,
   getOrderedAudioLanes,
@@ -15,6 +16,7 @@ import {
   isLaneAudible,
   isSeamlessContinuation,
   isVideoLane,
+  mapClipLocalToSourceTime,
   projectEnd,
   type LaneId,
   type LaneMap,
@@ -306,7 +308,7 @@ export function usePlayer(
       }
 
       const local = Math.max(0, Math.min(clip.duration, t - clip.start))
-      const speedFactor = Math.max(0.25, Math.min(4.0, (clip.speed ?? 100) / 100))
+      const speedFactor = evaluateClipSpeedAt(clip, local) / 100
       const activeShuttle = isPlaying ? (shuttleRateRef.current || 1) : 1
       const isReverseShuttle = isPlaying && activeShuttle < 0
       const effectiveRate = Math.max(0.25, Math.min(8.0, speedFactor * Math.abs(activeShuttle)))
@@ -319,9 +321,7 @@ export function usePlayer(
         // yoksay
       }
 
-      const targetSourceTime = clip.reverse
-        ? Math.max(0, clip.in + Math.max(0, clip.duration - local) * speedFactor)
-        : clip.in + local * speedFactor
+      const targetSourceTime = mapClipLocalToSourceTime(clip, local)
       const drift = Math.abs(el.currentTime - targetSourceTime)
 
       const needSeek =
@@ -426,7 +426,7 @@ export function usePlayer(
       }
 
       const targetIn = clipSourceTimeAt(nextClip, upcoming.at)
-      const spd = Math.max(0.25, Math.min(4.0, (nextClip.speed ?? 100) / 100))
+      const spd = evaluateClipSpeedAt(nextClip, Math.max(0, upcoming.at - nextClip.start)) / 100
       try {
         if (Math.abs(standbyEl.playbackRate - spd) > 0.01) {
           standbyEl.playbackRate = spd

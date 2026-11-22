@@ -162,6 +162,20 @@ export interface SilenceRegion {
   avgDb: number
 }
 
+export interface TranscribeSegment {
+  start: number
+  end: number
+  text: string
+}
+
+export interface TranscribeResult {
+  ok: boolean
+  engine?: string
+  engineMissing?: boolean
+  segments?: TranscribeSegment[]
+  error?: string
+}
+
 export interface NoirCutApi {
   getEngineInfo: () => Promise<EngineInfo>
   /** Dosya seçici açar, seçilen videoları analiz edip döndürür */
@@ -232,4 +246,6 @@ export interface NoirCutApi {
   /** Render kuyruğunu duraklatır / devam ettirir */
   pauseExport?: () => Promise<boolean>
   resumeExport?: () => Promise<boolean>
+  /** Çevrimdışı Whisper CLI (whisper.cpp / faster-whisper) ile konuşma deşifresi */
+  transcribeMedia?: (mediaId: string, language: string) => Promise<TranscribeResult>
 }

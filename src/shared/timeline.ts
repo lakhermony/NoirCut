@@ -277,8 +277,31 @@ export function buildFfmpegKeyframeExpr(
   return `if(lte(${timeVar},${firstT}),${firstV},${expr})`
 }
 
-export type TransitionType = 'none' | 'cross-dissolve' | 'dip-to-black'
+export type TransitionType =
+  | 'none'
+  | 'cross-dissolve'
+  | 'dip-to-black'
+  | 'wipe-left'
+  | 'slide-left'
+  | 'zoom-in'
+  | 'film-burn'
 export type AudioFxPreset = 'none' | 'denoise' | 'bass-boost'
+
+export interface SpeedRampPoint {
+  id: string
+  /** Klip yerel zamanı (saniye, >= 0) */
+  time: number
+  /** Hız yüzdesi (25 - 400) */
+  speed: number
+}
+
+export interface GainKeyframe {
+  id: string
+  /** Klip yerel zamanı (saniye, >= 0) */
+  time: number
+  /** Ses seviyesi (dB, -60 .. +12) */
+  db: number
+}
 
 export interface AudioEffectsChain {
   eqLowDb: number // -12..+12 dB (100Hz Low Shelf)
@@ -371,12 +394,16 @@ export interface TimelineClip {
   markOut?: number | null
   /** EDIT Workspace: Oynatma hızı %25 - %400 (varsayılan 100) */
   speed?: number
+  /** EDIT Workspace: Değişken hız eğrisi (Speed Ramp) kontrol noktaları */
+  speedRamp?: SpeedRampPoint[]
   /** EDIT Workspace: Ters oynatma (Reverse) */
   reverse?: boolean
   /** EDIT Workspace: Geçiş efekti tipi */
   transitionType?: TransitionType
   /** EDIT Workspace: Geçiş efekti süresi (saniye, varsayılan 0.8) */
   transitionDuration?: number
+  /** TIMELINE: Ses seviyesi rubberband keyframe noktaları */
+  gainKeyframes?: GainKeyframe[]
   /** EDIT Workspace: Ses sağ/sol dengesi (-100 Sol .. +100 Sağ, varsayılan 0) */
   pan?: number
   /** EDIT Workspace: Ses efekti ön ayarı (Gürültü azaltma / Sinematik Bas) */
@@ -697,9 +724,113 @@ export function fadeGain(c: Pick<TimelineClip, 'fadeIn' | 'fadeOut' | 'duration'
   return g
 }
 
+/** Klibin belirli bir yerel zamandaki dB kazancını hesaplar (rubberband keyframe destekli). */
+export function evaluateGainDbAt(c: TimelineClip, local: number): number {
+  const kfs = c.gainKeyframes
+  if (!kfs || kfs.length === 0) return c.gainDb
+  const sorted = [...kfs].sort((a, b) => a.time - b.time)
+  if (local <= sorted[0].time) return sorted[0].db
+  const last = sorted[sorted.length - 1]
+  if (local >= last.time) return last.db
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i]
+    const b = sorted[i + 1]
+    if (local >= a.time && local <= b.time) {
+      const span = b.time - a.time
+      if (span <= 1e-6) return b.db
+      const u = (local - a.time) / span
+      return a.db + (b.db - a.db) * u
+    }
+  }
+  return c.gainDb
+}
+
 /** Klibin o andaki toplam çarpanı (ses seviyesi × fade). */
 export function clipGainAt(c: TimelineClip, local: number): number {
-  return dbToGain(c.gainDb) * fadeGain(c, local)
+  return dbToGain(evaluateGainDbAt(c, local)) * fadeGain(c, local)
+}
+
+/** Belirli bir yerel zamandaki hız yüzdesini (25..400) döndürür. */
+export function evaluateClipSpeedAt(c: TimelineClip, local: number): number {
+  const baseSpeed = clampSpeed(c.speed ?? 100)
+  const ramp = c.speedRamp
+  if (!ramp || ramp.length === 0) return baseSpeed
+  const sorted = [...ramp].sort((a, b) => a.time - b.time)
+  if (local <= sorted[0].time) return clampSpeed(sorted[0].speed)
+  const last = sorted[sorted.length - 1]
+  if (local >= last.time) return clampSpeed(last.speed)
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i]
+    const b = sorted[i + 1]
+    if (local >= a.time && local <= b.time) {
+      const span = b.time - a.time
+      if (span <= 1e-6) return clampSpeed(b.speed)
+      const u = (local - a.time) / span
+      return clampSpeed(a.speed + (b.speed - a.speed) * u)
+    }
+  }
+  return baseSpeed
+}
+
+function clampSpeed(v: number): number {
+  if (!Number.isFinite(v)) return 100
+  return Math.max(25, Math.min(400, v))
+}
+
+/**
+ * Yerel zaman `local` için `0..local` aralığındaki hız eğrisinin integralini alarak
+ * kaynak medya üzerindeki saniyeyi hesaplar (Speed Ramp destekli).
+ */
+export function mapClipLocalToSourceTime(c: TimelineClip, local: number): number {
+  const dur = Math.max(0.05, c.duration)
+  const clampedLocal = Math.max(0, Math.min(dur, local))
+  const ramp = c.speedRamp
+  let sourceOffset = 0
+  if (!ramp || ramp.length === 0) {
+    sourceOffset = clampedLocal * (clampSpeed(c.speed ?? 100) / 100)
+  } else {
+    const steps = 24
+    const dt = clampedLocal / steps
+    if (dt > 0) {
+      let prevSpeed = evaluateClipSpeedAt(c, 0) / 100
+      for (let i = 1; i <= steps; i++) {
+        const curSpeed = evaluateClipSpeedAt(c, i * dt) / 100
+        sourceOffset += 0.5 * (prevSpeed + curSpeed) * dt
+        prevSpeed = curSpeed
+      }
+    }
+  }
+  if (c.reverse) {
+    const totalSourceSpan =
+      !ramp || ramp.length === 0
+        ? dur * (clampSpeed(c.speed ?? 100) / 100)
+        : integrateSpeedRamp(c, dur)
+    return Math.max(c.in, c.in + totalSourceSpan - sourceOffset)
+  }
+  return c.in + sourceOffset
+}
+
+function integrateSpeedRamp(c: TimelineClip, endLocal: number): number {
+  const steps = 24
+  const dt = Math.max(0, endLocal) / steps
+  if (dt <= 0) return 0
+  let sum = 0
+  let prev = evaluateClipSpeedAt(c, 0) / 100
+  for (let i = 1; i <= steps; i++) {
+    const cur = evaluateClipSpeedAt(c, i * dt) / 100
+    sum += 0.5 * (prev + cur) * dt
+    prev = cur
+  }
+  return sum
+}
+
+/** Klibin ortalama hız çarpanını (ör. 1.0 = %100) döndürür. */
+export function effectiveAverageSpeedFactor(c: TimelineClip): number {
+  const dur = Math.max(0.05, c.duration)
+  if (!c.speedRamp || c.speedRamp.length === 0) {
+    return clampSpeed(c.speed ?? 100) / 100
+  }
+  return Math.max(0.25, Math.min(4, integrateSpeedRamp(c, dur) / dur))
 }
 
 /**

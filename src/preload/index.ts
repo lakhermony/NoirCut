@@ -53,7 +53,9 @@ const api: NoirCutApi = {
     ipcRenderer.invoke('proxy:batch-generate', { mediaIds, scale }),
   reconnectMedia: (mediaId) => ipcRenderer.invoke('media:reconnect', mediaId),
   pauseExport: () => ipcRenderer.invoke('export:pause'),
-  resumeExport: () => ipcRenderer.invoke('export:resume')
+  resumeExport: () => ipcRenderer.invoke('export:resume'),
+  transcribeMedia: (mediaId, language) =>
+    ipcRenderer.invoke('media:transcribe', { mediaId, language })
 }
 
 contextBridge.exposeInMainWorld('noircut', api)

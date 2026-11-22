@@ -23,11 +23,13 @@ function computeClipTransformStyle(
   time: number
 ): React.CSSProperties {
   const tf = clip ? evaluateClipTransformAt(clip, time) : defaultClipTransform()
-  const scale = Math.max(0.1, Math.min(4, (tf.scale ?? 100) / 100))
-  const tx = tf.posX ?? 0
+  let scale = Math.max(0.1, Math.min(4, (tf.scale ?? 100) / 100))
+  let tx = tf.posX ?? 0
   const ty = tf.posY ?? 0
   const rot = tf.rotation ?? 0
   let opacity = Math.max(0, Math.min(1, (tf.opacity ?? 100) / 100))
+  let clipPath: string | undefined
+  let filter: string | undefined
 
   if (
     clip &&
@@ -38,17 +40,54 @@ function computeClipTransformStyle(
     const trDur = Math.min(clip.duration * 0.5, clip.transitionDuration ?? 0.8)
     const local = Math.max(0, Math.min(clip.duration, time - clip.start))
     let f = 1
+    let isEntering = false
     if (local < trDur) {
       f = local / trDur
+      isEntering = true
     } else if (clip.duration - local < trDur) {
       f = (clip.duration - local) / trDur
     }
-    opacity *= Math.max(0, Math.min(1, f))
+    f = Math.max(0, Math.min(1, f))
+
+    if (f < 1) {
+      switch (clip.transitionType) {
+        case 'wipe-left': {
+          const pct = ((1 - f) * 100).toFixed(2)
+          clipPath = isEntering ? `inset(0 ${pct}% 0 0)` : `inset(0 0 0 ${pct}%)`
+          break
+        }
+        case 'slide-left': {
+          tx += isEntering ? (1 - f) * 100 : -(1 - f) * 100
+          break
+        }
+        case 'zoom-in': {
+          scale *= 1 + (1 - f) * 0.45
+          opacity *= f
+          break
+        }
+        case 'film-burn': {
+          const burn = 1 - f
+          filter = `brightness(${(1 + burn * 1.45).toFixed(2)}) saturate(${(1 + burn * 0.9).toFixed(2)}) sepia(${(burn * 0.45).toFixed(2)})`
+          opacity *= Math.min(1, f * 1.25)
+          break
+        }
+        case 'dip-to-black': {
+          opacity *= Math.pow(f, 1.35)
+          break
+        }
+        default: {
+          opacity *= f
+          break
+        }
+      }
+    }
   }
 
   return {
     transform: `translate(${tx}%, ${ty}%) scale(${scale}) rotate(${rot}deg)`,
     opacity,
+    clipPath,
+    filter,
     transformOrigin: 'center center'
   }
 }

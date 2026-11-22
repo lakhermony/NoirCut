@@ -63,14 +63,18 @@ async function runAllTests() {
       buildFfmpegKeyframeExpr,
       clipAt,
       clipEndExact,
+      clipGainAt,
       cloneKeyframes,
       computeAutoDuckMultiplierAt,
       dbToGain,
       defaultAudioEffectsChain,
       defaultLanes,
+      effectiveAverageSpeedFactor,
+      evaluateClipSpeedAt,
       findStrictSnap,
       findStrictSnapForSpan,
       flattenNestedClips,
+      mapClipLocalToSourceTime,
       rippleCloseGap,
       round3
     } = require(join(COMPILED_DIR, 'timeline.js'))
@@ -287,8 +291,35 @@ async function runAllTests() {
     ])
     renameSync(partFile, finalFile)
     assert.equal(probeJson(finalFile).streams[0].width, 640)
-    console.log('[PASS] 7/7 Atomik Geçici (.part) Dışa Aktarma ve Dosya Bütünlüğü')
-    console.log('\nALL 7 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
+    console.log('[PASS] 7/8 Atomik Geçici (.part) Dışa Aktarma ve Dosya Bütünlüğü')
+
+    // 8. Priority 2: Speed Ramp & Gain Rubberband Keyframes
+    const rampClip = {
+      id: 'sr1',
+      mediaId: 'm1',
+      name: 'Ramp',
+      lane: 'V1',
+      start: 0,
+      in: 1,
+      duration: 2,
+      gainDb: 0,
+      fadeIn: 0,
+      fadeOut: 0,
+      speedRamp: [
+        { id: 'p1', time: 0, speed: 100 },
+        { id: 'p2', time: 2, speed: 200 }
+      ],
+      gainKeyframes: [
+        { id: 'g1', time: 0, db: -6 },
+        { id: 'g2', time: 2, db: 0 }
+      ]
+    }
+    assert.equal(evaluateClipSpeedAt(rampClip, 1), 150)
+    assert.ok(Math.abs(effectiveAverageSpeedFactor(rampClip) - 1.5) < 0.01)
+    assert.ok(Math.abs(mapClipLocalToSourceTime(rampClip, 2) - 4.0) < 0.02)
+    assert.ok(Math.abs(clipGainAt(rampClip, 1) - dbToGain(-3)) < 0.01)
+    console.log('[PASS] 8/8 Speed Ramp İntegrasyonu ve Rubberband Ses Keyframe Hesabı')
+    console.log('\nALL 8 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
   } finally {
     rmSync(TEMP_ROOT, { recursive: true, force: true })
   }

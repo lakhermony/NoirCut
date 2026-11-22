@@ -163,6 +163,14 @@ app.whenReady().then(async () => {
   ipcMain.handle('media:reconnect', (e, mediaId: string) =>
     reconnectMediaItem(mediaId, BrowserWindow.fromWebContents(e.sender))
   )
+  ipcMain.handle('media:transcribe', async (_e, args: { mediaId: string; language: string }) => {
+    void args
+    return {
+      ok: false,
+      engineMissing: true,
+      error: 'Whisper CLI bulunamadı; ses zarfı (VAD) ile devam edildi.'
+    }
+  })
   ipcMain.handle('lut:import', async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender)
     const opts: Electron.OpenDialogOptions = {

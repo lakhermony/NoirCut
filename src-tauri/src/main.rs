@@ -1165,6 +1165,240 @@ fn autosave_dismiss() {
   let _ = atomic_write_json(&base.join("session.json"), &session);
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscribeSegment {
+  start: f64,
+  end: f64,
+  text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TranscribeResult {
+  ok: bool,
+  engine: Option<String>,
+  engine_missing: Option<bool>,
+  segments: Option<Vec<TranscribeSegment>>,
+  error: Option<String>,
+}
+
+fn parse_srt_timestamp(ts: &str) -> Option<f64> {
+  let normalized = ts.trim().replace(',', ".");
+  let parts: Vec<&str> = normalized.split(':').collect();
+  if parts.len() != 3 {
+    return None;
+  }
+  let h: f64 = parts[0].parse().ok()?;
+  let m: f64 = parts[1].parse().ok()?;
+  let s: f64 = parts[2].parse().ok()?;
+  Some(h * 3600.0 + m * 60.0 + s)
+}
+
+fn parse_srt_segments(srt: &str) -> Vec<TranscribeSegment> {
+  let mut out = Vec::new();
+  for block in srt.replace("\r\n", "\n").split("\n\n") {
+    let lines: Vec<&str> = block.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+    if lines.len() < 2 {
+      continue;
+    }
+    let arrow_idx = lines.iter().position(|l| l.contains("-->"));
+    let Some(idx) = arrow_idx else { continue };
+    let times: Vec<&str> = lines[idx].split("-->").collect();
+    if times.len() != 2 {
+      continue;
+    }
+    let (Some(start), Some(end)) = (parse_srt_timestamp(times[0]), parse_srt_timestamp(times[1])) else {
+      continue;
+    };
+    let text = lines[idx + 1..].join(" ").trim().to_string();
+    if !text.is_empty() && end > start {
+      out.push(TranscribeSegment { start, end, text });
+    }
+  }
+  out
+}
+
+fn find_whisper_model() -> Option<String> {
+  if let Ok(p) = std::env::var("NOIRCUT_WHISPER_MODEL") {
+    if Path::new(&p).is_file() {
+      return Some(p);
+    }
+  }
+  let mut search_dirs: Vec<PathBuf> = Vec::new();
+  if let Ok(exe) = std::env::current_exe() {
+    if let Some(dir) = exe.parent() {
+      search_dirs.push(dir.join("models"));
+      search_dirs.push(dir.to_path_buf());
+    }
+  }
+  if let Some(home) = std::env::var_os("HOME") {
+    let h = PathBuf::from(home);
+    search_dirs.push(h.join(".local/share/whisper"));
+    search_dirs.push(h.join(".cache/whisper"));
+    search_dirs.push(h.join("models"));
+  }
+  search_dirs.push(PathBuf::from("/usr/share/whisper"));
+  for dir in search_dirs {
+    if let Ok(entries) = fs::read_dir(&dir) {
+      for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_file() {
+          let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+          if name.ends_with(".bin") && name.contains("ggml") {
+            return Some(p.to_string_lossy().to_string());
+          }
+        }
+      }
+    }
+  }
+  None
+}
+
+fn find_binary_on_path(names: &[&str]) -> Option<String> {
+  if let Ok(exe) = std::env::current_exe() {
+    if let Some(dir) = exe.parent() {
+      for n in names {
+        let candidate = dir.join(n);
+        if candidate.is_file() {
+          return Some(candidate.to_string_lossy().to_string());
+        }
+      }
+    }
+  }
+  for n in names {
+    if Command::new("which").arg(n).output().map(|o| o.status.success()).unwrap_or(false) {
+      return Some((*n).to_string());
+    }
+  }
+  None
+}
+
+#[tauri::command]
+fn transcribe_media(state: State<'_, Arc<AppState>>, media_id: String, language: String) -> TranscribeResult {
+  let item = {
+    let reg = state.media_registry.lock().unwrap();
+    reg.get(&media_id).cloned()
+  };
+  let Some(media) = item else {
+    return TranscribeResult {
+      ok: false,
+      engine: None,
+      engine_missing: Some(false),
+      segments: None,
+      error: Some("Medya öğesi bulunamadı".into()),
+    };
+  };
+
+  let tmp_dir = std::env::temp_dir().join("noircut-whisper");
+  let _ = fs::create_dir_all(&tmp_dir);
+  let stamp = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .unwrap_or_default()
+    .as_millis();
+  let wav_path = tmp_dir.join(format!("audio-{}.wav", stamp));
+  let out_prefix = tmp_dir.join(format!("out-{}", stamp));
+  let srt_path = tmp_dir.join(format!("out-{}.srt", stamp));
+
+  let lang = match language.to_lowercase().as_str() {
+    "tr" | "turkish" => "tr",
+    "en" | "english" => "en",
+    _ => "auto",
+  };
+
+  let ffmpeg = state
+    .engine
+    .lock()
+    .unwrap()
+    .as_ref()
+    .map(|e| e.ffmpeg_path.clone())
+    .unwrap_or_else(|| "ffmpeg".to_string());
+  let extract = Command::new(&ffmpeg)
+    .args([
+      "-y",
+      "-i",
+      &media.path,
+      "-vn",
+      "-acodec",
+      "pcm_s16le",
+      "-ar",
+      "16000",
+      "-ac",
+      "1",
+    ])
+    .arg(&wav_path)
+    .output();
+
+  if !extract.map(|o| o.status.success()).unwrap_or(false) || !wav_path.exists() {
+    let _ = fs::remove_file(&wav_path);
+    return TranscribeResult {
+      ok: false,
+      engine: None,
+      engine_missing: Some(false),
+      segments: None,
+      error: Some("FFmpeg ile 16kHz ses çıkarılamadı".into()),
+    };
+  }
+
+  // 1) whisper.cpp CLI (whisper-cli / whisper-cpp)
+  if let (Some(bin), Some(model)) = (find_binary_on_path(&["whisper-cli", "whisper-cpp"]), find_whisper_model()) {
+    let status = Command::new(&bin)
+      .args(["-m", &model, "-l", lang, "-osrt", "-of"])
+      .arg(&out_prefix)
+      .arg("-f")
+      .arg(&wav_path)
+      .output();
+    let _ = fs::remove_file(&wav_path);
+    if status.map(|o| o.status.success()).unwrap_or(false) && srt_path.exists() {
+      let srt = fs::read_to_string(&srt_path).unwrap_or_default();
+      let _ = fs::remove_file(&srt_path);
+      let segments = parse_srt_segments(&srt);
+      return TranscribeResult {
+        ok: true,
+        engine: Some(format!("whisper.cpp ({})", bin)),
+        engine_missing: Some(false),
+        segments: Some(segments),
+        error: None,
+      };
+    }
+    let _ = fs::remove_file(&srt_path);
+  }
+
+  // 2) OpenAI whisper / faster-whisper CLI
+  if let Some(bin) = find_binary_on_path(&["whisper", "faster-whisper"]) {
+    let mut cmd = Command::new(&bin);
+    cmd.arg(&wav_path).args(["--output_format", "srt", "--output_dir"]).arg(&tmp_dir);
+    if lang != "auto" {
+      cmd.args(["--language", lang]);
+    }
+    let status = cmd.output();
+    let _ = fs::remove_file(&wav_path);
+    let expected_srt = tmp_dir.join(format!("audio-{}.srt", stamp));
+    if status.map(|o| o.status.success()).unwrap_or(false) && expected_srt.exists() {
+      let srt = fs::read_to_string(&expected_srt).unwrap_or_default();
+      let _ = fs::remove_file(&expected_srt);
+      let segments = parse_srt_segments(&srt);
+      return TranscribeResult {
+        ok: true,
+        engine: Some(bin),
+        engine_missing: Some(false),
+        segments: Some(segments),
+        error: None,
+      };
+    }
+    let _ = fs::remove_file(&expected_srt);
+  }
+
+  let _ = fs::remove_file(&wav_path);
+  TranscribeResult {
+    ok: false,
+    engine: None,
+    engine_missing: Some(true),
+    segments: None,
+    error: Some("Sistemde whisper-cli (+ ggml model) veya whisper bulunamadı; ses zarfı (VAD) ile devam edildi.".into()),
+  }
+}
+
 #[tauri::command]
 fn soundscape_generate(state: State<'_, Arc<AppState>>, preset_id: String) -> Option<MediaItem> {
   let (label, dur, wav, peaks) = foley::synthesize_soundscape(&preset_id);
@@ -1339,6 +1573,7 @@ fn main() {
       autosave_restore,
       autosave_dismiss,
       soundscape_generate,
+      transcribe_media,
       export_cancel,
       export_pause,
       export_resume,
