@@ -133,7 +133,9 @@ function cloneClipItem(c: TimelineClip): TimelineClip {
     grade: c.grade ? cloneColorGrade(c.grade) : undefined,
     credit: c.credit ? cloneCreditConfig(c.credit) : undefined,
     transform: c.transform ? { ...c.transform } : undefined,
-    keyframes: cloneKeyframes(c.keyframes)
+    keyframes: cloneKeyframes(c.keyframes),
+    audioEffects: c.audioEffects ? { ...c.audioEffects } : undefined,
+    nestedClips: c.nestedClips ? c.nestedClips.map(cloneClipItem) : undefined
   }
 }
 
@@ -142,12 +144,11 @@ function cloneClipList(cs: TimelineClip[]): TimelineClip[] {
 }
 
 function cloneLaneMap(ls: LaneMap): LaneMap {
-  return {
-    V2: { ...ls.V2 },
-    V1: { ...ls.V1 },
-    A1: { ...ls.A1 },
-    A2: { ...ls.A2 }
+  const out: LaneMap = {}
+  for (const [k, v] of Object.entries(ls)) {
+    if (v) out[k] = { ...v }
   }
+  return out
 }
 
 export default function App() {
@@ -601,6 +602,10 @@ export default function App() {
 
     recordHistory('Klip Kesme')
     const targetIds = new Set(targets.map((c) => c.id))
+    const rightIdMap = new Map<string, string>()
+    for (const c of targets) {
+      rightIdMap.set(c.id, `clip-${nextId.current++}`)
+    }
     setClips((prev) =>
       prev.flatMap((c) => {
         if (!targetIds.has(c.id)) return [c]
@@ -615,6 +620,8 @@ export default function App() {
               .filter((k) => k.time > leftDur)
               .map((k) => ({ ...k, time: round3(k.time - leftDur) }))
           : undefined
+        const rightLinkedId =
+          c.linkedClipId && rightIdMap.has(c.linkedClipId) ? rightIdMap.get(c.linkedClipId)! : null
         const left: TimelineClip = {
           ...c,
           duration: leftDur,
@@ -626,7 +633,7 @@ export default function App() {
         }
         const right: TimelineClip = {
           ...c,
-          id: `clip-${nextId.current++}`,
+          id: rightIdMap.get(c.id)!,
           start: t,
           in: round3(c.in + leftDur * spd),
           duration: rightDur,
@@ -634,7 +641,8 @@ export default function App() {
           fadeOut: Math.min(c.fadeOut, rightDur),
           grade: c.grade ? cloneColorGrade(c.grade) : undefined,
           transform: c.transform ? { ...c.transform } : undefined,
-          keyframes: rightKfs
+          keyframes: rightKfs,
+          linkedClipId: rightLinkedId
         }
         return [left, right]
       })
@@ -810,6 +818,10 @@ export default function App() {
 
       recordHistory('Klip Kesme (Jilet)')
       const targetIds = new Set(targets.map((c) => c.id))
+      const rightIdMap = new Map<string, string>()
+      for (const c of targets) {
+        rightIdMap.set(c.id, `clip-${nextId.current++}`)
+      }
       setClips((prev) =>
         prev.flatMap((c) => {
           if (!targetIds.has(c.id)) return [c]
@@ -824,6 +836,8 @@ export default function App() {
                 .filter((k) => k.time > leftDur)
                 .map((k) => ({ ...k, time: round3(k.time - leftDur) }))
             : undefined
+          const rightLinkedId =
+            c.linkedClipId && rightIdMap.has(c.linkedClipId) ? rightIdMap.get(c.linkedClipId)! : null
           const left: TimelineClip = {
             ...c,
             duration: leftDur,
@@ -835,7 +849,7 @@ export default function App() {
           }
           const right: TimelineClip = {
             ...c,
-            id: `clip-${nextId.current++}`,
+            id: rightIdMap.get(c.id)!,
             start: t,
             in: round3(c.in + leftDur * spd),
             duration: rightDur,
@@ -844,7 +858,7 @@ export default function App() {
             grade: c.grade ? cloneColorGrade(c.grade) : undefined,
             transform: c.transform ? { ...c.transform } : undefined,
             keyframes: rightKfs,
-            linkedClipId: null
+            linkedClipId: rightLinkedId
           }
           return [left, right]
         })

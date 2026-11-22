@@ -389,12 +389,15 @@ export function startProxyGeneration(
 
   const activeScale = scaleOverride ?? proxyResolutionScale
   const scaleTag = activeScale === '1/8' ? 's8' : activeScale === '1/4' ? 's4' : 's2'
-  const vfScaleExpr =
+  const srcW = item.width > 0 ? item.width : 1920
+  const rawW =
     activeScale === '1/8'
-      ? 'scale=max(240\\,trunc(iw/8)*2):-2,format=yuv420p'
+      ? Math.min(480, Math.max(240, Math.floor(srcW / 8)))
       : activeScale === '1/4'
-        ? 'scale=max(360\\,trunc(iw/4)*2):-2,format=yuv420p'
-        : 'scale=min(1280\\,max(480\\,trunc(iw/2)*2)):-2,format=yuv420p'
+        ? Math.min(960, Math.max(360, Math.floor(srcW / 4)))
+        : Math.min(1280, Math.max(480, Math.floor(srcW / 2)))
+  const targetW = Math.floor(rawW / 2) * 2
+  const vfScaleExpr = `scale=${targetW}:-2,format=yuv420p`
 
   const job = (async () => {
     try {

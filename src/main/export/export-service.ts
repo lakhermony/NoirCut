@@ -84,22 +84,47 @@ export function resumeActiveExport(): boolean {
   }
 }
 
+function flattenNestedClips(rawClips: TimelineClip[]): TimelineClip[] {
+  const out: TimelineClip[] = []
+  for (const c of rawClips) {
+    if (c.nestedClips && c.nestedClips.length > 0) {
+      const innerMinStart = Math.min(...c.nestedClips.map((nc) => nc.start))
+      const innerFlattened = flattenNestedClips(c.nestedClips)
+      for (const nc of innerFlattened) {
+        const relStart = Math.max(0, nc.start - innerMinStart)
+        if (relStart >= c.duration - 0.01) continue
+        const clippedDur = Math.min(nc.duration, c.duration - relStart)
+        if (clippedDur <= 0.02) continue
+        out.push({
+          ...nc,
+          start: Number((c.start + relStart).toFixed(3)),
+          duration: Number(clippedDur.toFixed(3))
+        })
+      }
+    } else {
+      out.push(c)
+    }
+  }
+  return out
+}
+
 function sliceClipsToRange(
   rawClips: TimelineClip[],
   rangeStart?: number | null,
   rangeEnd?: number | null
 ): { clips: TimelineClip[]; total: number; offset: number } {
-  const fullTotal = projectEnd(rawClips)
+  const flatClips = flattenNestedClips(rawClips)
+  const fullTotal = projectEnd(flatClips)
   const rStart = rangeStart != null && rangeStart > 0 ? rangeStart : 0
   const rEnd =
     rangeEnd != null && rangeEnd > rStart + 0.05 ? Math.min(fullTotal, rangeEnd) : fullTotal
 
   if (rStart <= 0.001 && rEnd >= fullTotal - 0.001) {
-    return { clips: rawClips, total: fullTotal, offset: 0 }
+    return { clips: flatClips, total: fullTotal, offset: 0 }
   }
 
   const sliced: TimelineClip[] = []
-  for (const c of rawClips) {
+  for (const c of flatClips) {
     const cEnd = c.start + c.duration
     if (cEnd <= rStart + 0.02 || c.start >= rEnd - 0.02) continue
     const overlapStart = Math.max(c.start, rStart)
@@ -976,11 +1001,21 @@ export async function exportTimeline(
       proc.on('close', (code, signal) => {
         activeProc = null
         if (signal === 'SIGTERM') {
+          try {
+            if (existsSync(outPath)) rmSync(outPath, { force: true })
+          } catch {
+            // yoksay
+          }
           resolvePromise({ ok: false, canceled: true })
         } else if (code === 0 && existsSync(outPath)) {
           sendProgress(win, 100)
           resolvePromise({ ok: true, path: outPath })
         } else {
+          try {
+            if (existsSync(outPath)) rmSync(outPath, { force: true })
+          } catch {
+            // yoksay
+          }
           resolvePromise({
             ok: false,
             error: stderr.trim() || `FFmpeg çıkış kodu: ${code}`
