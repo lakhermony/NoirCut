@@ -48,6 +48,7 @@ async function runAllTests() {
         join(ROOT, 'src/shared/noirfilm.ts'),
         join(ROOT, 'src/shared/credits.ts'),
         join(ROOT, 'src/main/transcribe/transcribe-service.ts'),
+        join(ROOT, 'src/main/export/vaapi-device.ts'),
         '--outDir',
         COMPILED_DIR,
         '--module',
@@ -93,6 +94,10 @@ async function runAllTests() {
       cancelActiveTranscription,
       transcribeMediaFile
     } = require(join(COMPILED_DIR, 'main/transcribe/transcribe-service.js'))
+    const {
+      clearVaapiDeviceCache,
+      resolveVaapiDevice
+    } = require(join(COMPILED_DIR, 'main/export/vaapi-device.js'))
 
     // 1. Dynamic Lane Preservation (Undo/Redo)
     const lanes = defaultLanes()
@@ -398,9 +403,54 @@ async function runAllTests() {
     assert.equal(missingRes.ok, false)
     assert.equal(missingRes.engineMissing, true)
     assert.deepEqual(readdirSync(whisperWorkDir), [])
-    console.log('[PASS] 9/9 Async Whisper Transkripsiyon İptali, Eşzamanlılık ve Temp Temizliği')
+    console.log('[PASS] 9/10 Async Whisper Transkripsiyon İptali, Eşzamanlılık ve Temp Temizliği')
 
-    console.log('\nALL 9 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
+    // 10. VAAPI Device Probing (Multi-GPU, Fallback to libx264, Env Override)
+    clearVaapiDeviceCache()
+    const probedA = []
+    const devA = await resolveVaapiDevice({
+      ffmpegBin: ffmpegPath,
+      useCache: false,
+      listDevices: () => ['/dev/dri/renderD128', '/dev/dri/renderD129'],
+      probeDevice: async (_bin, dev) => {
+        probedA.push(dev)
+        return dev === '/dev/dri/renderD129'
+      }
+    })
+    assert.equal(devA, '/dev/dri/renderD129')
+    assert.deepEqual(probedA, ['/dev/dri/renderD128', '/dev/dri/renderD129'])
+
+    clearVaapiDeviceCache()
+    const devNone = await resolveVaapiDevice({
+      ffmpegBin: ffmpegPath,
+      useCache: false,
+      listDevices: () => ['/dev/dri/renderD128', '/dev/dri/renderD129'],
+      probeDevice: async () => false
+    })
+    assert.equal(devNone, null)
+
+    const prevEnv = process.env.NOIRCUT_VAAPI_DEVICE
+    try {
+      process.env.NOIRCUT_VAAPI_DEVICE = '/dev/dri/renderD130'
+      const probedEnv = []
+      const devEnv = await resolveVaapiDevice({
+        ffmpegBin: ffmpegPath,
+        listDevices: () => ['/dev/dri/renderD128'],
+        probeDevice: async (_bin, dev) => {
+          probedEnv.push(dev)
+          return dev === '/dev/dri/renderD130'
+        }
+      })
+      assert.equal(devEnv, '/dev/dri/renderD130')
+      assert.deepEqual(probedEnv, ['/dev/dri/renderD130'])
+    } finally {
+      if (prevEnv === undefined) delete process.env.NOIRCUT_VAAPI_DEVICE
+      else process.env.NOIRCUT_VAAPI_DEVICE = prevEnv
+      clearVaapiDeviceCache()
+    }
+    console.log('[PASS] 10/10 VAAPI Cihaz Probu (Çoklu GPU, Fallback ve Env Override)')
+
+    console.log('\nALL 10 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
   } finally {
     rmSync(TEMP_ROOT, { recursive: true, force: true })
   }

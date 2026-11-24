@@ -14,6 +14,7 @@ import { app, BrowserWindow, dialog } from 'electron'
 import { copyFileSync, existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { cpus, tmpdir } from 'os'
 import { join, resolve } from 'path'
+import { resolveVaapiDevice } from './vaapi-device'
 
 function resolveExportFfmpegPath(fallbackPath: string): string {
   if (process.platform === 'win32') {
@@ -943,7 +944,20 @@ export async function exportTimeline(
   const engine = await getEngineInfo()
   const baseBin = resolveExportFfmpegPath(engine.ffmpegPath)
 
-  const avail = engine.availableEncoders ?? ['libx264']
+  let avail = engine.availableEncoders ?? ['libx264']
+  let vaapiDevice: string | null = null
+  if (avail.includes('h264_vaapi')) {
+    vaapiDevice = await resolveVaapiDevice({
+      ffmpegBin: engine.gpuFfmpegPath ?? baseBin
+    })
+    if (!vaapiDevice) {
+      console.warn(
+        '[NoirCut] Çalışan VAAPI cihazı (/dev/dri/renderD*) bulunamadı; h264_vaapi devre dışı bırakıldı ve libx264 kullanılacak.'
+      )
+      avail = avail.filter((e) => e !== 'h264_vaapi')
+      if (avail.length === 0) avail = ['libx264']
+    }
+  }
   const reqEnc = settings.encoder ?? 'auto'
   const wantHevcCodec = settings.codec === 'h265'
   const hwEncoder: VideoEncoderId =
@@ -971,8 +985,8 @@ export async function exportTimeline(
     const bin = enc !== 'libx264' && engine.gpuFfmpegPath ? engine.gpuFfmpegPath : baseBin
 
     const preArgs: string[] = ['-y', '-v', 'error', '-progress', 'pipe:1', '-nostats']
-    if (isVaapi) {
-      preArgs.push('-vaapi_device', '/dev/dri/renderD128')
+    if (isVaapi && vaapiDevice) {
+      preArgs.push('-vaapi_device', vaapiDevice)
     }
 
     const wantHevc = settings.codec === 'h265' || enc === 'libx265' || enc === 'hevc_nvenc'
