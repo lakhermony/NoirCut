@@ -7,11 +7,11 @@
 **Sinema Karanlık Odası & Profesyonel Masaüstü Video Kurgu / Post-Prodüksiyon Sistemi**
 
 [![Sürüm](https://img.shields.io/badge/sürüm-v1.0.5_Studio-B7E36A?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
-[![Platform](https://img.shields.io/badge/platform-Linux_AppImage_%7C_DEB_%7C_Windows_x64-1B1E24?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
-[![Teknoloji](https://img.shields.io/badge/Tauri_v2_(Rust)-React_19_%7C_WebGL2_%7C_WebAudio_%7C_FFmpeg-242830?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
+[![Platform](https://img.shields.io/badge/platform-Linux_AppImage_%7C_Windows_x64-1B1E24?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
+[![Teknoloji](https://img.shields.io/badge/Electron_45-React_19_%7C_WebGL2_%7C_WebAudio_%7C_FFmpeg-242830?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
 [![Lisans](https://img.shields.io/badge/lisans-MIT-B7E36A?style=for-the-badge&labelColor=101114)](LICENSE)
 
-*Aboneliksiz, bulut kilitsiz, Tauri v2 (Rust) çekirdeği, yerel WebGL2 GPU renk motoru, Web Audio API (`NoirAudio Engine`) ve FFmpeg gücüyle çalışan modern çok kanallı doğrusal olmayan video düzenleyici (NLE).*
+*Aboneliksiz, bulut kilitsiz, Electron 45 ana süreci, yerel WebGL2 GPU renk motoru, Web Audio API (`NoirAudio Engine`) ve gömülü/sistem FFmpeg gücüyle çalışan modern çok kanallı doğrusal olmayan video düzenleyici (NLE).*
 
 [İndirme & Boyutlar](#indirme-ve-paket-boyutları-v105) · [Özellik Envanteri](#özellik-envanteri-ve-olgunluk-durumu-v105) · [Çalışma Alanları](#çalışma-alanları) · [Kurulum & Geliştirme](#kurulum-ve-geliştirme) · [Klavye Kısayolları](#klavye-kısayolları) · [Dokümantasyon](#dokümantasyon)
 
@@ -69,7 +69,7 @@ Her özelliğin mevcut gerçek durum etiketi aşağıda şeffaf biçimde belirti
 
 | Özellik | Durum | Teknik Açıklama |
 | :--- | :---: | :--- |
-| **3D LUT Motoru (`17³`, `33³`, `65³` `.cube`) & Rayon Baker** | `STABLE` | 19 yerleşik LUT, özel `.cube` yükleme ve Rust `rayon` çok çekirdekli paralel 33³ `.cube` üretici. |
+| **3D LUT Motoru (`17³`, `33³`, `65³` `.cube`)** | `STABLE` | 19 yerleşik LUT, özel `.cube` yükleme ve dışa aktarma için trilinear 3D LUT pişirme (`bakeColorGradeToCube`). |
 | **Maskeleme & Sansür (`Power Window / Blur / Mosaic / Vignette`)** | `STABLE` | Elips veya dikdörtgen alan seçimiyle yüz/plaka sansürü (`Gaussian Blur`, `Mozaik`) ve ayarlanabilir `Vignette` (canlı önizleme + FFmpeg export). |
 | **Birincil & İkincil Renk Araçları (LGG, Offset, Curves, HSL)** | `STABLE` | Kamera Log profilleri (`Rec.709`, `S-Log3`, `C-Log3`, `V-Log`, `Arri LogC3`), Auto WB, Damlalık WB, Lift/Gamma/Gain/Offset, RGB/Luma eğrileri ve 8-vektör HSL seçici renk. |
 | **Film Emülasyonu & Optik Efektler** | `STABLE` | `Kodak 2383`, `Fujifilm 3513`, `Kodak 5219`, `Ilford HP5`, `Silver Noir` film stokları; Halation, Bloom, Mist/Diffusion ve Film Grain. |
@@ -122,29 +122,27 @@ flowchart LR
 
 ## İndirme ve Paket Boyutları (v1.0.5)
 
-Tauri v2 + Rust çekirdeğine geçiş ile Linux paket boyutları **%66 – %98** oranında küçültülmüştür. Tüm kurulum paketleri [Releases (v1.0.5)](https://github.com/lakhermony/NoirCut/releases/tag/v1.0.5) sayfasından indirilebilir:
+Tüm kurulum paketleri [Releases (v1.0.5)](https://github.com/lakhermony/NoirCut/releases/tag/v1.0.5) sayfasından indirilebilir:
 
-| Platform / Paket | Dosya Adı | Dosya Boyutu | Mimari |
-| :--- | :--- | :---: | :--- |
-| **Linux Taşınabilir (Önerilen)** | `NoirCut_1.0.5_amd64.AppImage` | **79.7 MiB** (83.6 MB) | Tauri v2 + Rust (`x86_64`) |
-| **Debian / Ubuntu / Mint** | `NoirCut_1.0.5_amd64.deb` | **3.78 MiB** (3.96 MB) | Tauri v2 + Rust (`x86_64`) |
-| **Windows Kurulum (NSIS)** | `NoirCut.Setup.1.0.5.exe` | **263.5 MiB** (276.3 MB) | Electron Legacy (`x64`) |
-| **Windows Taşınabilir** | `NoirCut.1.0.5.exe` | **230.7 MiB** (241.9 MB) | Electron Legacy (`x64`) |
+| Platform / Paket | Dosya Adı | Mimari |
+| :--- | :--- | :--- |
+| **Linux Taşınabilir (AppImage)** | `NoirCut-1.0.5.AppImage` | Electron 45 (`x64`) |
+| **Windows Kurulum (NSIS)** | `NoirCut.Setup.1.0.5.exe` | Electron 45 (`x64`) |
+| **Windows Taşınabilir** | `NoirCut.1.0.5.exe` | Electron 45 (`x64`) |
 
 ## Kurulum ve Geliştirme
 
 ### Son Kullanıcı Kurulumu
-- **Linux (x64 — AppImage):** [Releases](https://github.com/lakhermony/NoirCut/releases/tag/v1.0.5) sayfasından `NoirCut_1.0.5_amd64.AppImage` (79.7 MiB) dosyasını indirin, çalıştırma izni verin ve başlatın:
+- **Linux (x64 — AppImage):** [Releases](https://github.com/lakhermony/NoirCut/releases/tag/v1.0.5) sayfasından `NoirCut-1.0.5.AppImage` dosyasını indirin, çalıştırma izni verin ve başlatın:
   ```bash
-  chmod +x NoirCut_1.0.5_amd64.AppImage
-  ./NoirCut_1.0.5_amd64.AppImage
+  chmod +x NoirCut-1.0.5.AppImage
+  ./NoirCut-1.0.5.AppImage
   ```
-- **Debian / Ubuntu (`.deb`):** `NoirCut_1.0.5_amd64.deb` (3.78 MiB) paketini `sudo apt install ./NoirCut_1.0.5_amd64.deb` ile kurun.
 - **Windows (x64):** `NoirCut.Setup.1.0.5.exe` veya taşınabilir `NoirCut.1.0.5.exe` ile çalıştırılabilir.
 
 ### Geliştirici Kurulumu ve Testler
 
-**Gereksinimler:** Node.js `>= 20`, npm ve Rust toolchain (`cargo` + `rustc`).
+**Gereksinimler:** Node.js `>= 20` ve npm.
 
 ```bash
 # 1. Depoyu klonlayın
@@ -154,19 +152,22 @@ cd NoirCut
 # 2. Bağımlılıkları yükleyin
 npm install
 
-# 3. Tauri v2 geliştirme modunda başlatın (Rust + Vite HMR)
-npx @tauri-apps/cli dev
+# 3. Geliştirme modunda başlatın (Electron + Vite HMR)
+npm run dev
 
-# 4. Tip kontrolü, regresyon testleri ve Rust testleri
+# 4. Tip kontrolü, üretim derlemesi ve regresyon testleri
 npm run typecheck
+npm run build
 npm test
-cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 ### Masaüstü Paketi Oluşturma
 ```bash
-# Tauri v2 Linux AppImage & DEB (src-tauri/target/release/bundle/)
-npx @tauri-apps/cli build --bundles appimage,deb
+# Linux AppImage (dist/NoirCut-1.0.5.AppImage)
+npm run dist:linux
+
+# Windows Portable & NSIS Setup (resources/bin/win/ffmpeg.exe mevcutsa)
+npm run dist:win
 ```
 
 ---
@@ -194,16 +195,11 @@ npx @tauri-apps/cli build --bundles appimage,deb
 ## Mimari Dizin Yapısı
 
 ```text
-src-tauri/src/
-├── main.rs                 # Tauri v2 Rust çekirdeği (medya protokolü, proxy, Whisper STT, archive, snapshot, autosave)
-├── export.rs               # Çok kanallı FFmpeg filter_complex dışa aktarım motoru
-├── lut_bake.rs             # Rayon paralel çok çekirdekli 33³ 3D LUT (.cube) üreticisi
-└── foley.rs                # Prosedürel WAV ses atmosferi sentezleyicisi
 src/
-├── main/                   # Electron legacy ana süreç
+├── main/                   # Electron ana süreç (FFmpeg motoru, Smart Proxy, Whisper STT, Archive, Snapshot, Autosave, Updater)
 ├── preload/                # contextBridge IPC API (window.noircut)
-├── shared/                 # Renderer ve Backend arası paylaşılan saf modeller & matematik (color, lut, noirfilm, timeline, credits)
-└── renderer/src/           # React 19 arayüzü, WebGL2 shader motoru, NoirAudio Engine, Tauri köprüsü ve çalışma alanları
+├── shared/                 # Renderer ve Main arası paylaşılan saf modeller & matematik (color, lut, noirfilm, timeline, credits)
+└── renderer/src/           # React 19 arayüzü, WebGL2 shader motoru, NoirAudio Engine, 5 çalışma alanı ve Canvas bileşenleri
 tests/
 └── regression.test.mjs     # Otomatik regresyon, veri bütünlüğü ve FFmpeg doğrulama test paketi (npm test)
 docs/
