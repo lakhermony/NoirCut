@@ -102,7 +102,8 @@ export default function SubtitlesWorkspace({
 }) {
   const [language, setLanguage] = useState('tr-TR')
   const [transcribing, setTranscribing] = useState(false)
-  const [transcribeProgress, setTranscribeProgress] = useState(0)
+  const [transcribeProgress, setTranscribeProgress] = useState<number | null>(null)
+  const [transcribeStage, setTranscribeStage] = useState<'extract' | 'transcribe' | 'parse' | null>(null)
   const cancelTranscribeRef = useRef(false)
 
   // Silence Detection state
@@ -134,18 +135,15 @@ export default function SubtitlesWorkspace({
     }
     cancelTranscribeRef.current = false
     setTranscribing(true)
-    setTranscribeProgress(8)
+    setTranscribeProgress(null)
+    setTranscribeStage('extract')
 
-    const stepTimer = window.setInterval(() => {
-      if (cancelTranscribeRef.current) {
-        window.clearInterval(stepTimer)
-        setTranscribing(false)
-        setTranscribeProgress(0)
-        onShowToast?.('Altyazı üretimi iptal edildi')
-        return
+    const unsubProgress = window.noircut?.onTranscribeProgress?.((p) => {
+      setTranscribeStage(p.stage)
+      if (typeof p.percent === 'number') {
+        setTranscribeProgress(p.percent)
       }
-      setTranscribeProgress((p) => (p >= 90 ? p : p + 12))
-    }, 180)
+    })
 
     const whisperApi = window.noircut?.transcribeMedia
     if (whisperApi) {
@@ -154,45 +152,63 @@ export default function SubtitlesWorkspace({
       let engineMissing = false
       const whisperSegments: SubtitleSegment[] = []
 
-      for (const clip of audibleTimelineClips) {
-        if (cancelTranscribeRef.current) break
-        let res = mediaCache.get(clip.mediaId)
-        if (!res) {
-          try {
-            res = await whisperApi(clip.mediaId, language)
-          } catch {
-            res = { ok: false, engineMissing: true }
+      try {
+        for (const clip of audibleTimelineClips) {
+          if (cancelTranscribeRef.current) break
+          let res = mediaCache.get(clip.mediaId)
+          if (!res) {
+            try {
+              res = await whisperApi(clip.mediaId, language)
+            } catch {
+              res = { ok: false, engineMissing: true }
+            }
+            mediaCache.set(clip.mediaId, res)
           }
-          mediaCache.set(clip.mediaId, res)
-        }
-        if (res.engineMissing) engineMissing = true
-        if (res.ok && res.segments && res.segments.length > 0) {
-          usedEngine = res.engine ?? 'Whisper'
-          const srcEnd = clip.in + clip.duration
-          for (const seg of res.segments) {
-            if (seg.end <= clip.in || seg.start >= srcEnd) continue
-            const sLocal = Math.max(0, seg.start - clip.in)
-            const eLocal = Math.min(clip.duration, seg.end - clip.in)
-            if (eLocal - sLocal < 0.25) continue
-            whisperSegments.push({
-              id: `sub-${Date.now()}-${whisperSegments.length}`,
-              start: round3(clip.start + sLocal),
-              end: round3(clip.start + eLocal),
-              text: seg.text,
-              language
-            })
+          if (res.canceled || cancelTranscribeRef.current) {
+            cancelTranscribeRef.current = true
+            break
+          }
+          if (res.error === 'busy') {
+            onShowToast?.('Devam eden bir transkripsiyon işlemi zaten var')
+            setTranscribing(false)
+            setTranscribeStage(null)
+            setTranscribeProgress(null)
+            return
+          }
+          if (res.engineMissing) engineMissing = true
+          if (res.ok && res.segments && res.segments.length > 0) {
+            usedEngine = res.engine ?? 'Whisper'
+            const srcEnd = clip.in + clip.duration
+            for (const seg of res.segments) {
+              if (seg.end <= clip.in || seg.start >= srcEnd) continue
+              const sLocal = Math.max(0, seg.start - clip.in)
+              const eLocal = Math.min(clip.duration, seg.end - clip.in)
+              if (eLocal - sLocal < 0.25) continue
+              whisperSegments.push({
+                id: `sub-${Date.now()}-${whisperSegments.length}`,
+                start: round3(clip.start + sLocal),
+                end: round3(clip.start + eLocal),
+                text: seg.text,
+                language
+              })
+            }
           }
         }
+      } finally {
+        unsubProgress?.()
       }
 
       if (cancelTranscribeRef.current) {
-        window.clearInterval(stepTimer)
+        setTranscribing(false)
+        setTranscribeStage(null)
+        setTranscribeProgress(null)
+        onShowToast?.('Altyazı üretimi iptal edildi')
         return
       }
 
       if (usedEngine && whisperSegments.length > 0) {
-        window.clearInterval(stepTimer)
         setTranscribing(false)
+        setTranscribeStage(null)
         setTranscribeProgress(100)
         onUpdateSubtitles(whisperSegments)
         onShowToast?.(`${whisperSegments.length} altyazı ${usedEngine} ile üretildi (${language})`)
@@ -202,11 +218,18 @@ export default function SubtitlesWorkspace({
       if (engineMissing) {
         onShowToast?.('Whisper CLI bulunamadı; ses zarfı (VAD) ile devam ediliyor')
       }
+    } else {
+      unsubProgress?.()
     }
 
     window.setTimeout(() => {
-      window.clearInterval(stepTimer)
-      if (cancelTranscribeRef.current) return
+      if (cancelTranscribeRef.current) {
+        setTranscribing(false)
+        setTranscribeStage(null)
+        setTranscribeProgress(null)
+        onShowToast?.('Altyazı üretimi iptal edildi')
+        return
+      }
 
       const lines = language.startsWith('tr') ? SAMPLE_LINES_TR : SAMPLE_LINES_EN
       const generated: SubtitleSegment[] = []
@@ -269,6 +292,7 @@ export default function SubtitlesWorkspace({
       }
 
       setTranscribing(false)
+      setTranscribeStage(null)
       setTranscribeProgress(100)
       onUpdateSubtitles(generated)
       onShowToast?.(`${generated.length} konuşma segmenti otomatik oluşturuldu (${language})`)
@@ -456,10 +480,19 @@ export default function SubtitlesWorkspace({
                   data-testid="cancel-transcribe-btn"
                   onClick={() => {
                     cancelTranscribeRef.current = true
+                    void window.noircut?.cancelTranscribe?.()
                   }}
                   className="rounded-full border border-rose-500/60 bg-rose-500/20 px-3 py-1 text-[10px] font-bold text-rose-300"
                 >
-                  İptal (%{transcribeProgress})
+                  İptal (
+                  {transcribeProgress !== null
+                    ? `%${transcribeProgress}`
+                    : transcribeStage === 'extract'
+                      ? 'Ses çıkarılıyor'
+                      : transcribeStage === 'parse'
+                        ? 'Ayrıştırılıyor'
+                        : 'Deşifre'}
+                  )
                 </button>
               ) : (
                 <button

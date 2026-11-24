@@ -168,10 +168,18 @@ export interface TranscribeSegment {
   text: string
 }
 
+export type TranscribeStage = 'extract' | 'transcribe' | 'parse'
+
+export interface TranscribeProgress {
+  stage: TranscribeStage
+  percent?: number
+}
+
 export interface TranscribeResult {
   ok: boolean
   engine?: string
   engineMissing?: boolean
+  canceled?: boolean
   segments?: TranscribeSegment[]
   error?: string
 }
@@ -256,6 +264,8 @@ export interface NoirCutApi {
   resumeExport?: () => Promise<boolean>
   /** Çevrimdışı Whisper CLI (whisper.cpp / faster-whisper) ile konuşma deşifresi */
   transcribeMedia?: (mediaId: string, language: string) => Promise<TranscribeResult>
+  cancelTranscribe?: () => Promise<boolean>
+  onTranscribeProgress?: (cb: (progress: TranscribeProgress) => void) => () => void
   /** Projeyi ve tüm medya dosyalarını taşınabilir tek klasörde paketler */
   archiveProject?: (project: NoirCutProject) => Promise<ArchiveProjectResult>
   /** Monitörden alınan kare anlık görüntüsünü PNG olarak kaydeder */

@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -47,10 +47,13 @@ async function runAllTests() {
         join(ROOT, 'src/shared/lut.ts'),
         join(ROOT, 'src/shared/noirfilm.ts'),
         join(ROOT, 'src/shared/credits.ts'),
+        join(ROOT, 'src/main/transcribe/transcribe-service.ts'),
         '--outDir',
         COMPILED_DIR,
         '--module',
         'commonjs',
+        '--types',
+        'node',
         '--target',
         'es2022',
         '--esModuleInterop',
@@ -77,15 +80,19 @@ async function runAllTests() {
       mapClipLocalToSourceTime,
       rippleCloseGap,
       round3
-    } = require(join(COMPILED_DIR, 'timeline.js'))
+    } = require(join(COMPILED_DIR, 'shared/timeline.js'))
     const {
       bakeColorGradeToCube,
       cloneColorGrade,
       defaultColorGrade,
       evaluateColorGrade
-    } = require(join(COMPILED_DIR, 'color.js'))
-    const { parseCubeLut } = require(join(COMPILED_DIR, 'lut.js'))
-    const { cloneCreditConfig } = require(join(COMPILED_DIR, 'credits.js'))
+    } = require(join(COMPILED_DIR, 'shared/color.js'))
+    const { parseCubeLut } = require(join(COMPILED_DIR, 'shared/lut.js'))
+    const { cloneCreditConfig } = require(join(COMPILED_DIR, 'shared/credits.js'))
+    const {
+      cancelActiveTranscription,
+      transcribeMediaFile
+    } = require(join(COMPILED_DIR, 'main/transcribe/transcribe-service.js'))
 
     // 1. Dynamic Lane Preservation (Undo/Redo)
     const lanes = defaultLanes()
@@ -318,8 +325,82 @@ async function runAllTests() {
     assert.ok(Math.abs(effectiveAverageSpeedFactor(rampClip) - 1.5) < 0.01)
     assert.ok(Math.abs(mapClipLocalToSourceTime(rampClip, 2) - 4.0) < 0.02)
     assert.ok(Math.abs(clipGainAt(rampClip, 1) - dbToGain(-3)) < 0.01)
-    console.log('[PASS] 8/8 Speed Ramp İntegrasyonu ve Rubberband Ses Keyframe Hesabı')
-    console.log('\nALL 8 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
+    console.log('[PASS] 8/9 Speed Ramp İntegrasyonu ve Rubberband Ses Keyframe Hesabı')
+
+    // 9. Async Whisper Transcription: Cancel + Temp Cleanup + Concurrency Guard
+    const sampleAudioMp4 = join(MEDIA_DIR, 'transcribe-sample.mp4')
+    execFileSync(ffmpegPath, [
+      '-y',
+      '-v',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:duration=0.3',
+      '-c:a',
+      'aac',
+      sampleAudioMp4
+    ])
+    const stubWhisper = join(TEMP_ROOT, 'stub-whisper.sh')
+    writeFileSync(stubWhisper, '#!/usr/bin/env bash\nsleep 10\n', 'utf8')
+    chmodSync(stubWhisper, 0o755)
+    const dummyModel = join(TEMP_ROOT, 'ggml-dummy.bin')
+    writeFileSync(dummyModel, 'dummy', 'utf8')
+    const whisperWorkDir = join(TEMP_ROOT, 'whisper-work')
+
+    const seenStages = []
+    let notifyEnteredTranscribe
+    const enteredTranscribe = new Promise((res) => {
+      notifyEnteredTranscribe = res
+    })
+
+    const t0 = Date.now()
+    const transcribePromise = transcribeMediaFile({
+      ffmpegPath,
+      mediaPath: sampleAudioMp4,
+      language: 'tr-TR',
+      workDir: whisperWorkDir,
+      findBin: (names) => (names.includes('whisper-cli') ? stubWhisper : null),
+      findModel: () => dummyModel,
+      onProgress: (p) => {
+        seenStages.push(p.stage)
+        if (p.stage === 'transcribe') notifyEnteredTranscribe()
+      }
+    })
+
+    await enteredTranscribe
+    const busyRes = await transcribeMediaFile({
+      ffmpegPath,
+      mediaPath: sampleAudioMp4,
+      language: 'tr-TR',
+      workDir: whisperWorkDir
+    })
+    assert.equal(busyRes.ok, false)
+    assert.equal(busyRes.error, 'busy')
+
+    assert.equal(cancelActiveTranscription(), true)
+    const cancelRes = await transcribePromise
+    const elapsedMs = Date.now() - t0
+    assert.equal(cancelRes.ok, false)
+    assert.equal(cancelRes.canceled, true)
+    assert.ok(elapsedMs < 4000, `Cancel took too long: ${elapsedMs}ms`)
+    assert.ok(seenStages.includes('extract') && seenStages.includes('transcribe'))
+    assert.deepEqual(readdirSync(whisperWorkDir), [])
+
+    const missingRes = await transcribeMediaFile({
+      ffmpegPath,
+      mediaPath: sampleAudioMp4,
+      language: 'en-US',
+      workDir: whisperWorkDir,
+      findBin: () => null,
+      findModel: () => null
+    })
+    assert.equal(missingRes.ok, false)
+    assert.equal(missingRes.engineMissing, true)
+    assert.deepEqual(readdirSync(whisperWorkDir), [])
+    console.log('[PASS] 9/9 Async Whisper Transkripsiyon İptali, Eşzamanlılık ve Temp Temizliği')
+
+    console.log('\nALL 9 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
   } finally {
     rmSync(TEMP_ROOT, { recursive: true, force: true })
   }
