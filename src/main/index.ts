@@ -88,7 +88,8 @@ function createWindow(): BrowserWindow {
     ...(icon ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      // Preload yalnızca contextBridge ve ipcRenderer kullanır; Node API gerekmediği için sandbox etkindir
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
     }
@@ -190,6 +191,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('media:transcribe-cancel', () => cancelActiveTranscription())
 
   ipcMain.handle('project:archive', async (e, project: NoirCutProject) => {
+    if (!project || typeof project !== 'object' || Array.isArray(project)) {
+      return { ok: false, error: 'Geçersiz proje verisi' }
+    }
     const win = BrowserWindow.fromWebContents(e.sender)
     const opts: Electron.OpenDialogOptions = {
       title: 'Proje Arşiv Klasörü Seç (Consolidate)',
@@ -198,24 +202,31 @@ app.whenReady().then(async () => {
     const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     if (res.canceled || res.filePaths.length === 0) return { ok: false, canceled: true }
     try {
-      const safeName = basename(project.mediaRefs?.[0]?.path || 'NoirCut-Project').replace(/[^a-zA-Z0-9_-]/g, '_')
+      const rawRefPath =
+        typeof project.mediaRefs?.[0]?.path === 'string' ? project.mediaRefs[0].path : ''
+      const safeName =
+        basename(rawRefPath || 'NoirCut-Project').replace(/[^a-zA-Z0-9_-]/g, '_') ||
+        'NoirCut-Project'
       const archiveDir = join(res.filePaths[0], `${safeName}-Archive-${Math.floor(Date.now() / 1000)}`)
-      const mediaDir = join(archiveDir, 'media')
+      const mediaDir = resolve(archiveDir, 'media')
       await mkdir(mediaDir, { recursive: true })
       const cloned: NoirCutProject = JSON.parse(JSON.stringify(project))
       const used = new Set<string>()
       let copiedFiles = 0
       for (const r of cloned.mediaRefs ?? []) {
-        if (!r.path || !existsSync(r.path)) continue
+        if (!r || typeof r.path !== 'string' || !isAbsolute(r.path) || !existsSync(r.path)) continue
         const orig = basename(r.path)
+        if (!orig || orig === '.' || orig === '..') continue
         let destName = orig
         let n = 1
         while (used.has(destName)) {
           destName = `${n}_${orig}`
           n++
         }
+        const destPath = resolve(mediaDir, destName)
+        if (!destPath.startsWith(mediaDir + (process.platform === 'win32' ? '\\' : '/'))) continue
         used.add(destName)
-        await copyFile(r.path, join(mediaDir, destName))
+        await copyFile(r.path, destPath)
         r.path = `./media/${destName}`
         copiedFiles++
       }
@@ -229,16 +240,24 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     'snapshot:save',
     async (e, args: { dataUrl: string; defaultName: string }) => {
+      if (!args || typeof args.dataUrl !== 'string' || !args.dataUrl.startsWith('data:image/png;base64,')) {
+        return { ok: false, error: 'Geçersiz PNG veri URL\'si' }
+      }
+      const rawName = typeof args.defaultName === 'string' && args.defaultName.trim()
+        ? args.defaultName.trim()
+        : 'noircut-snapshot.png'
+      const safeDefaultName =
+        basename(rawName).replace(/[^a-zA-Z0-9._-]/g, '_') || 'noircut-snapshot.png'
       const win = BrowserWindow.fromWebContents(e.sender)
       const opts: Electron.SaveDialogOptions = {
         title: 'Kare Anlık Görüntüsü Kaydet (PNG)',
-        defaultPath: args?.defaultName || 'noircut-snapshot.png',
+        defaultPath: safeDefaultName,
         filters: [{ name: 'PNG Görsel', extensions: ['png'] }]
       }
       const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
       if (res.canceled || !res.filePath) return { ok: false, canceled: true }
       try {
-        const b64 = (args?.dataUrl || '').split(',')[1] ?? args?.dataUrl ?? ''
+        const b64 = args.dataUrl.slice('data:image/png;base64,'.length)
         await writeFile(res.filePath, Buffer.from(b64, 'base64'))
         return { ok: true, path: res.filePath }
       } catch (err) {
