@@ -80,164 +80,32 @@ import {
   type Tab,
   type ThemeId
 } from './types'
-
-const THEME_STORAGE_KEY = 'noircut-theme'
-const TIMELINE_HEIGHT_KEY = 'noircut-timeline-height'
-const DEFAULT_TIMELINE_HEIGHT = 284
-const MIN_TIMELINE_HEIGHT = 176
-const MAX_TIMELINE_HEIGHT = 520
-
-function getInitialTimelineHeight(): number {
-  try {
-    const raw = window.localStorage.getItem(TIMELINE_HEIGHT_KEY)
-    const n = raw ? Number(raw) : NaN
-    if (Number.isFinite(n) && n >= MIN_TIMELINE_HEIGHT && n <= MAX_TIMELINE_HEIGHT) {
-      return Math.round(n)
-    }
-  } catch {
-    // ignore storage errors
-  }
-  return DEFAULT_TIMELINE_HEIGHT
-}
-
-function getInitialTheme(): ThemeId {
-  try {
-    const saved = window.localStorage.getItem(THEME_STORAGE_KEY)
-    if (saved && THEME_OPTIONS.some((t) => t.id === saved)) return saved as ThemeId
-  } catch {
-    // ignore storage errors
-  }
-  return 'noir-green'
-}
-
-interface HistoryEntry {
-  clips: TimelineClip[]
-  fallbackGrade: ColorGrade
-  lanes: LaneMap
-  markers: CaseMarker[]
-  autoDucking: boolean
-  selectedClipId: string | null
-  selectedClipIds: string[]
-  inPoint: number | null
-  outPoint: number | null
-  label: string
-}
-
-function cloneMarkerList(ms: CaseMarker[]): CaseMarker[] {
-  return ms.map((m) => ({ ...m }))
-}
-
-function cloneClipItem(c: TimelineClip, seen: Set<TimelineClip> = new Set()): TimelineClip {
-  if (!c || typeof c !== 'object') return c
-  if (seen.has(c)) {
-    return {
-      ...c,
-      nestedClips: undefined
-    }
-  }
-  const nextSeen = new Set(seen)
-  nextSeen.add(c)
-  return {
-    ...c,
-    grade: c.grade ? cloneColorGrade(c.grade) : undefined,
-    credit: c.credit ? cloneCreditConfig(c.credit) : undefined,
-    transform: c.transform ? { ...c.transform } : undefined,
-    keyframes: cloneKeyframes(c.keyframes),
-    audioEffects: c.audioEffects ? { ...c.audioEffects } : undefined,
-    nestedClips: Array.isArray(c.nestedClips)
-      ? c.nestedClips.map((child) => cloneClipItem(child, nextSeen))
-      : undefined
-  }
-}
-
-function cloneClipList(cs: TimelineClip[]): TimelineClip[] {
-  return Array.isArray(cs) ? cs.map((c) => cloneClipItem(c)) : []
-}
-
-function cloneLaneMap(ls: LaneMap): LaneMap {
-  const out: LaneMap = {}
-  for (const [k, v] of Object.entries(ls)) {
-    if (v) out[k] = { ...v }
-  }
-  return out
-}
+import {
+  DEFAULT_TIMELINE_HEIGHT,
+  THEME_STORAGE_KEY,
+  cloneClipItem,
+  cloneClipList,
+  cloneLaneMap,
+  cloneMarkerList,
+  getInitialTheme,
+  type HistoryEntry
+} from './lib/app-helpers'
+import { usePanelResizers } from './hooks/usePanelResizers'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('CUT')
   const [theme, setTheme] = useState<ThemeId>(getInitialTheme)
-  const [timelineHeight, setTimelineHeight] = useState<number>(getInitialTimelineHeight)
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(TIMELINE_HEIGHT_KEY, String(timelineHeight))
-    } catch {
-      // ignore storage errors
-    }
-  }, [timelineHeight])
-
-  const [leftWidth, setLeftWidth] = useState<number>(276)
-  const [rightWidth, setRightWidth] = useState<number>(316)
-
-  const startLeftResize = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      e.preventDefault()
-      const startX = e.clientX
-      const startW = leftWidth
-      const onMove = (ev: PointerEvent) => {
-        const next = Math.max(220, Math.min(380, Math.round(startW + (ev.clientX - startX))))
-        setLeftWidth(next)
-      }
-      const onUp = () => {
-        window.removeEventListener('pointermove', onMove)
-        window.removeEventListener('pointerup', onUp)
-      }
-      window.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-    },
-    [leftWidth]
-  )
-
-  const startRightResize = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      e.preventDefault()
-      const startX = e.clientX
-      const startW = rightWidth
-      const onMove = (ev: PointerEvent) => {
-        const next = Math.max(260, Math.min(420, Math.round(startW + (startX - ev.clientX))))
-        setRightWidth(next)
-      }
-      const onUp = () => {
-        window.removeEventListener('pointermove', onMove)
-        window.removeEventListener('pointerup', onUp)
-      }
-      window.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-    },
-    [rightWidth]
-  )
-
-  const startTimelineResize = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      e.preventDefault()
-      const startY = e.clientY
-      const startH = timelineHeight
-      const onMove = (ev: PointerEvent) => {
-        const dy = startY - ev.clientY
-        const next = Math.max(
-          MIN_TIMELINE_HEIGHT,
-          Math.min(MAX_TIMELINE_HEIGHT, Math.round(startH + dy))
-        )
-        setTimelineHeight(next)
-      }
-      const onUp = () => {
-        window.removeEventListener('pointermove', onMove)
-        window.removeEventListener('pointerup', onUp)
-      }
-      window.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-    },
-    [timelineHeight]
-  )
+  const {
+    leftWidth,
+    setLeftWidth,
+    rightWidth,
+    setRightWidth,
+    timelineHeight,
+    setTimelineHeight,
+    startLeftResize,
+    startRightResize,
+    startTimelineResize
+  } = usePanelResizers()
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
