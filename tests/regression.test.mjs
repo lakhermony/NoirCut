@@ -47,6 +47,7 @@ async function runAllTests() {
         join(ROOT, 'src/shared/lut.ts'),
         join(ROOT, 'src/shared/noirfilm.ts'),
         join(ROOT, 'src/shared/credits.ts'),
+        join(ROOT, 'src/shared/subtitles.ts'),
         join(ROOT, 'src/main/transcribe/transcribe-service.ts'),
         join(ROOT, 'src/main/export/vaapi-device.ts'),
         join(ROOT, 'src/main/export/export-filters.ts'),
@@ -91,6 +92,7 @@ async function runAllTests() {
     } = require(join(COMPILED_DIR, 'shared/color.js'))
     const { parseCubeLut } = require(join(COMPILED_DIR, 'shared/lut.js'))
     const { cloneCreditConfig } = require(join(COMPILED_DIR, 'shared/credits.js'))
+    const { computeSubtitleAnimationFrames } = require(join(COMPILED_DIR, 'shared/subtitles.js'))
     const {
       cancelActiveTranscription,
       transcribeMediaFile
@@ -126,7 +128,7 @@ async function runAllTests() {
     assert.equal(restoredLanes.V3.locked, true)
     assert.equal(restoredLanes.V3.solo, true)
     assert.equal(restoredLanes.A3.locked, true)
-    console.log('[PASS] 1/13 Undo/Redo Dinamik Kanal Koruması (V1..Vn, A1..An)')
+    console.log('[PASS] 1/14 Undo/Redo Dinamik Kanal Koruması (V1..Vn, A1..An)')
 
     // 2. Deep Copy & Circular Reference Guard
     const cloneClipItem = (c, seen = new Set()) => {
@@ -156,7 +158,7 @@ async function runAllTests() {
     cyclic.audioEffects.eqLowDb = -10
     assert.equal(clonedCyclic.audioEffects.eqLowDb, 4)
     assert.equal(clonedCyclic.nestedClips[0].nestedClips, undefined)
-    console.log('[PASS] 2/13 Undo/Redo Derin Kopyalama ve Döngüsel Referans Koruması')
+    console.log('[PASS] 2/14 Undo/Redo Derin Kopyalama ve Döngüsel Referans Koruması')
 
     // 3. Linked A/V Razor Split Re-linking
     assert.equal(findStrictSnap(4.992, [{ time: 5.0, priority: 0 }], 0.05), 5.0)
@@ -174,7 +176,7 @@ async function runAllTests() {
       4
     )
     assert.equal(gapRes.clips[1].start, 2)
-    console.log('[PASS] 3/13 Manyetik Kenetlenme, Ripple Gap ve Linked A/V Kesim Matematiği')
+    console.log('[PASS] 3/14 Manyetik Kenetlenme, Ripple Gap ve Linked A/V Kesim Matematiği')
 
     // 4. Multi-Level Nested Sequence Flattening
     const outerNest = {
@@ -207,7 +209,7 @@ async function runAllTests() {
     assert.equal(clipAt(flat, 'V1', 2.5).mediaId, 'm-b')
     assert.equal(clipAt(flat, 'V1', 3.5).mediaId, 'm-c')
     assert.equal(clipAt(flat, 'A1', 2.0).mediaId, 'm-aud')
-    console.log('[PASS] 4/13 Çok Katmanlı Nested Sequence Düzleştirme (Önizleme & Export Eşliği)')
+    console.log('[PASS] 4/14 Çok Katmanlı Nested Sequence Düzleştirme (Önizleme & Export Eşliği)')
 
     // 5. NoirFilm 3D LUT Bake & Parse + Subtitles SRT/VTT + Auto-Ducking
     const grade = defaultColorGrade()
@@ -242,7 +244,7 @@ async function runAllTests() {
       true
     )
     assert.ok(duck < 0.35)
-    console.log('[PASS] 5/13 NoirFilm 3D LUT, Keyframe İfadesi ve Auto-Ducking Matematiği')
+    console.log('[PASS] 5/14 NoirFilm 3D LUT, Keyframe İfadesi ve Auto-Ducking Matematiği')
 
     // 6. Proxy Scale Math & FFmpeg Verification
     const computeProxyTargetWidth = (srcW, activeScale) => {
@@ -262,7 +264,7 @@ async function runAllTests() {
     assert.equal(computeProxyTargetWidth(7680, '1/4'), 1920)
     assert.equal(computeProxyTargetWidth(7680, '1/8'), 960)
     assert.equal(computeProxyTargetWidth(320, '1/8'), 160)
-    console.log('[PASS] 6/13 Proxy Ölçek Matematiği (1080p, 4K, 8K, Küçük Kaynak)')
+    console.log('[PASS] 6/14 Proxy Ölçek Matematiği (1080p, 4K, 8K, Küçük Kaynak)')
 
     // 7. Atomic Temp Export & Existing Target File Protection
     const finalFile = join(MEDIA_DIR, 'final_export.mp4')
@@ -312,7 +314,7 @@ async function runAllTests() {
     ])
     renameSync(partFile, finalFile)
     assert.equal(probeJson(finalFile).streams[0].width, 640)
-    console.log('[PASS] 7/13 Atomik Geçici (.part) Dışa Aktarma ve Dosya Bütünlüğü')
+    console.log('[PASS] 7/14 Atomik Geçici (.part) Dışa Aktarma ve Dosya Bütünlüğü')
 
     // 8. Priority 2: Speed Ramp & Gain Rubberband Keyframes
     const rampClip = {
@@ -339,7 +341,7 @@ async function runAllTests() {
     assert.ok(Math.abs(effectiveAverageSpeedFactor(rampClip) - 1.5) < 0.01)
     assert.ok(Math.abs(mapClipLocalToSourceTime(rampClip, 2) - 4.0) < 0.02)
     assert.ok(Math.abs(clipGainAt(rampClip, 1) - dbToGain(-3)) < 0.01)
-    console.log('[PASS] 8/13 Speed Ramp İntegrasyonu ve Rubberband Ses Keyframe Hesabı')
+    console.log('[PASS] 8/14 Speed Ramp İntegrasyonu ve Rubberband Ses Keyframe Hesabı')
 
     // 9. Async Whisper Transcription: Cancel + Temp Cleanup + Concurrency Guard
     const sampleAudioMp4 = join(MEDIA_DIR, 'transcribe-sample.mp4')
@@ -412,7 +414,7 @@ async function runAllTests() {
     assert.equal(missingRes.ok, false)
     assert.equal(missingRes.engineMissing, true)
     assert.deepEqual(readdirSync(whisperWorkDir), [])
-    console.log('[PASS] 9/13 Async Whisper Transkripsiyon İptali, Eşzamanlılık ve Temp Temizliği')
+    console.log('[PASS] 9/14 Async Whisper Transkripsiyon İptali, Eşzamanlılık ve Temp Temizliği')
 
     // 10. VAAPI Device Probing (Multi-GPU, Fallback to libx264, Env Override)
     clearVaapiDeviceCache()
@@ -457,7 +459,7 @@ async function runAllTests() {
       else process.env.NOIRCUT_VAAPI_DEVICE = prevEnv
       clearVaapiDeviceCache()
     }
-    console.log('[PASS] 10/13 VAAPI Cihaz Probu (Çoklu GPU, Fallback ve Env Override)')
+    console.log('[PASS] 10/14 VAAPI Cihaz Probu (Çoklu GPU, Fallback ve Env Override)')
 
     // 11. Real-FFmpeg Export Parity: Speed Ramp, Power Window Mask, Subtitle Burn-In
     const W = 160
@@ -652,7 +654,7 @@ async function runAllTests() {
 
     const overlaysOff = selectSubtitleOverlays(false, [subOverlayItem])
     assert.equal(overlaysOff.length, 0)
-    console.log('[PASS] 11/13 Gerçek FFmpeg Export Eşliği (Speed Ramp, Power Window Mask, Altyazı Burn-In)')
+    console.log('[PASS] 11/14 Gerçek FFmpeg Export Eşliği (Speed Ramp, Power Window Mask, Altyazı Burn-In)')
 
     // 12. Adversarial Filter Escaping (drawtext + lut3d path)
     const adversarialTexts = [
@@ -719,7 +721,7 @@ async function runAllTests() {
       lutOut
     ])
     assert.equal(readFileSync(lutOut).length, 64 * 64 * 3)
-    console.log('[PASS] 12/13 Düşmanca Girdi Filtre Kaçışı (drawtext + lut3d yol kaçışı)')
+    console.log('[PASS] 12/14 Düşmanca Girdi Filtre Kaçışı (drawtext + lut3d yol kaçışı)')
 
     // 13. Shared Math <-> FFmpeg Export Parity (Color Grade LUT + Composite Order)
     const parityGrade = {
@@ -796,9 +798,41 @@ async function runAllTests() {
     const [eR, eG] = centerPx(10, 10)
     assert.ok(cG > 110 && cR < 30, `Merkez V2 yeşil olmalı: R=${cR}, G=${cG}`)
     assert.ok(eR > 200 && eG < 30, `Kenar V1 kırmızı olmalı: R=${eR}, G=${eG}`)
-    console.log('[PASS] 13/13 Paylaşılan Matematik <-> FFmpeg Export Eşliği (Renk LUT + Kompozit Sırası)')
+    console.log('[PASS] 13/14 Paylaşılan Matematik <-> FFmpeg Export Eşliği (Renk LUT + Kompozit Sırası)')
 
-    console.log('\nALL 13 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
+    // 14. Karaoke / Hormozi / Typewriter Word-Level Timing Export Frames
+    const subSeg = { id: 'k1', start: 1.0, end: 4.0, text: 'Merhaba yeni dünya', language: 'tr-TR' }
+    const baseSubStyle = {
+      fontFamily: 'sans',
+      fontSize: 26,
+      textColor: '#FFFFFF',
+      backgroundColor: '#000000',
+      backgroundOpacity: 70,
+      position: 'bottom'
+    }
+    const noneFrames = computeSubtitleAnimationFrames(subSeg, { ...baseSubStyle, animation: 'none' })
+    assert.equal(noneFrames.length, 1)
+
+    const karaokeFrames = computeSubtitleAnimationFrames(subSeg, { ...baseSubStyle, animation: 'karaoke' })
+    assert.equal(karaokeFrames.length, 3)
+    assert.deepEqual(
+      karaokeFrames.map((f) => [f.start, f.end, f.activeWordIdx]),
+      [
+        [1.0, 2.0, 0],
+        [2.0, 3.0, 1],
+        [3.0, 4.0, 2]
+      ]
+    )
+
+    const hormoziFrames = computeSubtitleAnimationFrames(subSeg, { ...baseSubStyle, animation: 'hormozi' })
+    assert.equal(hormoziFrames.length, 3)
+
+    const twFrames = computeSubtitleAnimationFrames(subSeg, { ...baseSubStyle, animation: 'typewriter' })
+    assert.ok(twFrames.length >= 2)
+    assert.equal(twFrames[twFrames.length - 1].visibleCharCount, subSeg.text.length)
+    console.log('[PASS] 14/14 Karaoke/Hormozi/Typewriter Kelime Zamanlaması Export Kareleri')
+
+    console.log('\nALL 14 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
   } finally {
     rmSync(TEMP_ROOT, { recursive: true, force: true })
   }

@@ -3,6 +3,7 @@ import {
   resolveCreditFontCss,
   type CreditConfig
 } from '../../../shared/credits'
+import { computeSubtitleAnimationFrames } from '../../../shared/subtitles'
 import type {
   CreditExportOverlay,
   SubtitleExportOverlay,
@@ -317,72 +318,135 @@ export function renderSubtitlesToPngOverlays(
         ? '"JetBrains Mono", monospace'
         : '"Inter", system-ui, sans-serif'
 
+  const anim = style.animation ?? 'none'
+  const hiColor = style.highlightColor || '#FACC15'
+  const baseTextColor = style.textColor || '#F4F4F6'
+
   for (const seg of subtitles) {
     const raw = (seg.text ?? '').trim()
     if (!raw || seg.end <= seg.start + 0.01) continue
-    const canvas = document.createElement('canvas')
-    canvas.width = targetW
-    canvas.height = targetH
-    const ctx = canvas.getContext('2d')!
-    ctx.clearRect(0, 0, targetW, targetH)
+    const frames = computeSubtitleAnimationFrames(seg, style)
 
-    const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean)
-    if (lines.length === 0) continue
+    for (const frame of frames) {
+      const canvas = document.createElement('canvas')
+      canvas.width = targetW
+      canvas.height = targetH
+      const ctx = canvas.getContext('2d')!
+      ctx.clearRect(0, 0, targetW, targetH)
 
-    ctx.font = `600 ${fontSize}px ${fontFamily}`
-    ctx.textBaseline = 'middle'
-    ctx.textAlign = 'center'
+      const displayRaw =
+        anim === 'typewriter'
+          ? raw.slice(0, frame.visibleCharCount)
+          : anim === 'hormozi'
+            ? raw.toUpperCase()
+            : raw
 
-    let maxLineW = 0
-    for (const line of lines) {
-      const w = ctx.measureText(line).width
-      if (w > maxLineW) maxLineW = w
+      const lines = displayRaw.split('\n').map((l) => l.trim()).filter(Boolean)
+      if (lines.length === 0) continue
+
+      const weight = anim === 'hormozi' ? 900 : 600
+      ctx.font = `${weight} ${fontSize}px ${fontFamily}`
+      ctx.textBaseline = 'middle'
+      ctx.textAlign = 'center'
+
+      let maxLineW = 0
+      for (const line of lines) {
+        const w = ctx.measureText(line).width
+        if (w > maxLineW) maxLineW = w
+      }
+
+      const boxW = Math.min(targetW - Math.round(64 * scale), Math.round(maxLineW + padX * 2))
+      const boxH = Math.round(lines.length * lineHeight + padY * 2)
+      const centerX = targetW / 2
+      let boxY = targetH - Math.round(targetH * 0.08) - boxH
+      if (style.position === 'top') {
+        boxY = Math.round(targetH * 0.07)
+      } else if (style.position === 'center') {
+        boxY = Math.round((targetH - boxH) / 2)
+      }
+
+      const bgOpacity = Math.max(0, Math.min(1, (style.backgroundOpacity ?? 68) / 100))
+      if (bgOpacity > 0.01) {
+        const hex = (style.backgroundColor || '#08090C').replace('#', '')
+        const r = parseInt(hex.slice(0, 2) || '08', 16)
+        const g = parseInt(hex.slice(2, 4) || '09', 16)
+        const b = parseInt(hex.slice(4, 6) || '0C', 16)
+        ctx.save()
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${bgOpacity.toFixed(2)})`
+        const rx = Math.round(centerX - boxW / 2)
+        const radius = Math.round(8 * scale)
+        ctx.beginPath()
+        ctx.roundRect(rx, boxY, boxW, boxH, radius)
+        ctx.fill()
+        ctx.restore()
+      }
+
+      if (anim === 'karaoke' || anim === 'hormozi') {
+        let globalWordIdx = 0
+        for (let i = 0; i < lines.length; i++) {
+          const ly = boxY + padY + lineHeight * (i + 0.5)
+          const lineWords = lines[i].split(/\s+/).filter(Boolean)
+          const spaceW = ctx.measureText(' ').width
+          const wordWidths = lineWords.map((w) => ctx.measureText(w).width)
+          const totalW =
+            wordWidths.reduce((a, b) => a + b, 0) + Math.max(0, lineWords.length - 1) * spaceW
+          let cursorX = centerX - totalW / 2
+
+          ctx.textAlign = 'left'
+          for (let wi = 0; wi < lineWords.length; wi++) {
+            const word = lineWords[wi]
+            const wWidth = wordWidths[wi]
+            const isCurrent = globalWordIdx === frame.activeWordIdx
+            const isPast = globalWordIdx < frame.activeWordIdx
+            const wordColor =
+              anim === 'hormozi'
+                ? isCurrent
+                  ? hiColor
+                  : baseTextColor
+                : isCurrent || isPast
+                  ? hiColor
+                  : baseTextColor
+
+            ctx.save()
+            if (anim === 'hormozi' && isCurrent) {
+              const cx = cursorX + wWidth / 2
+              ctx.translate(cx, ly)
+              ctx.scale(1.12, 1.12)
+              ctx.translate(-cx, -ly)
+            }
+            ctx.lineJoin = 'round'
+            ctx.lineWidth = Math.max(2, Math.round(3.2 * scale))
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.78)'
+            ctx.strokeText(word, cursorX, ly)
+            ctx.fillStyle = wordColor
+            ctx.fillText(word, cursorX, ly)
+            ctx.restore()
+
+            cursorX += wWidth + spaceW
+            globalWordIdx++
+          }
+        }
+      } else {
+        for (let i = 0; i < lines.length; i++) {
+          const ly = boxY + padY + lineHeight * (i + 0.5)
+          ctx.save()
+          ctx.lineJoin = 'round'
+          ctx.lineWidth = Math.max(2, Math.round(3.2 * scale))
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.78)'
+          ctx.strokeText(lines[i], centerX, ly)
+          ctx.restore()
+          ctx.fillStyle = baseTextColor
+          ctx.fillText(lines[i], centerX, ly)
+        }
+      }
+
+      out.push({
+        id: frame.id,
+        start: frame.start,
+        end: frame.end,
+        pngDataUrl: canvas.toDataURL('image/png')
+      })
     }
-
-    const boxW = Math.min(targetW - Math.round(64 * scale), Math.round(maxLineW + padX * 2))
-    const boxH = Math.round(lines.length * lineHeight + padY * 2)
-    const centerX = targetW / 2
-    let boxY = targetH - Math.round(targetH * 0.08) - boxH
-    if (style.position === 'top') {
-      boxY = Math.round(targetH * 0.07)
-    } else if (style.position === 'center') {
-      boxY = Math.round((targetH - boxH) / 2)
-    }
-
-    const bgOpacity = Math.max(0, Math.min(1, (style.backgroundOpacity ?? 68) / 100))
-    if (bgOpacity > 0.01) {
-      const hex = (style.backgroundColor || '#08090C').replace('#', '')
-      const r = parseInt(hex.slice(0, 2) || '08', 16)
-      const g = parseInt(hex.slice(2, 4) || '09', 16)
-      const b = parseInt(hex.slice(4, 6) || '0C', 16)
-      ctx.save()
-      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${bgOpacity.toFixed(2)})`
-      const rx = Math.round(centerX - boxW / 2)
-      const radius = Math.round(8 * scale)
-      ctx.beginPath()
-      ctx.roundRect(rx, boxY, boxW, boxH, radius)
-      ctx.fill()
-      ctx.restore()
-    }
-
-    for (let i = 0; i < lines.length; i++) {
-      const ly = boxY + padY + lineHeight * (i + 0.5)
-      ctx.save()
-      ctx.lineJoin = 'round'
-      ctx.lineWidth = Math.max(2, Math.round(3.2 * scale))
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.78)'
-      ctx.strokeText(lines[i], centerX, ly)
-      ctx.restore()
-      ctx.fillStyle = style.textColor || '#F4F4F6'
-      ctx.fillText(lines[i], centerX, ly)
-    }
-
-    out.push({
-      id: seg.id,
-      start: seg.start,
-      end: seg.end,
-      pngDataUrl: canvas.toDataURL('image/png')
-    })
   }
   return out
 }
