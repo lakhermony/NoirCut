@@ -253,7 +253,7 @@ export async function exportTimeline(
         bakedLutCache.set(gradeKey, cubeFileName)
       }
       // tempLutDir çalışma dizini olarak verildiği için göreli dosya adı Windows/ASCII-dışı yollardaki ':' sorununu önler
-      vChain.push(`format=rgb24`, `lut3d=file='${escapeFilterPath(cubeFileName)}':interp=trilinear`)
+      vChain.push(`format=rgb24`, `lut3d=file=${escapeFilterPath(cubeFileName)}:interp=trilinear`)
 
       const nf = c.grade.noirFilm
       const nfInt = Math.min(1, Math.max(0, (nf?.lookIntensity ?? 100) / 100))

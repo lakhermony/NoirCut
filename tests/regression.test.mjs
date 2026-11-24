@@ -103,6 +103,8 @@ async function runAllTests() {
       buildClipMaskFilter,
       buildClipSpeedFilter,
       buildSubtitleOverlayFilter,
+      escapeDrawtextText,
+      escapeFilterPath,
       selectSubtitleOverlays
     } = require(join(COMPILED_DIR, 'main/export/export-filters.js'))
 
@@ -124,7 +126,7 @@ async function runAllTests() {
     assert.equal(restoredLanes.V3.locked, true)
     assert.equal(restoredLanes.V3.solo, true)
     assert.equal(restoredLanes.A3.locked, true)
-    console.log('[PASS] 1/11 Undo/Redo Dinamik Kanal Koruması (V1..Vn, A1..An)')
+    console.log('[PASS] 1/12 Undo/Redo Dinamik Kanal Koruması (V1..Vn, A1..An)')
 
     // 2. Deep Copy & Circular Reference Guard
     const cloneClipItem = (c, seen = new Set()) => {
@@ -154,7 +156,7 @@ async function runAllTests() {
     cyclic.audioEffects.eqLowDb = -10
     assert.equal(clonedCyclic.audioEffects.eqLowDb, 4)
     assert.equal(clonedCyclic.nestedClips[0].nestedClips, undefined)
-    console.log('[PASS] 2/11 Undo/Redo Derin Kopyalama ve Döngüsel Referans Koruması')
+    console.log('[PASS] 2/12 Undo/Redo Derin Kopyalama ve Döngüsel Referans Koruması')
 
     // 3. Linked A/V Razor Split Re-linking
     assert.equal(findStrictSnap(4.992, [{ time: 5.0, priority: 0 }], 0.05), 5.0)
@@ -172,7 +174,7 @@ async function runAllTests() {
       4
     )
     assert.equal(gapRes.clips[1].start, 2)
-    console.log('[PASS] 3/11 Manyetik Kenetlenme, Ripple Gap ve Linked A/V Kesim Matematiği')
+    console.log('[PASS] 3/12 Manyetik Kenetlenme, Ripple Gap ve Linked A/V Kesim Matematiği')
 
     // 4. Multi-Level Nested Sequence Flattening
     const outerNest = {
@@ -205,7 +207,7 @@ async function runAllTests() {
     assert.equal(clipAt(flat, 'V1', 2.5).mediaId, 'm-b')
     assert.equal(clipAt(flat, 'V1', 3.5).mediaId, 'm-c')
     assert.equal(clipAt(flat, 'A1', 2.0).mediaId, 'm-aud')
-    console.log('[PASS] 4/11 Çok Katmanlı Nested Sequence Düzleştirme (Önizleme & Export Eşliği)')
+    console.log('[PASS] 4/12 Çok Katmanlı Nested Sequence Düzleştirme (Önizleme & Export Eşliği)')
 
     // 5. NoirFilm 3D LUT Bake & Parse + Subtitles SRT/VTT + Auto-Ducking
     const grade = defaultColorGrade()
@@ -240,7 +242,7 @@ async function runAllTests() {
       true
     )
     assert.ok(duck < 0.35)
-    console.log('[PASS] 5/11 NoirFilm 3D LUT, Keyframe İfadesi ve Auto-Ducking Matematiği')
+    console.log('[PASS] 5/12 NoirFilm 3D LUT, Keyframe İfadesi ve Auto-Ducking Matematiği')
 
     // 6. Proxy Scale Math & FFmpeg Verification
     const computeProxyTargetWidth = (srcW, activeScale) => {
@@ -260,7 +262,7 @@ async function runAllTests() {
     assert.equal(computeProxyTargetWidth(7680, '1/4'), 1920)
     assert.equal(computeProxyTargetWidth(7680, '1/8'), 960)
     assert.equal(computeProxyTargetWidth(320, '1/8'), 160)
-    console.log('[PASS] 6/11 Proxy Ölçek Matematiği (1080p, 4K, 8K, Küçük Kaynak)')
+    console.log('[PASS] 6/12 Proxy Ölçek Matematiği (1080p, 4K, 8K, Küçük Kaynak)')
 
     // 7. Atomic Temp Export & Existing Target File Protection
     const finalFile = join(MEDIA_DIR, 'final_export.mp4')
@@ -310,7 +312,7 @@ async function runAllTests() {
     ])
     renameSync(partFile, finalFile)
     assert.equal(probeJson(finalFile).streams[0].width, 640)
-    console.log('[PASS] 7/11 Atomik Geçici (.part) Dışa Aktarma ve Dosya Bütünlüğü')
+    console.log('[PASS] 7/12 Atomik Geçici (.part) Dışa Aktarma ve Dosya Bütünlüğü')
 
     // 8. Priority 2: Speed Ramp & Gain Rubberband Keyframes
     const rampClip = {
@@ -337,7 +339,7 @@ async function runAllTests() {
     assert.ok(Math.abs(effectiveAverageSpeedFactor(rampClip) - 1.5) < 0.01)
     assert.ok(Math.abs(mapClipLocalToSourceTime(rampClip, 2) - 4.0) < 0.02)
     assert.ok(Math.abs(clipGainAt(rampClip, 1) - dbToGain(-3)) < 0.01)
-    console.log('[PASS] 8/11 Speed Ramp İntegrasyonu ve Rubberband Ses Keyframe Hesabı')
+    console.log('[PASS] 8/12 Speed Ramp İntegrasyonu ve Rubberband Ses Keyframe Hesabı')
 
     // 9. Async Whisper Transcription: Cancel + Temp Cleanup + Concurrency Guard
     const sampleAudioMp4 = join(MEDIA_DIR, 'transcribe-sample.mp4')
@@ -410,7 +412,7 @@ async function runAllTests() {
     assert.equal(missingRes.ok, false)
     assert.equal(missingRes.engineMissing, true)
     assert.deepEqual(readdirSync(whisperWorkDir), [])
-    console.log('[PASS] 9/11 Async Whisper Transkripsiyon İptali, Eşzamanlılık ve Temp Temizliği')
+    console.log('[PASS] 9/12 Async Whisper Transkripsiyon İptali, Eşzamanlılık ve Temp Temizliği')
 
     // 10. VAAPI Device Probing (Multi-GPU, Fallback to libx264, Env Override)
     clearVaapiDeviceCache()
@@ -455,7 +457,7 @@ async function runAllTests() {
       else process.env.NOIRCUT_VAAPI_DEVICE = prevEnv
       clearVaapiDeviceCache()
     }
-    console.log('[PASS] 10/11 VAAPI Cihaz Probu (Çoklu GPU, Fallback ve Env Override)')
+    console.log('[PASS] 10/12 VAAPI Cihaz Probu (Çoklu GPU, Fallback ve Env Override)')
 
     // 11. Real-FFmpeg Export Parity: Speed Ramp, Power Window Mask, Subtitle Burn-In
     const W = 160
@@ -650,9 +652,76 @@ async function runAllTests() {
 
     const overlaysOff = selectSubtitleOverlays(false, [subOverlayItem])
     assert.equal(overlaysOff.length, 0)
-    console.log('[PASS] 11/11 Gerçek FFmpeg Export Eşliği (Speed Ramp, Power Window Mask, Altyazı Burn-In)')
+    console.log('[PASS] 11/12 Gerçek FFmpeg Export Eşliği (Speed Ramp, Power Window Mask, Altyazı Burn-In)')
 
-    console.log('\nALL 11 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
+    // 12. Adversarial Filter Escaping (drawtext + lut3d path)
+    const adversarialTexts = [
+      'Çağrı\'nın "kahve" : %{pts} 50%',
+      'C:\\Users\\Ömer\\a b.mp4',
+      'a,b;c[0]',
+      'birinci satır\nikinci satır',
+      'X'.repeat(1000),
+      '',
+      "'; drawbox=x=0:y=0:w=160:h=90:color=red@1.0:t=fill,drawtext=text='INJECTED"
+    ]
+    for (let idx = 0; idx < adversarialTexts.length; idx++) {
+      const txt = adversarialTexts[idx]
+      const escaped = escapeDrawtextText(txt)
+      const outRaw = join(MEDIA_DIR, `esc-${idx}.rgb`)
+      execFileSync(ffmpegPath, [
+        '-y',
+        '-v',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        'color=c=black:s=160x90:r=24:d=0.1',
+        '-vf',
+        `drawtext=text='${escaped}':fontcolor=white:fontsize=12:x=4:y=4`,
+        '-frames:v',
+        '1',
+        '-f',
+        'rawvideo',
+        '-pix_fmt',
+        'rgb24',
+        outRaw
+      ])
+      const buf = readFileSync(outRaw)
+      assert.equal(buf.length, 160 * 90 * 3)
+      // Enjeksiyon denemesinde (son eleman) tüm ekran kırmızıya boyanmamış olmalı
+      if (idx === adversarialTexts.length - 1) {
+        const bottomRightR = buf[(85 * 160 + 150) * 3]
+        assert.ok(bottomRightR < 20, `Enjeksiyon drawbox çalışmış görünüyor: R=${bottomRightR}`)
+      }
+    }
+
+    const adversarialLutName = "Çağrı'nın [0];,%.cube"
+    const adversarialLutPath = join(MEDIA_DIR, adversarialLutName)
+    writeFileSync(adversarialLutPath, bakeColorGradeToCube(defaultColorGrade(), [], 17), 'utf-8')
+    const escapedLut = escapeFilterPath(adversarialLutPath)
+    const lutOut = join(MEDIA_DIR, 'esc-lut.rgb')
+    execFileSync(ffmpegPath, [
+      '-y',
+      '-v',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=c=gray:s=64x64:r=24:d=0.1',
+      '-vf',
+      `format=rgb24,lut3d=file=${escapedLut}:interp=trilinear`,
+      '-frames:v',
+      '1',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgb24',
+      lutOut
+    ])
+    assert.equal(readFileSync(lutOut).length, 64 * 64 * 3)
+    console.log('[PASS] 12/12 Düşmanca Girdi Filtre Kaçışı (drawtext + lut3d yol kaçışı)')
+
+    console.log('\nALL 12 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
   } finally {
     rmSync(TEMP_ROOT, { recursive: true, force: true })
   }

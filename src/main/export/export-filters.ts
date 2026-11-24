@@ -2,23 +2,20 @@ import type { SubtitleExportOverlay, TimelineClip } from '../../shared/timeline'
 import { effectiveAverageSpeedFactor } from '../../shared/timeline'
 
 /**
- * FFmpeg filtergraph dosya yolu kaçışı (ör. lut3d=file='...').
- * Tek tırnak, backslash, iki nokta, virgül, noktalı virgül ve köşeli parantezleri kaçırır.
+ * FFmpeg filtergraph dosya yolu kaçışı (ör. lut3d=file=...:interp=trilinear).
+ * FFmpeg iki aşamalı (filtergraph + option) ayrıştırma yaptığı için
+ * tek tırnak ve iki nokta üst üste `\\\'` / `\\\:` olarak, ayırıcılar ve boşluk `\` ile kaçırılır.
  */
 export function escapeFilterPath(p: string): string {
   return p
     .replace(/\\/g, '/')
-    .replace(/'/g, "\\'")
-    .replace(/:/g, '\\:')
-    .replace(/,/g, '\\,')
-    .replace(/;/g, '\\;')
-    .replace(/\[/g, '\\[')
-    .replace(/\]/g, '\\]')
+    .replace(/([':])/g, '\\\\\\$1')
+    .replace(/([,;\[\] ])/g, '\\$1')
 }
 
 /**
  * FFmpeg drawtext=text='...' için düşmanca girdi güvenli kaçış fonksiyonu.
- * Tek tırnak, backslash, iki nokta, yüzde (expansion), virgül, noktalı virgül,
+ * Tek tırnak ('\''), backslash, iki nokta, yüzde (%%), virgül, noktalı virgül,
  * köşeli parantez ve satır sonlarını güvenli biçimde kaçırır.
  */
 export function escapeDrawtextText(text: string): string {
@@ -27,9 +24,9 @@ export function escapeDrawtextText(text: string): string {
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .replace(/\n/g, '\\n')
-    .replace(/'/g, "\\'")
+    .replace(/'/g, "'\\''")
     .replace(/:/g, '\\:')
-    .replace(/%/g, '\\%')
+    .replace(/%/g, '%%')
     .replace(/,/g, '\\,')
     .replace(/;/g, '\\;')
     .replace(/\[/g, '\\[')
