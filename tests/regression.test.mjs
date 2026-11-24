@@ -49,6 +49,7 @@ async function runAllTests() {
         join(ROOT, 'src/shared/credits.ts'),
         join(ROOT, 'src/main/transcribe/transcribe-service.ts'),
         join(ROOT, 'src/main/export/vaapi-device.ts'),
+        join(ROOT, 'src/main/export/export-filters.ts'),
         '--outDir',
         COMPILED_DIR,
         '--module',
@@ -98,6 +99,12 @@ async function runAllTests() {
       clearVaapiDeviceCache,
       resolveVaapiDevice
     } = require(join(COMPILED_DIR, 'main/export/vaapi-device.js'))
+    const {
+      buildClipMaskFilter,
+      buildClipSpeedFilter,
+      buildSubtitleOverlayFilter,
+      selectSubtitleOverlays
+    } = require(join(COMPILED_DIR, 'main/export/export-filters.js'))
 
     // 1. Dynamic Lane Preservation (Undo/Redo)
     const lanes = defaultLanes()
@@ -117,7 +124,7 @@ async function runAllTests() {
     assert.equal(restoredLanes.V3.locked, true)
     assert.equal(restoredLanes.V3.solo, true)
     assert.equal(restoredLanes.A3.locked, true)
-    console.log('[PASS] 1/7 Undo/Redo Dinamik Kanal Koruması (V1..Vn, A1..An)')
+    console.log('[PASS] 1/11 Undo/Redo Dinamik Kanal Koruması (V1..Vn, A1..An)')
 
     // 2. Deep Copy & Circular Reference Guard
     const cloneClipItem = (c, seen = new Set()) => {
@@ -147,7 +154,7 @@ async function runAllTests() {
     cyclic.audioEffects.eqLowDb = -10
     assert.equal(clonedCyclic.audioEffects.eqLowDb, 4)
     assert.equal(clonedCyclic.nestedClips[0].nestedClips, undefined)
-    console.log('[PASS] 2/7 Undo/Redo Derin Kopyalama ve Döngüsel Referans Koruması')
+    console.log('[PASS] 2/11 Undo/Redo Derin Kopyalama ve Döngüsel Referans Koruması')
 
     // 3. Linked A/V Razor Split Re-linking
     assert.equal(findStrictSnap(4.992, [{ time: 5.0, priority: 0 }], 0.05), 5.0)
@@ -165,7 +172,7 @@ async function runAllTests() {
       4
     )
     assert.equal(gapRes.clips[1].start, 2)
-    console.log('[PASS] 3/7 Manyetik Kenetlenme, Ripple Gap ve Linked A/V Kesim Matematiği')
+    console.log('[PASS] 3/11 Manyetik Kenetlenme, Ripple Gap ve Linked A/V Kesim Matematiği')
 
     // 4. Multi-Level Nested Sequence Flattening
     const outerNest = {
@@ -198,7 +205,7 @@ async function runAllTests() {
     assert.equal(clipAt(flat, 'V1', 2.5).mediaId, 'm-b')
     assert.equal(clipAt(flat, 'V1', 3.5).mediaId, 'm-c')
     assert.equal(clipAt(flat, 'A1', 2.0).mediaId, 'm-aud')
-    console.log('[PASS] 4/7 Çok Katmanlı Nested Sequence Düzleştirme (Önizleme & Export Eşliği)')
+    console.log('[PASS] 4/11 Çok Katmanlı Nested Sequence Düzleştirme (Önizleme & Export Eşliği)')
 
     // 5. NoirFilm 3D LUT Bake & Parse + Subtitles SRT/VTT + Auto-Ducking
     const grade = defaultColorGrade()
@@ -233,7 +240,7 @@ async function runAllTests() {
       true
     )
     assert.ok(duck < 0.35)
-    console.log('[PASS] 5/7 NoirFilm 3D LUT, Keyframe İfadesi ve Auto-Ducking Matematiği')
+    console.log('[PASS] 5/11 NoirFilm 3D LUT, Keyframe İfadesi ve Auto-Ducking Matematiği')
 
     // 6. Proxy Scale Math & FFmpeg Verification
     const computeProxyTargetWidth = (srcW, activeScale) => {
@@ -253,7 +260,7 @@ async function runAllTests() {
     assert.equal(computeProxyTargetWidth(7680, '1/4'), 1920)
     assert.equal(computeProxyTargetWidth(7680, '1/8'), 960)
     assert.equal(computeProxyTargetWidth(320, '1/8'), 160)
-    console.log('[PASS] 6/7 Proxy Ölçek Matematiği (1080p, 4K, 8K, Küçük Kaynak)')
+    console.log('[PASS] 6/11 Proxy Ölçek Matematiği (1080p, 4K, 8K, Küçük Kaynak)')
 
     // 7. Atomic Temp Export & Existing Target File Protection
     const finalFile = join(MEDIA_DIR, 'final_export.mp4')
@@ -303,7 +310,7 @@ async function runAllTests() {
     ])
     renameSync(partFile, finalFile)
     assert.equal(probeJson(finalFile).streams[0].width, 640)
-    console.log('[PASS] 7/8 Atomik Geçici (.part) Dışa Aktarma ve Dosya Bütünlüğü')
+    console.log('[PASS] 7/11 Atomik Geçici (.part) Dışa Aktarma ve Dosya Bütünlüğü')
 
     // 8. Priority 2: Speed Ramp & Gain Rubberband Keyframes
     const rampClip = {
@@ -330,7 +337,7 @@ async function runAllTests() {
     assert.ok(Math.abs(effectiveAverageSpeedFactor(rampClip) - 1.5) < 0.01)
     assert.ok(Math.abs(mapClipLocalToSourceTime(rampClip, 2) - 4.0) < 0.02)
     assert.ok(Math.abs(clipGainAt(rampClip, 1) - dbToGain(-3)) < 0.01)
-    console.log('[PASS] 8/9 Speed Ramp İntegrasyonu ve Rubberband Ses Keyframe Hesabı')
+    console.log('[PASS] 8/11 Speed Ramp İntegrasyonu ve Rubberband Ses Keyframe Hesabı')
 
     // 9. Async Whisper Transcription: Cancel + Temp Cleanup + Concurrency Guard
     const sampleAudioMp4 = join(MEDIA_DIR, 'transcribe-sample.mp4')
@@ -403,7 +410,7 @@ async function runAllTests() {
     assert.equal(missingRes.ok, false)
     assert.equal(missingRes.engineMissing, true)
     assert.deepEqual(readdirSync(whisperWorkDir), [])
-    console.log('[PASS] 9/10 Async Whisper Transkripsiyon İptali, Eşzamanlılık ve Temp Temizliği')
+    console.log('[PASS] 9/11 Async Whisper Transkripsiyon İptali, Eşzamanlılık ve Temp Temizliği')
 
     // 10. VAAPI Device Probing (Multi-GPU, Fallback to libx264, Env Override)
     clearVaapiDeviceCache()
@@ -448,9 +455,204 @@ async function runAllTests() {
       else process.env.NOIRCUT_VAAPI_DEVICE = prevEnv
       clearVaapiDeviceCache()
     }
-    console.log('[PASS] 10/10 VAAPI Cihaz Probu (Çoklu GPU, Fallback ve Env Override)')
+    console.log('[PASS] 10/11 VAAPI Cihaz Probu (Çoklu GPU, Fallback ve Env Override)')
 
-    console.log('\nALL 10 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
+    // 11. Real-FFmpeg Export Parity: Speed Ramp, Power Window Mask, Subtitle Burn-In
+    const W = 160
+    const H = 90
+    const stripeMp4 = join(MEDIA_DIR, 'stripe-3s.mp4')
+    execFileSync(ffmpegPath, [
+      '-y',
+      '-v',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      `color=c=black:s=${W}x${H}:r=24:d=3.0,geq=lum='if(mod(floor(X/4),2),255,0)':cb=128:cr=128`,
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      '-pix_fmt',
+      'yuv420p',
+      stripeMp4
+    ])
+
+    // 11a. Speed ramp export duration parity
+    const speedClip = {
+      id: 'exp-sr',
+      mediaId: 'm1',
+      name: 'RampExport',
+      lane: 'V1',
+      start: 0,
+      in: 0,
+      duration: 1.0,
+      gainDb: 0,
+      fadeIn: 0,
+      fadeOut: 0,
+      speedRamp: [
+        { id: 's1', time: 0, speed: 100 },
+        { id: 's2', time: 1.0, speed: 300 }
+      ]
+    }
+    const speedFilter = buildClipSpeedFilter(speedClip, false)
+    assert.ok(Math.abs(speedFilter.speedFactor - 2.0) < 0.01)
+    assert.ok(Math.abs(speedFilter.srcDuration - 2.0) < 0.02)
+    const speedOut = join(MEDIA_DIR, 'speed-out.mp4')
+    execFileSync(ffmpegPath, [
+      '-y',
+      '-v',
+      'error',
+      '-i',
+      stripeMp4,
+      '-filter_complex',
+      `[0:v]${speedFilter.trimFilter},${speedFilter.setptsFilter},trim=duration=${speedClip.duration.toFixed(4)},setpts=PTS-STARTPTS[vout]`,
+      '-map',
+      '[vout]',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      speedOut
+    ])
+    const speedProbeDur = Number(probeJson(speedOut).format.duration)
+    assert.ok(
+      Math.abs(speedProbeDur - speedClip.duration) < 0.1,
+      `Expected ~${speedClip.duration}s, got ${speedProbeDur}s`
+    )
+
+    // 11b. Power Window mask (blur inside box, sharp outside)
+    const maskedClip = {
+      ...speedClip,
+      speedRamp: undefined,
+      duration: 0.4,
+      mask: { enabled: true, mode: 'blur', shape: 'rect', x: 50, y: 50, w: 40, h: 40, strength: 100 }
+    }
+    const maskRes = buildClipMaskFilter(
+      maskedClip,
+      '[0:v]',
+      ['fps=24'],
+      'vmask',
+      1,
+      W,
+      H
+    )
+    assert.equal(maskRes.appliedAsPostChain, true)
+    const unmaskedRaw = join(MEDIA_DIR, 'unmasked.rgb')
+    const maskedRaw = join(MEDIA_DIR, 'masked.rgb')
+    execFileSync(ffmpegPath, [
+      '-y',
+      '-v',
+      'error',
+      '-i',
+      stripeMp4,
+      '-frames:v',
+      '1',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgb24',
+      unmaskedRaw
+    ])
+    execFileSync(ffmpegPath, [
+      '-y',
+      '-v',
+      'error',
+      '-i',
+      stripeMp4,
+      '-filter_complex',
+      maskRes.filterParts.join(';'),
+      '-map',
+      '[vmask]',
+      '-frames:v',
+      '1',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgb24',
+      maskedRaw
+    ])
+    const bufUnmasked = readFileSync(unmaskedRaw)
+    const bufMasked = readFileSync(maskedRaw)
+    const regionMeanAbsDiff = (x0, y0, x1, y1) => {
+      let sum = 0
+      let cnt = 0
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const i = (y * W + x) * 3
+          sum += Math.abs(bufUnmasked[i] - bufMasked[i])
+          cnt++
+        }
+      }
+      return sum / cnt
+    }
+    const insideDiff = regionMeanAbsDiff(52, 30, 108, 60)
+    const outsideDiff = regionMeanAbsDiff(4, 4, 24, 20)
+    assert.ok(insideDiff > 25, `Mask içi fark beklenenden küçük: ${insideDiff}`)
+    assert.ok(outsideDiff < 2, `Mask dışı değişmemeli: ${outsideDiff}`)
+
+    // 11c. Subtitle burn-in (on vs off)
+    const subPng = join(MEDIA_DIR, 'sub-overlay.png')
+    execFileSync(ffmpegPath, [
+      '-y',
+      '-v',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      `color=c=black@0.0:s=${W}x${H},format=rgba,drawbox=x=40:y=65:w=80:h=16:color=white@1.0:t=fill:replace=1`,
+      '-frames:v',
+      '1',
+      subPng
+    ])
+    const subOverlayItem = {
+      id: 'sub1',
+      start: 0.05,
+      end: 0.35,
+      pngDataUrl: `data:image/png;base64,${readFileSync(subPng).toString('base64')}`
+    }
+    const overlaysOn = selectSubtitleOverlays(true, [subOverlayItem])
+    assert.equal(overlaysOn.length, 1)
+    const subFilterOn = buildSubtitleOverlayFilter('[0:v]', 1, 0, 0.05, 0.35)
+    const subFrameOn = join(MEDIA_DIR, 'sub-on.rgb')
+    execFileSync(ffmpegPath, [
+      '-y',
+      '-v',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      `color=c=black:s=${W}x${H}:r=24:d=0.4`,
+      '-loop',
+      '1',
+      '-t',
+      '0.4',
+      '-i',
+      subPng,
+      '-filter_complex',
+      subFilterOn.filterParts.join(';'),
+      '-map',
+      subFilterOn.nextVLabel,
+      '-ss',
+      '0.2',
+      '-frames:v',
+      '1',
+      '-f',
+      'rawvideo',
+      '-pix_fmt',
+      'rgb24',
+      subFrameOn
+    ])
+    const bufSubOn = readFileSync(subFrameOn)
+    const pxAt = (buf, x, y) => buf[(y * W + x) * 3]
+    assert.ok(pxAt(bufSubOn, 80, 73) > 200, 'Altyazı kutusu içi beyaz olmalı')
+    assert.ok(pxAt(bufSubOn, 10, 10) < 20, 'Altyazı kutusu dışı siyah kalmalı')
+
+    const overlaysOff = selectSubtitleOverlays(false, [subOverlayItem])
+    assert.equal(overlaysOff.length, 0)
+    console.log('[PASS] 11/11 Gerçek FFmpeg Export Eşliği (Speed Ramp, Power Window Mask, Altyazı Burn-In)')
+
+    console.log('\nALL 11 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
   } finally {
     rmSync(TEMP_ROOT, { recursive: true, force: true })
   }
