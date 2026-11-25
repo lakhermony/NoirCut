@@ -178,7 +178,7 @@ export default function CommandIsland({
       : 100
 
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between gap-3 px-1">
+    <header className="relative z-50 flex h-12 shrink-0 items-center justify-between gap-3 px-1">
       {/* Sol Yüzen Kapsül: Ev/Launcher, Logo, Proje ve Hızlı Araçlar */}
       <div className="flex min-w-0 items-center gap-2 rounded-full border border-[color:var(--border-subtle)] bg-[var(--bg-panel)]/95 px-2.5 py-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.28)] backdrop-blur-md">
         {onOpenLauncher && (
@@ -388,7 +388,7 @@ export default function CommandIsland({
             <div
               role="listbox"
               aria-label="Tema Seçenekleri"
-              className="glass absolute right-0 top-full z-50 mt-2 w-60 rounded-xl border border-[color:var(--border-subtle)] bg-[var(--bg-elevated)] p-1.5 shadow-2xl"
+              className="absolute right-0 top-full z-[100] mt-2 w-60 rounded-xl border border-[color:var(--border-subtle)] bg-[var(--bg-elevated)] p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.65)] backdrop-blur-xl"
             >
               <div className="mb-1 flex items-center justify-between px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 <span>Temalar</span>
