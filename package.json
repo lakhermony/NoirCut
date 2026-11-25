@@ -17,10 +17,11 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node tests/regression.test.mjs",
-    "dist:linux": "npm run build && electron-builder --linux AppImage",
-    "dist:linux:all": "npm run build && electron-builder --linux AppImage deb rpm",
-    "dist:win": "npm run build && LANG=C.UTF-8 LC_ALL=C.UTF-8 electron-builder --win portable nsis --x64",
-    "dist": "npm run build && electron-builder"
+    "licenses:generate": "node scripts/generate-licenses.mjs",
+    "dist:linux": "npm run build && npm run licenses:generate && electron-builder --linux AppImage",
+    "dist:linux:all": "npm run build && npm run licenses:generate && electron-builder --linux AppImage deb rpm",
+    "dist:win": "npm run build && npm run licenses:generate && LANG=C.UTF-8 LC_ALL=C.UTF-8 electron-builder --win portable nsis --x64",
+    "dist": "npm run build && npm run licenses:generate && electron-builder"
   },
   "build": {
     "appId": "com.noircut.studio",
@@ -76,6 +77,14 @@
         {
           "from": "resources/icon.png",
           "to": "icon.png"
+        },
+        {
+          "from": "LICENSE",
+          "to": "LICENSE"
+        },
+        {
+          "from": "THIRD-PARTY-LICENSES.txt",
+          "to": "THIRD-PARTY-LICENSES.txt"
         }
       ],
       "category": "AudioVideo",
@@ -111,6 +120,24 @@
         {
           "from": "resources/icon.png",
           "to": "icon.png"
+        },
+        {
+          "from": "LICENSE",
+          "to": "LICENSE"
+        },
+        {
+          "from": "THIRD-PARTY-LICENSES.txt",
+          "to": "THIRD-PARTY-LICENSES.txt"
+        }
+      ],
+      "extraFiles": [
+        {
+          "from": "LICENSE",
+          "to": "LICENSE"
+        },
+        {
+          "from": "THIRD-PARTY-LICENSES.txt",
+          "to": "THIRD-PARTY-LICENSES.txt"
         }
       ],
       "icon": "build/icon.ico",
@@ -121,7 +148,8 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "license": "LICENSE"
     }
   },
   "dependencies": {

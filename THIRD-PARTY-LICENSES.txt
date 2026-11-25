@@ -1,0 +1,85 @@
+================================================================================
+NOIRCUT STUDIO — THIRD-PARTY SOFTWARE & LICENSE NOTICES
+================================================================================
+
+NoirCut Studio source code is licensed under GNU General Public License v3.0
+(GPL-3.0-only). See the accompanying LICENSE file for the complete GPL v3 text.
+The NoirCut name and custom logo/branding assets remain the exclusive property
+of NoirCut Studio.
+
+--------------------------------------------------------------------------------
+1. BUNDLED FFMPEG & FFPROBE NOTICE (GNU GPL v3 SECTION 6)
+--------------------------------------------------------------------------------
+
+NoirCut Studio bundles unmodified static builds of FFmpeg and FFprobe compiled
+with GNU GPL v3 flags (--enable-gpl --enable-version3 --enable-static) and
+without --enable-nonfree:
+
+  * Linux (ffmpeg-static): ffmpeg version 7.0.2-static https://johnvansickle.com/ffmpeg/  Copyright (c) 2000-2024 the FFmpeg developers
+    Flags: configuration: --enable-gpl --enable-version3 --enable-static --disable-debug --disable-ffplay --disable-indev=sndio --disable-outdev=sndio --cc=gcc --enable-fontconfig --enable-frei0r --enable-gnutls --enable-gmp --enable-libgme --enable-gray --enable-libaom --enable-libfribidi --enable-libass --enable-libvmaf --enable-libfreetype --enable-libmp3lame --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenjpeg --enable-librubberband --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libvorbis --enable-libopus --enable-libtheora --enable-libvidstab --enable-libvo-amrwbenc --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxml2 --enable-libdav1d --enable-libxvid --enable-libzvbi --enable-libzimg
+
+  * Linux (ffprobe-static): ffprobe version 4.0.2-static https://johnvansickle.com/ffmpeg/  Copyright (c) 2007-2018 the FFmpeg developers
+    Flags: configuration: --enable-gpl --enable-version3 --enable-static --disable-debug --disable-ffplay --disable-indev=sndio --disable-outdev=sndio --cc=gcc-6 --enable-fontconfig --enable-frei0r --enable-gnutls --enable-gray --enable-libaom --enable-libfribidi --enable-libass --enable-libvmaf --enable-libfreetype --enable-libmp3lame --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenjpeg --enable-librubberband --enable-libsoxr --enable-libspeex --enable-libvorbis --enable-libopus --enable-libtheora --enable-libvidstab --enable-libvo-amrwbenc --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxml2 --enable-libxvid --enable-libzimg
+
+  * Windows (resources/bin/win/ffmpeg.exe): ffmpeg version 6.1.1-essentials_build-www.gyan.dev
+    Flags: --enable-gpl --enable-version3 --enable-static (https://www.gyan.dev/ffmpeg/builds/)
+
+Corresponding Source Disclosure (GPL v3 Section 6):
+  - Upstream FFmpeg Source: https://ffmpeg.org/download.html
+  - NoirCut Releases & Source Archives: https://github.com/lakhermony/NoirCut/releases
+  - 3-Year Written Offer: For any distributed binary build, you may request a
+    complete machine-readable copy of the corresponding source code for at least
+    three (3) years from the date of distribution by contacting:
+    lakhermony@users.noreply.github.com
+
+Trademark Attribution:
+  FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
+
+--------------------------------------------------------------------------------
+2. PRODUCTION NPM DEPENDENCIES (38 PACKAGES)
+--------------------------------------------------------------------------------
+
+- @derhuerst/http-basic@8.2.4 [MIT] — https://github.com/derhuerst/http-basic
+- agent-base@6.0.2 [MIT] — git://github.com/TooTallNate/node-agent-base
+- argparse@2.0.1 [Python-2.0] — nodeca/argparse
+- buffer-from@1.1.2 [MIT] — LinusU/buffer-from
+- builder-util-runtime@9.7.0 [MIT] — https://github.com/electron-userland/electron-builder
+- caseless@0.12.0 [Apache-2.0] — https://github.com/mikeal/caseless
+- concat-stream@2.0.0 [MIT] — http://github.com/maxogden/concat-stream
+- debug@4.4.3 [MIT] — git://github.com/debug-js/debug
+- electron-updater@6.8.11 [MIT] — https://github.com/electron-userland/electron-builder
+- electron-updater/node_modules/semver@7.7.4 [ISC] — https://github.com/npm/node-semver
+- env-paths@2.2.1 [MIT] — sindresorhus/env-paths
+- ffmpeg-static@5.3.0 [GPL-3.0-or-later] — https://github.com/eugeneware/ffmpeg-static
+- ffprobe-static@3.1.0 [MIT] — https://github.com/joshwnj/ffprobe-static
+- fs-extra@10.1.0 [MIT] — https://github.com/jprichardson/node-fs-extra
+- graceful-fs@4.2.12 [BlueOak-1.0.0] — https://github.com/isaacs/node-graceful-fs
+- http-response-object@3.0.2 [MIT] — https://github.com/ForbesLindesay/http-response-object
+- http-response-object/node_modules/@types/node@10.17.60 [MIT] — https://github.com/DefinitelyTyped/DefinitelyTyped
+- https-proxy-agent@5.0.1 [MIT] — git://github.com/TooTallNate/node-https-proxy-agent
+- inherits@2.0.4 [ISC] — git://github.com/isaacs/inherits
+- js-yaml@4.3.2 [MIT] — nodeca/js-yaml
+- jsonfile@6.2.1 [MIT] — git@github.com:jprichardson/node-jsonfile
+- lazy-val@1.0.5 [MIT] — develar/lazy-val
+- lodash.escaperegexp@4.1.2 [MIT] — lodash/lodash
+- lodash.isequal@4.5.0 [MIT] — lodash/lodash
+- ms@2.1.3 [MIT] — vercel/ms
+- parse-cache-control@1.0.1 [BSD] — https://github.com/roryf/parse-cache-control
+- progress@2.0.3 [MIT] — git://github.com/visionmedia/node-progress
+- react@19.3.1 [MIT] — https://github.com/react/react
+- react-dom@19.3.1 [MIT] — https://github.com/react/react
+- readable-stream@3.6.2 [MIT] — git://github.com/nodejs/readable-stream
+- safe-buffer@5.2.1 [MIT] — git://github.com/feross/safe-buffer
+- sax@1.6.1 [BlueOak-1.0.0] — ssh://git@github.com/isaacs/sax-js
+- scheduler@0.28.0 [MIT] — https://github.com/react/react
+- string_decoder@1.3.0 [MIT] — git://github.com/nodejs/string_decoder
+- tiny-typed-emitter@2.1.0 [MIT] — https://github.com/binier/tiny-typed-emitter
+- typedarray@0.0.6 [MIT] — git://github.com/substack/typedarray
+- universalify@2.0.1 [MIT] — https://github.com/RyanZim/universalify
+- util-deprecate@1.0.2 [MIT] — git://github.com/TooTallNate/util-deprecate
+
+--------------------------------------------------------------------------------
+3. RUNTIME PLATFORM NOTICES
+--------------------------------------------------------------------------------
+- Electron (MIT): See LICENSE.electron.txt in the application root directory.
+- Chromium & Third-Party Libraries: See LICENSES.chromium.html in the application root directory.
