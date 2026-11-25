@@ -273,4 +273,6 @@ export interface NoirCutApi {
     dataUrl: string,
     defaultName: string
   ) => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>
+  /** GNU GPL v3 LICENSE ve THIRD-PARTY-LICENSES.txt içeriklerini okur */
+  getLicenseInfo?: () => Promise<{ gplText: string; thirdPartyText: string }>
 }

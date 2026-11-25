@@ -70,7 +70,8 @@ const api: NoirCutApi = {
   },
   archiveProject: (project) => ipcRenderer.invoke('project:archive', project),
   saveSnapshot: (dataUrl, defaultName) =>
-    ipcRenderer.invoke('snapshot:save', { dataUrl, defaultName })
+    ipcRenderer.invoke('snapshot:save', { dataUrl, defaultName }),
+  getLicenseInfo: () => ipcRenderer.invoke('app:licenses')
 }
 
 contextBridge.exposeInMainWorld('noircut', api)

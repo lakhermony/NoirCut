@@ -450,6 +450,30 @@ app.whenReady().then(async () => {
   ipcMain.handle('autosave:dismiss', () => dismissAutosaveRecovery())
 
   ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.handle('app:licenses', async () => {
+    const baseDir = app.isPackaged ? process.resourcesPath : app.getAppPath()
+    const readDoc = async (filename: string, fallback: string): Promise<string> => {
+      const candidates = [join(baseDir, filename), join(process.cwd(), filename)]
+      for (const p of candidates) {
+        if (existsSync(p)) {
+          try {
+            return await readFile(p, 'utf-8')
+          } catch {
+            // sonraki adayı dene
+          }
+        }
+      }
+      return fallback
+    }
+    const [gplText, thirdPartyText] = await Promise.all([
+      readDoc('LICENSE', 'LICENSE dosyası bulunamadı. https://www.gnu.org/licenses/gpl-3.0.txt'),
+      readDoc(
+        'THIRD-PARTY-LICENSES.txt',
+        'THIRD-PARTY-LICENSES.txt dosyası henüz üretilmemiş. "npm run licenses:generate" komutunu çalıştırın.'
+      )
+    ])
+    return { gplText, thirdPartyText }
+  })
   ipcMain.handle('updater:check', () => checkForAppUpdates())
   ipcMain.handle('updater:download', () => downloadAppUpdate())
   ipcMain.handle('updater:quit-and-install', () => quitAndInstallAppUpdate())

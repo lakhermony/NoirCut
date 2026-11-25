@@ -60,6 +60,7 @@ import type {
 } from '../../shared/types'
 import AudioWorkspace from './components/AudioWorkspace'
 import CommandIsland from './components/CommandIsland'
+import AboutModal from './components/AboutModal'
 import ExportModal from './components/ExportModal'
 import ExportWorkspace, { type ExportQueueJob } from './components/ExportWorkspace'
 import GradeWorkspace from './components/GradeWorkspace'
@@ -168,6 +169,7 @@ export default function App() {
   const [redoStack, setRedoStack] = useState<HistoryEntry[]>([])
   const lastHistoryMetaRef = useRef<{ key: string; at: number }>({ key: '', at: 0 })
   const [exportOpen, setExportOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
   const [exportSettings, setExportSettings] = useState<ExportSettings>(defaultExportSettings)
   const [exporting, setExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
@@ -2302,6 +2304,7 @@ export default function App() {
         onSaveProject={handleSaveProject}
         onLoadProject={handleLoadProject}
         onArchiveProject={handleArchiveProject}
+        onOpenAbout={() => setAboutOpen(true)}
         onOpenLauncher={() => setShowLauncher(true)}
         exportSettings={exportSettings}
         mediaItems={lib.items}
@@ -2333,6 +2336,7 @@ export default function App() {
         </div>
       )}
 
+      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
       <ExportModal
         open={exportOpen}
         settings={exportSettings}

@@ -71,6 +71,7 @@ export default function CommandIsland({
   onSaveProject,
   onLoadProject,
   onArchiveProject,
+  onOpenAbout,
   onExport,
   onOpenLauncher,
   exportSettings,
@@ -89,6 +90,7 @@ export default function CommandIsland({
   onSaveProject: () => void
   onLoadProject: () => void
   onArchiveProject?: () => void
+  onOpenAbout?: () => void
   onExport: () => void
   onOpenLauncher?: () => void
   exportSettings: ExportSettings
@@ -367,6 +369,19 @@ export default function CommandIsland({
             )
           })}
         </div>
+
+        {onOpenAbout && (
+          <button
+            type="button"
+            data-testid="about-open-btn"
+            onClick={onOpenAbout}
+            title="Hakkında & GNU GPL v3 Lisans Bilgileri"
+            aria-label="Hakkında ve Lisanslar"
+            className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--bg-surface)] font-mono text-[11px] font-bold text-white/75 transition hover:bg-white/[0.12] hover:text-white"
+          >
+            i
+          </button>
+        )}
 
         <button
           data-testid="export-open-btn"
