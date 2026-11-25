@@ -7,6 +7,7 @@
 **Sinema Karanlık Odası & Profesyonel Masaüstü Video Kurgu / Post-Prodüksiyon Sistemi**
 
 [![Sürüm](https://img.shields.io/badge/sürüm-v1.0.5_Studio-B7E36A?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
+[![CI](https://github.com/lakhermony/NoirCut/actions/workflows/ci.yml/badge.svg)](https://github.com/lakhermony/NoirCut/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Linux_AppImage_%7C_Windows_x64-1B1E24?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
 [![Teknoloji](https://img.shields.io/badge/Electron_45-React_19_%7C_WebGL2_%7C_WebAudio_%7C_FFmpeg-242830?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
 [![Lisans](https://img.shields.io/badge/lisans-MIT-B7E36A?style=for-the-badge&labelColor=101114)](LICENSE)

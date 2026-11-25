@@ -12,10 +12,10 @@ import { execFile } from 'child_process'
 import { app } from 'electron'
 import { existsSync } from 'fs'
 import { join, resolve } from 'path'
-import ffmpeg from 'fluent-ffmpeg'
 import ffmpegStatic from 'ffmpeg-static'
 import ffprobeStatic from 'ffprobe-static'
 import type { EngineInfo, VideoEncoderId } from '../../shared/types'
+import { resolveVaapiDevice } from '../export/vaapi-device'
 
 /** Paketlenmiş (asar) uygulamada binary'ler app.asar.unpacked içinde bulunur. */
 function unpackAsar(p: string): string {
@@ -83,42 +83,24 @@ async function testHwEncoderUsable(
   bin: string,
   enc: Exclude<VideoEncoderId, 'libx264' | 'libx265'>
 ): Promise<boolean> {
-  const args =
-    enc === 'h264_vaapi'
-      ? [
-          '-v',
-          'error',
-          '-vaapi_device',
-          '/dev/dri/renderD128',
-          '-f',
-          'lavfi',
-          '-i',
-          'color=c=black:s=64x64:d=0.04',
-          '-vf',
-          'format=nv12,hwupload',
-          '-frames:v',
-          '1',
-          '-c:v',
-          enc,
-          '-f',
-          'null',
-          '-'
-        ]
-      : [
-          '-v',
-          'error',
-          '-f',
-          'lavfi',
-          '-i',
-          'color=c=black:s=64x64:d=0.04',
-          '-frames:v',
-          '1',
-          '-c:v',
-          enc,
-          '-f',
-          'null',
-          '-'
-        ]
+  if (enc === 'h264_vaapi') {
+    return (await resolveVaapiDevice({ ffmpegBin: bin })) !== null
+  }
+  const args = [
+    '-v',
+    'error',
+    '-f',
+    'lavfi',
+    '-i',
+    'color=c=black:s=64x64:d=0.04',
+    '-frames:v',
+    '1',
+    '-c:v',
+    enc,
+    '-f',
+    'null',
+    '-'
+  ]
   const res = await run(bin, args)
   return res !== null
 }
@@ -144,9 +126,6 @@ export async function initEngine(): Promise<EngineInfo> {
   const out = await run(ffmpegPath, ['-version'])
   const version = out ? (out.split('\n')[0].match(/version\s+(\S+)/)?.[1] ?? null) : null
   if (!version) source = 'missing'
-
-  ffmpeg.setFfmpegPath(ffmpegPath)
-  ffmpeg.setFfprobePath(ffprobePath)
 
   const availableEncoders: VideoEncoderId[] = ['libx264']
   if (await hasLibx265(ffmpegPath)) {
@@ -186,11 +165,50 @@ export async function getEngineInfo(): Promise<EngineInfo> {
   return cached ?? initEngine()
 }
 
-/** Gelecekte kullanılacak: bir medya dosyasının bilgilerini okur. */
-export function probe(filePath: string): Promise<ffmpeg.FfprobeData> {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(filePath, (err, data) => (err ? reject(err) : resolve(data)))
-  })
+export interface FfprobeStream {
+  codec_type?: string
+  codec_name?: string
+  width?: number
+  height?: number
+  r_frame_rate?: string
+  avg_frame_rate?: string
+  duration?: string | number
+  pix_fmt?: string
+  [key: string]: unknown
 }
 
-export { ffmpeg }
+export interface FfprobeData {
+  streams: FfprobeStream[]
+  format: {
+    duration?: string | number
+    bit_rate?: string | number
+    [key: string]: unknown
+  }
+}
+
+/** Bir medya dosyasının akış ve kapsayıcı bilgilerini ffprobe ile okur. */
+export async function probe(filePath: string): Promise<FfprobeData> {
+  const info = await getEngineInfo()
+  return new Promise((resolve, reject) => {
+    execFile(
+      info.ffprobePath,
+      ['-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', filePath],
+      { timeout: 15000, maxBuffer: 8 * 1024 * 1024, windowsHide: true },
+      (err, stdout) => {
+        if (err) {
+          reject(err)
+          return
+        }
+        try {
+          const parsed = JSON.parse(stdout) as Partial<FfprobeData>
+          resolve({
+            streams: Array.isArray(parsed.streams) ? parsed.streams : [],
+            format: parsed.format && typeof parsed.format === 'object' ? parsed.format : {}
+          })
+        } catch (parseErr) {
+          reject(parseErr)
+        }
+      }
+    )
+  })
+}

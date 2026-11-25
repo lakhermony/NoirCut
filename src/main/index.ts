@@ -1,8 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron'
-import { spawnSync } from 'child_process'
-import { existsSync, readdirSync } from 'fs'
-import { copyFile, mkdir, readFile, rm, writeFile } from 'fs/promises'
-import { tmpdir } from 'os'
+import { existsSync } from 'fs'
+import { copyFile, mkdir, readFile, writeFile } from 'fs/promises'
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'path'
 import { parseCubeLut } from '../shared/lut'
 import type { NoirCutProject } from '../shared/project'
@@ -41,6 +39,7 @@ import {
   initAutoUpdater,
   quitAndInstallAppUpdate
 } from './updater'
+import { cancelActiveTranscription, transcribeMediaFile } from './transcribe/transcribe-service'
 
 // Özel protokol 'ready' öncesi kaydedilmek zorunda
 registerMediaScheme()
@@ -89,7 +88,8 @@ function createWindow(): BrowserWindow {
     ...(icon ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      // Preload yalnızca contextBridge ve ipcRenderer kullanır; Node API gerekmediği için sandbox etkindir
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
     }
@@ -166,128 +166,34 @@ app.whenReady().then(async () => {
   ipcMain.handle('media:reconnect', (e, mediaId: string) =>
     reconnectMediaItem(mediaId, BrowserWindow.fromWebContents(e.sender))
   )
-  ipcMain.handle('media:transcribe', async (_e, args: { mediaId: string; language: string }) => {
+  ipcMain.handle('media:transcribe', async (e, args: { mediaId: string; language: string }) => {
+    if (!args || typeof args.mediaId !== 'string' || !args.mediaId.trim()) {
+      return { ok: false, engineMissing: false, error: 'Geçersiz medya kimliği' }
+    }
+    const language = typeof args.language === 'string' ? args.language : 'auto'
     const info = await getEngineInfo()
-    const item = getMediaItem(args?.mediaId)
+    const item = getMediaItem(args.mediaId)
     if (!item?.path || !existsSync(item.path)) {
       return { ok: false, engineMissing: false, error: 'Medya öğesi bulunamadı' }
     }
-    const workDir = join(tmpdir(), 'noircut-whisper')
-    await mkdir(workDir, { recursive: true })
-    const stamp = Date.now()
-    const wavPath = join(workDir, `audio-${stamp}.wav`)
-    const outPrefix = join(workDir, `out-${stamp}`)
-    const srtPath = `${outPrefix}.srt`
-    const lang =
-      args?.language?.toLowerCase().startsWith('tr')
-        ? 'tr'
-        : args?.language?.toLowerCase().startsWith('en')
-          ? 'en'
-          : 'auto'
-
-    try {
-      const ff = spawnSync(
-        info.ffmpegPath,
-        ['-y', '-i', item.path, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', wavPath],
-        { windowsHide: true }
-      )
-      if (ff.status !== 0 || !existsSync(wavPath)) {
-        return { ok: false, engineMissing: false, error: 'FFmpeg ile 16kHz ses çıkarılamadı' }
-      }
-
-      const findBin = (names: string[]): string | null => {
-        for (const n of names) {
-          const chk = spawnSync(process.platform === 'win32' ? 'where' : 'which', [n], {
-            encoding: 'utf-8'
-          })
-          if (chk.status === 0 && chk.stdout.trim()) return n
-        }
-        return null
-      }
-
-      const findModel = (): string | null => {
-        if (process.env.NOIRCUT_WHISPER_MODEL && existsSync(process.env.NOIRCUT_WHISPER_MODEL)) {
-          return process.env.NOIRCUT_WHISPER_MODEL
-        }
-        const home = process.env.HOME || ''
-        const dirs = [
-          join(home, '.local/share/whisper'),
-          join(home, '.cache/whisper'),
-          join(home, 'models'),
-          '/usr/share/whisper'
-        ]
-        for (const d of dirs) {
-          if (!existsSync(d)) continue
-          try {
-            const match = readdirSync(d).find((f) => f.includes('ggml') && f.endsWith('.bin'))
-            if (match) return join(d, match)
-          } catch {
-            // yoksay
-          }
-        }
-        return null
-      }
-
-      const parseSrt = (srt: string) => {
-        const toSec = (ts: string) => {
-          const [h, m, s] = ts.trim().replace(',', '.').split(':').map(Number)
-          return Number.isFinite(h) && Number.isFinite(m) && Number.isFinite(s)
-            ? h * 3600 + m * 60 + s
-            : NaN
-        }
-        const segs: Array<{ start: number; end: number; text: string }> = []
-        for (const block of srt.replace(/\r\n/g, '\n').split('\n\n')) {
-          const lines = block.split('\n').map((l) => l.trim()).filter(Boolean)
-          const idx = lines.findIndex((l) => l.includes('-->'))
-          if (idx < 0) continue
-          const [a, b] = lines[idx].split('-->')
-          const start = toSec(a)
-          const end = toSec(b)
-          const text = lines.slice(idx + 1).join(' ').trim()
-          if (Number.isFinite(start) && Number.isFinite(end) && end > start && text) {
-            segs.push({ start, end, text })
-          }
-        }
-        return segs
-      }
-
-      const cppBin = findBin(['whisper-cli', 'whisper-cpp'])
-      const model = findModel()
-      if (cppBin && model) {
-        const res = spawnSync(cppBin, ['-m', model, '-l', lang, '-osrt', '-of', outPrefix, '-f', wavPath], {
-          windowsHide: true
-        })
-        if (res.status === 0 && existsSync(srtPath)) {
-          const srt = await readFile(srtPath, 'utf-8')
-          return { ok: true, engine: `whisper.cpp (${cppBin})`, engineMissing: false, segments: parseSrt(srt) }
+    return transcribeMediaFile({
+      ffmpegPath: info.ffmpegPath,
+      mediaPath: item.path,
+      language,
+      onProgress: (progress) => {
+        if (!e.sender.isDestroyed()) {
+          e.sender.send('media:transcribe-progress', progress)
         }
       }
-
-      const pyBin = findBin(['whisper', 'faster-whisper'])
-      if (pyBin) {
-        const wArgs = [wavPath, '--output_format', 'srt', '--output_dir', workDir]
-        if (lang !== 'auto') wArgs.push('--language', lang)
-        const res = spawnSync(pyBin, wArgs, { windowsHide: true })
-        const pySrt = join(workDir, `audio-${stamp}.srt`)
-        if (res.status === 0 && existsSync(pySrt)) {
-          const srt = await readFile(pySrt, 'utf-8')
-          await rm(pySrt, { force: true })
-          return { ok: true, engine: pyBin, engineMissing: false, segments: parseSrt(srt) }
-        }
-      }
-
-      return {
-        ok: false,
-        engineMissing: true,
-        error: 'Sistemde whisper-cli (+ ggml model) veya whisper bulunamadı; ses zarfı (VAD) ile devam edildi.'
-      }
-    } finally {
-      await rm(wavPath, { force: true }).catch(() => {})
-      await rm(srtPath, { force: true }).catch(() => {})
-    }
+    })
   })
 
+  ipcMain.handle('media:transcribe-cancel', () => cancelActiveTranscription())
+
   ipcMain.handle('project:archive', async (e, project: NoirCutProject) => {
+    if (!project || typeof project !== 'object' || Array.isArray(project)) {
+      return { ok: false, error: 'Geçersiz proje verisi' }
+    }
     const win = BrowserWindow.fromWebContents(e.sender)
     const opts: Electron.OpenDialogOptions = {
       title: 'Proje Arşiv Klasörü Seç (Consolidate)',
@@ -296,24 +202,31 @@ app.whenReady().then(async () => {
     const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     if (res.canceled || res.filePaths.length === 0) return { ok: false, canceled: true }
     try {
-      const safeName = basename(project.mediaRefs?.[0]?.path || 'NoirCut-Project').replace(/[^a-zA-Z0-9_-]/g, '_')
+      const rawRefPath =
+        typeof project.mediaRefs?.[0]?.path === 'string' ? project.mediaRefs[0].path : ''
+      const safeName =
+        basename(rawRefPath || 'NoirCut-Project').replace(/[^a-zA-Z0-9_-]/g, '_') ||
+        'NoirCut-Project'
       const archiveDir = join(res.filePaths[0], `${safeName}-Archive-${Math.floor(Date.now() / 1000)}`)
-      const mediaDir = join(archiveDir, 'media')
+      const mediaDir = resolve(archiveDir, 'media')
       await mkdir(mediaDir, { recursive: true })
       const cloned: NoirCutProject = JSON.parse(JSON.stringify(project))
       const used = new Set<string>()
       let copiedFiles = 0
       for (const r of cloned.mediaRefs ?? []) {
-        if (!r.path || !existsSync(r.path)) continue
+        if (!r || typeof r.path !== 'string' || !isAbsolute(r.path) || !existsSync(r.path)) continue
         const orig = basename(r.path)
+        if (!orig || orig === '.' || orig === '..') continue
         let destName = orig
         let n = 1
         while (used.has(destName)) {
           destName = `${n}_${orig}`
           n++
         }
+        const destPath = resolve(mediaDir, destName)
+        if (!destPath.startsWith(mediaDir + (process.platform === 'win32' ? '\\' : '/'))) continue
         used.add(destName)
-        await copyFile(r.path, join(mediaDir, destName))
+        await copyFile(r.path, destPath)
         r.path = `./media/${destName}`
         copiedFiles++
       }
@@ -327,16 +240,24 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     'snapshot:save',
     async (e, args: { dataUrl: string; defaultName: string }) => {
+      if (!args || typeof args.dataUrl !== 'string' || !args.dataUrl.startsWith('data:image/png;base64,')) {
+        return { ok: false, error: 'Geçersiz PNG veri URL\'si' }
+      }
+      const rawName = typeof args.defaultName === 'string' && args.defaultName.trim()
+        ? args.defaultName.trim()
+        : 'noircut-snapshot.png'
+      const safeDefaultName =
+        basename(rawName).replace(/[^a-zA-Z0-9._-]/g, '_') || 'noircut-snapshot.png'
       const win = BrowserWindow.fromWebContents(e.sender)
       const opts: Electron.SaveDialogOptions = {
         title: 'Kare Anlık Görüntüsü Kaydet (PNG)',
-        defaultPath: args?.defaultName || 'noircut-snapshot.png',
+        defaultPath: safeDefaultName,
         filters: [{ name: 'PNG Görsel', extensions: ['png'] }]
       }
       const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
       if (res.canceled || !res.filePath) return { ok: false, canceled: true }
       try {
-        const b64 = (args?.dataUrl || '').split(',')[1] ?? args?.dataUrl ?? ''
+        const b64 = args.dataUrl.slice('data:image/png;base64,'.length)
         await writeFile(res.filePath, Buffer.from(b64, 'base64'))
         return { ok: true, path: res.filePath }
       } catch (err) {

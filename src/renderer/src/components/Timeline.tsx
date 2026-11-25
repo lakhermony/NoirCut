@@ -27,61 +27,9 @@ import FilmstripCanvas from './FilmstripCanvas'
 import ClipRubberbandOverlay from './ClipRubberbandOverlay'
 import { MEDIA_DRAG_TYPE } from './LeftPanel'
 import WaveformCanvas from './WaveformCanvas'
-
-const STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600]
-const MAX_ZOOM = 8
-
-function Kbd({ children }: { children: string }) {
-  return (
-    <kbd className="rounded-md bg-white/[0.09] px-1.5 py-px font-mono text-[8px] font-semibold leading-tight text-white/70 shadow-[inset_0_-1px_0_rgba(0,0,0,0.45)]">
-      {children}
-    </kbd>
-  )
-}
-
-const SHORTCUT_GUIDE: { group: string; items: [string, string][] }[] = [
-  {
-    group: 'Oynatma',
-    items: [
-      ['Space', 'Oynat / Durdur'],
-      ['J', 'Geri sar (1x → 2x)'],
-      ['K', 'Durdur'],
-      ['L', 'İleri oynat (1x → 2x → 4x)']
-    ]
-  },
-  {
-    group: 'Kurgu',
-    items: [
-      ['Ctrl+A', 'Tüm klipleri seç'],
-      ['Esc', 'Seçimi temizle'],
-      ['Boş Alanda Sürükle', 'Seçim kutusu (Marquee)'],
-      ['Shift / Ctrl + Tık', 'Çoklu klip seç / çıkar'],
-      ['C', 'Playhead\'den kes (Razor)'],
-      ['Del', 'Seçili klip(ler)i sil'],
-      ['Shift+Del', 'Ripple sil (boşluğu kapat)'],
-      ['Klip Sürükle', 'Tekli veya grup taşı / Kenar trim'],
-      ['M', 'Sahne işaretçisi ekle'],
-      ['I / O', 'Giriş / Çıkış noktası'],
-      ['Ctrl + Tekerlek', 'Timeline yakınlaştır / uzaklaştır'],
-      ['Tekerlek / Alt + Tekerlek', 'Timeline\'ı sağa / sola kaydır']
-    ]
-  },
-  {
-    group: 'Proje',
-    items: [
-      ['Ctrl+Z', 'Geri al'],
-      ['Ctrl+Shift+Z', 'Yinele'],
-      ['Ctrl+S', 'Projeyi kaydet'],
-      ['Ctrl+O', 'Proje aç']
-    ]
-  }
-]
-
-function shuttleLabel(rate: number, playing: boolean): string | null {
-  if (!playing || rate === 0) return null
-  if (rate < 0) return `<< ${Math.abs(rate)}x`
-  return rate === 1 ? '1x' : `${rate}x >>`
-}
+import { MAX_ZOOM, STEPS } from './timeline/TimelineConstants'
+import { CaseMarkerPopover } from './timeline/CaseMarkerPopover'
+import { TimelineToolbar } from './timeline/TimelineToolbar'
 
 export default function Timeline({
   clips,
@@ -1054,470 +1002,59 @@ export default function Timeline({
     >
       {/* Seçili Sahne İşaretçisi ve Yönetmen Notu Baloncuğu (Case Marker Popover) */}
       {activeMarker && (
-        <div
-          data-testid="case-marker-popover"
-          className="absolute bottom-full left-36 z-50 mb-2 w-[320px] rounded-lg border border-white/15 bg-[#0F0F12]/95 p-3 shadow-[0_14px_40px_rgba(0,0,0,0.85)]"
-        >
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5">
-              <span
-                className="h-2.5 w-2.5 rotate-45 rounded-[2px]"
-                style={{
-                  backgroundColor: CASE_MARKER_COLOR_META[activeMarker.color].hex,
-                  boxShadow: `0 0 8px ${CASE_MARKER_COLOR_META[activeMarker.color].glow}`
-                }}
-              />
-              <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-white/90">
-                Sahne Notu · {fmt(activeMarker.time, fps)}
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              {markers.length > 1 && onStepMarker && (
-                <>
-                  <button
-                    type="button"
-                    data-testid="popover-prev-marker"
-                    onClick={() => onStepMarker(-1)}
-                    title="Önceki İşaretçi"
-                    className="rounded-full bg-white/[0.06] px-2 py-0.5 font-mono text-[9px] text-white/70 hover:bg-white/[0.14] hover:text-white"
-                  >
-                    ◀
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="popover-next-marker"
-                    onClick={() => onStepMarker(1)}
-                    title="Sonraki İşaretçi"
-                    className="rounded-full bg-white/[0.06] px-2 py-0.5 font-mono text-[9px] text-white/70 hover:bg-white/[0.14] hover:text-white"
-                  >
-                    ▶
-                  </button>
-                </>
-              )}
-              {onDeleteMarker && (
-                <button
-                  type="button"
-                  data-testid="popover-delete-marker"
-                  onClick={() => onDeleteMarker(activeMarker.id)}
-                  title="İşaretçiyi Sil"
-                  className="rounded-full bg-red-500/15 px-2 py-0.5 font-mono text-[9px] text-red-300 hover:bg-red-500/30"
-                >
-                  Sil
-                </button>
-              )}
-              <button
-                type="button"
-                data-testid="popover-close-marker"
-                onClick={() => onSelectMarker?.(null)}
-                className="rounded-full bg-white/[0.06] px-2 py-0.5 font-mono text-[9px] text-white/60 hover:bg-white/[0.14] hover:text-white"
-              >
-                ×
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <div>
-              <div className="mb-1 text-[9px] font-medium text-white/50">Sahne Başlığı</div>
-              <input
-                data-testid="marker-title-input"
-                value={activeMarker.title}
-                onChange={(e) => onUpdateMarker?.(activeMarker.id, { title: e.target.value })}
-                placeholder="Örn: Sahne 1 — Sorgu Odası"
-                className="w-full rounded-lg border border-white/10 bg-black/50 px-2.5 py-1.5 text-xs font-medium text-white outline-none focus:border-[var(--accent)]"
-              />
-            </div>
-            <div>
-              <div className="mb-1 text-[9px] font-medium text-white/50">Yönetmen Notu</div>
-              <textarea
-                data-testid="marker-note-input"
-                rows={2}
-                value={activeMarker.note}
-                onChange={(e) => onUpdateMarker?.(activeMarker.id, { note: e.target.value })}
-                placeholder="Kamera hareketi, ışık veya ses kurgusu için not ekleyin…"
-                className="w-full resize-none rounded-lg border border-white/10 bg-black/50 px-2.5 py-1.5 text-[11px] text-white/85 outline-none focus:border-[var(--accent)]"
-              />
-            </div>
-            <div className="flex items-center justify-between pt-0.5">
-              <span className="text-[9px] text-white/45">Etiket Rengi</span>
-              <div className="flex items-center gap-1.5">
-                {(Object.keys(CASE_MARKER_COLOR_META) as CaseMarkerColor[]).map((cKey) => {
-                  const meta = CASE_MARKER_COLOR_META[cKey]
-                  const selected = activeMarker.color === cKey
-                  return (
-                    <button
-                      key={cKey}
-                      type="button"
-                      data-testid={`marker-color-${cKey}`}
-                      onClick={() => onUpdateMarker?.(activeMarker.id, { color: cKey })}
-                      title={meta.label}
-                      style={{ backgroundColor: meta.hex }}
-                      className={`h-4 w-4 rounded-full transition ${
-                        selected ? 'scale-125 ring-2 ring-white' : 'opacity-65 hover:opacity-100'
-                      }`}
-                    />
-                  )
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
+        <CaseMarkerPopover
+          activeMarker={activeMarker}
+          markersCount={markers.length}
+          fps={fps}
+          onStepMarker={onStepMarker}
+          onDeleteMarker={onDeleteMarker}
+          onSelectMarker={onSelectMarker}
+          onUpdateMarker={onUpdateMarker}
+        />
       )}
       {/* Üst Araç Çubuğu */}
-      <div className="flex items-center gap-1.5 border-b border-[color:var(--border-subtle)] px-3 py-1.5">
-        <button
-          data-testid="timeline-play-btn"
-          onClick={onPlay}
-          disabled={!canPlay}
-          className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent)] text-[10px] font-bold text-[var(--accent-fg)] shadow-[0_2px_10px_var(--accent-glow)] transition duration-150 hover:bg-[var(--accent-hover)] active:scale-95 disabled:opacity-30"
-          title="Oynat / Durdur (Boşluk) · J/K/L Shuttle"
-        >
-          {playing ? '❚❚' : '▶'}
-        </button>
-
-        {/* J / K / L Canlı Mekik Hız Göstergesi */}
-        <div
-          data-testid="shuttle-indicator"
-          className="flex items-center gap-1 rounded-full bg-white/[0.04] px-2 py-0.5 font-mono text-[10px]"
-          title="J geri · K durdur · L ileri"
-        >
-          <span className={shuttleRate < 0 && playing ? 'text-[var(--accent)]' : 'text-white/30'}>J</span>
-          <span className={!playing ? 'text-[var(--accent)]' : 'text-white/30'}>K</span>
-          <span className={shuttleRate > 0 && playing ? 'text-[var(--accent)]' : 'text-white/30'}>L</span>
-          <span
-            className="min-w-[44px] text-center font-semibold tracking-wide text-[var(--accent)] transition-all duration-200"
-            style={{
-                            opacity: shuttleLabel(shuttleRate, playing) ? 1 : 0.4
-            }}
-          >
-            {shuttleLabel(shuttleRate, playing) ?? '❚❚'}
-          </span>
-        </div>
-
-        {/* Geri Al (Undo) & Yinele (Redo) */}
-        {(onUndo || onRedo) && (
-          <div className="flex items-center gap-0.5 rounded-full bg-white/[0.04] p-0.5">
-            <button
-              type="button"
-              data-testid="undo-btn"
-              onClick={onUndo}
-              disabled={!canUndo}
-              title="Geri Al (Ctrl+Z)"
-              className="rounded-full px-2 py-0.5 font-mono text-[10px] text-white/75 transition hover:bg-white/[0.1] hover:text-white disabled:opacity-25"
-            >
-              <span className="flex items-center gap-1.5">↶ Geri Al <Kbd>Ctrl+Z</Kbd></span>
-            </button>
-            <button
-              type="button"
-              data-testid="redo-btn"
-              onClick={onRedo}
-              disabled={!canRedo}
-              title="Yinele (Ctrl+Shift+Z)"
-              className="rounded-full px-2 py-0.5 font-mono text-[10px] text-white/75 transition hover:bg-white/[0.1] hover:text-white disabled:opacity-25"
-            >
-              <span className="flex items-center gap-1.5">↷ Yinele <Kbd>Ctrl+⇧+Z</Kbd></span>
-            </button>
-          </div>
-        )}
-
-        {/* Profesyonel Kurgu Araçları Seçici: Select (V) · Razor (B) · Slip (Y) · Roll (N) */}
-        <div
-          data-testid="editing-tools-selector"
-          className="flex items-center gap-0.5 rounded-full bg-white/[0.04] p-0.5"
-        >
-          {(
-            [
-              ['select', 'Seç (V)', 'Seçim ve Taşıma Aracı (V)'],
-              ['razor', 'Jilet (B)', 'Razor / Blade Kesim Aracı — Klibe tıklayarak böl (B)'],
-              ['slip', 'Slip (Y)', 'Slip Aracı — Klip konumunu değiştirmeden kaynak In/Out kaydır (Y)'],
-              ['roll', 'Roll (N)', 'Roll Edit — Bitişik iki klibin kesişim sınırını kaydır (N)']
-            ] as const
-          ).map(([toolId, lbl, ttl]) => (
-            <button
-              key={toolId}
-              type="button"
-              data-testid={`tool-${toolId}-btn`}
-              onClick={() => setEditTool(toolId)}
-              title={ttl}
-              className={`rounded-full px-2 py-0.5 font-mono text-[9.5px] font-semibold transition ${
-                editTool === toolId
-                  ? 'bg-[var(--accent)] text-[var(--accent-fg)] shadow-[0_0_8px_var(--accent-glow)]'
-                  : 'text-white/65 hover:bg-white/[0.08] hover:text-white'
-              }`}
-            >
-              {lbl}
-            </button>
-          ))}
-        </div>
-
-        <button
-          data-testid="cut-btn"
-          onClick={onCut}
-          disabled={!canPlay}
-          className="chip disabled:opacity-30"
-          title="Playhead konumundan böl (C)"
-        >
-          <span className="flex items-center gap-1.5">Kes <Kbd>C</Kbd></span>
-        </button>
-        <button
-          data-testid="delete-btn"
-          onClick={rippleMode && onRippleDelete ? onRippleDelete : onDeleteSelected}
-          disabled={selectedSet.size === 0}
-          className="chip disabled:opacity-30"
-          title={
-            rippleMode
-              ? 'Ripple Sil — Sonraki klipleri geri kaydır (Del)'
-              : selectedSet.size > 1
-                ? `Seçili ${selectedSet.size} klibi sil (Del)`
-                : 'Seçili klibi sil (Del)'
-          }
-        >
-          <span className="flex items-center gap-1.5">
-            {rippleMode
-              ? 'Ripple Sil'
-              : selectedSet.size > 1
-                ? `Sil (${selectedSet.size})`
-                : 'Sil'}{' '}
-            <Kbd>Del</Kbd>
-          </span>
-        </button>
-        {onToggleRippleMode && (
-          <button
-            type="button"
-            data-testid="ripple-mode-btn"
-            onClick={onToggleRippleMode}
-            title="Ripple Modu: Silme işleminde sonraki klipleri otomatik geri kaydır (Shift+Del)"
-            className={`chip ${
-              rippleMode
-                ? '!border-[var(--accent)] !bg-[var(--accent)]/18 !text-[var(--accent)]'
-                : 'text-white/60'
-            }`}
-          >
-            Ripple
-          </button>
-        )}
-        {onCloseGaps && (
-          <button
-            type="button"
-            data-testid="close-gaps-btn"
-            onClick={() => onCloseGaps(selectedClip?.lane)}
-            disabled={clips.length === 0}
-            title="Zaman çizelgesindeki boşlukları kapat (Close Gaps)"
-            className="chip disabled:opacity-30"
-          >
-            Boşluk Kapat
-          </button>
-        )}
-        <button
-          data-testid="timeline-detach-btn"
-          onClick={onDetachSelected}
-          disabled={!canDetach}
-          className="chip disabled:opacity-30"
-          title="Seçili videonun sesini A1 kanalına bağımsız klip olarak ayır"
-        >
-          Sesi Ayır
-        </button>
-
-        {/* NLE Giriş (I) ve Çıkış (O) Noktası Kontrolleri */}
-        {(onMarkIn || onMarkOut) && (
-          <div className="flex items-center gap-0.5 rounded-full bg-white/[0.04] p-0.5">
-            <button
-              type="button"
-              data-testid="mark-in-btn"
-              onClick={onMarkIn}
-              disabled={!canPlay}
-              title="Giriş (In) Noktası İşaretle (I)"
-              className={`rounded-full px-2 py-0.5 font-mono text-[9px] font-semibold transition disabled:opacity-30 ${
-                inPoint !== null
-                  ? 'bg-[var(--accent)]/20 text-[var(--accent)]'
-                  : 'text-white/60 hover:bg-white/[0.1] hover:text-white'
-              }`}
-            >
-              <span className="flex items-center gap-1">
-                <Kbd>I</Kbd>
-                {inPoint !== null ? `${inPoint.toFixed(1)}s` : 'Giriş'}
-              </span>
-            </button>
-            <button
-              type="button"
-              data-testid="mark-out-btn"
-              onClick={onMarkOut}
-              disabled={!canPlay}
-              title="Çıkış (Out) Noktası İşaretle (O)"
-              className={`rounded-full px-2 py-0.5 font-mono text-[9px] font-semibold transition disabled:opacity-30 ${
-                outPoint !== null
-                  ? 'bg-[var(--accent)]/20 text-[var(--accent)]'
-                  : 'text-white/60 hover:bg-white/[0.1] hover:text-white'
-              }`}
-            >
-              <span className="flex items-center gap-1">
-                {outPoint !== null ? `${outPoint.toFixed(1)}s` : 'Çıkış'}
-                <Kbd>O</Kbd>
-              </span>
-            </button>
-            {(inPoint !== null || outPoint !== null) && onClearInOut && (
-              <button
-                type="button"
-                data-testid="clear-inout-btn"
-                onClick={onClearInOut}
-                title="In / Out İşaretlerini Temizle"
-                className="rounded-full px-1.5 py-0.5 font-mono text-[9px] text-white/45 hover:bg-white/[0.1] hover:text-white"
-              >
-                ×
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Sahne İşaretçileri ve Yönetmen Notları (Case Markers - M) */}
-        {onAddMarkerAtPlayhead && (
-          <div className="flex items-center gap-0.5 rounded-full bg-white/[0.04] p-0.5">
-            {markers.length > 0 && onStepMarker && (
-              <button
-                type="button"
-                data-testid="prev-marker-btn"
-                onClick={() => onStepMarker(-1)}
-                title="Önceki Sahne İşaretçisine Git (Sol Ok)"
-                className="rounded-full px-1.5 py-0.5 font-mono text-[9px] text-white/60 transition hover:bg-white/[0.1] hover:text-white"
-              >
-                ◀
-              </button>
-            )}
-            <button
-              type="button"
-              data-testid="add-marker-btn"
-              onClick={onAddMarkerAtPlayhead}
-              disabled={!canPlay}
-              title="Playhead Konumuna Sahne İşaretçisi ve Yönetmen Notu Ekle (M)"
-              className={`flex items-center gap-1 rounded-full px-2.5 py-0.5 font-mono text-[9px] font-semibold transition disabled:opacity-30 ${
-                activeMarker
-                  ? 'bg-amber-500/20 text-amber-300 '
-                  : 'text-white/75 hover:bg-white/[0.1] hover:text-white'
-              }`}
-            >
-              <span className="text-amber-400">◆</span>
-              <span>İşaretçi Ekle</span>
-              <Kbd>M</Kbd>
-              {markers.length > 0 && (
-                <span className="rounded-full bg-white/10 px-1.5 text-[8px] text-amber-300">
-                  {markers.length}
-                </span>
-              )}
-            </button>
-            {markers.length > 0 && onStepMarker && (
-              <button
-                type="button"
-                data-testid="next-marker-btn"
-                onClick={() => onStepMarker(1)}
-                title="Sonraki Sahne İşaretçisine Git (Sağ Ok)"
-                className="rounded-full px-1.5 py-0.5 font-mono text-[9px] text-white/60 transition hover:bg-white/[0.1] hover:text-white"
-              >
-                ▶
-              </button>
-            )}
-          </div>
-        )}
-
-        <span
-          ref={timecodeRef}
-          className="ml-1 rounded border border-white/[0.06] bg-white/[0.04] px-2 py-0.5 font-mono text-[11px] tracking-wider text-white/90"
-          data-testid="timeline-timecode"
-        >
-          {fmt(timeRef ? timeRef.current : time, fps)}
-        </span>
-        {selectedSet.size > 1 ? (
-          <span
-            data-testid="timeline-selection-badge"
-            className="truncate rounded border border-[var(--accent)]/40 bg-[var(--accent-soft)] px-2 py-0.5 font-mono text-[10px] font-semibold text-[var(--accent)]"
-          >
-            Seçili: {selectedSet.size} klip
-          </span>
-        ) : (
-          selectedClip && (
-            <span
-              data-testid="timeline-selection-badge"
-              className="truncate rounded bg-white/5 px-2 py-0.5 font-mono text-[10px] text-white/60"
-            >
-              Seçili: {selectedClip.lane} · {selectedClip.name}
-            </span>
-          )
-        )}
-        <div className="ml-auto flex items-center gap-3">
-          <button
-            type="button"
-            data-testid="snap-btn"
-            onClick={() => setSnap((v) => !v)}
-            className={`chip ${snap ? '!border-[#71717A] !bg-[#71717A]/20 !text-white' : 'text-[#71717A]'}`}
-            title="Mıknatıs / Kenar Hizalama (Snap)"
-          >
-            Mıknatıs
-          </button>
-          <label className="flex items-center gap-1.5 font-mono text-[10px] text-[#71717A]" title="Zaman Çizelgesi Yakınlaştırma">
-            <span>Zoom</span>
-            <input
-              type="range"
-              min={0.5}
-              max={MAX_ZOOM}
-              step={0.1}
-              value={zoom}
-              onChange={(e) => setZoom(Number(e.target.value))}
-              style={
-                {
-                  '--pct': `${Math.max(0, Math.min(100, ((zoom - 0.5) / Math.max(0.01, MAX_ZOOM - 0.5)) * 100))}%`
-                } as React.CSSProperties
-              }
-              className="w-24 cursor-pointer"
-            />
-            <span className="w-8 text-right">{zoom.toFixed(1)}x</span>
-          </label>
-          <div className="relative">
-            <button
-              type="button"
-              data-testid="shortcut-guide-btn"
-              onClick={() => setShowGuide((v) => !v)}
-              className={`flex items-center gap-1 rounded-full px-2.5 py-0.5 font-mono text-[10px] transition-all duration-200 ${
-                showGuide
-                  ? 'bg-[var(--accent)]/20 text-[var(--accent)]'
-                  : 'bg-white/[0.06] text-white/70 hover:bg-white/[0.12] hover:text-white'
-              }`}
-              title="Klavye Kısayolları"
-            >
-              <span className="font-bold">?</span> Kısayollar
-            </button>
-            {showGuide && (
-              <div
-                data-testid="shortcut-guide"
-                className="absolute bottom-full right-0 z-50 mb-2 w-[300px] rounded-lg bg-black/60 p-3 shadow-[0_12px_40px_rgba(0,0,0,0.55)] "
-              >
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-[10px] font-semibold tracking-widest text-[var(--accent)]">
-                    NOIRCUT KISAYOLLARI
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setShowGuide(false)}
-                    className="rounded-full px-1.5 text-[11px] text-white/50 hover:bg-white/10 hover:text-white"
-                  >
-                    ×
-                  </button>
-                </div>
-                {SHORTCUT_GUIDE.map((g) => (
-                  <div key={g.group} className="mb-2 last:mb-0">
-                    <div className="mb-1 text-[9px] uppercase tracking-wider text-white/35">{g.group}</div>
-                    {g.items.map(([k, d]) => (
-                      <div key={k} className="flex items-center justify-between py-0.5 text-[10px] text-white/75">
-                        <span>{d}</span>
-                        <Kbd>{k}</Kbd>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          <span className="panel-title">Timeline</span>
-        </div>
-      </div>
+      <TimelineToolbar
+        playing={playing}
+        canPlay={canPlay}
+        shuttleRate={shuttleRate}
+        onPlay={onPlay}
+        onUndo={onUndo}
+        onRedo={onRedo}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        editTool={editTool}
+        setEditTool={setEditTool}
+        onCut={onCut}
+        rippleMode={rippleMode}
+        onRippleDelete={onRippleDelete}
+        onDeleteSelected={onDeleteSelected}
+        selectedSetSize={selectedSet.size}
+        onToggleRippleMode={onToggleRippleMode}
+        onCloseGaps={onCloseGaps}
+        selectedClip={selectedClip}
+        clipsCount={clips.length}
+        onDetachSelected={onDetachSelected}
+        canDetach={canDetach}
+        onMarkIn={onMarkIn}
+        onMarkOut={onMarkOut}
+        inPoint={inPoint}
+        outPoint={outPoint}
+        onClearInOut={onClearInOut}
+        onAddMarkerAtPlayhead={onAddMarkerAtPlayhead}
+        markersCount={markers.length}
+        onStepMarker={onStepMarker}
+        activeMarker={activeMarker}
+        timecodeRef={timecodeRef}
+        time={time}
+        timeRef={timeRef}
+        fps={fps}
+        snap={snap}
+        setSnap={setSnap}
+        zoom={zoom}
+        setZoom={setZoom}
+        showGuide={showGuide}
+        setShowGuide={setShowGuide}
+      />
 
       {/* Gövde: Sol Kanal Mikseri + Sağ Zaman Çizelgesi */}
       <div className="flex min-h-0 flex-1 overflow-y-auto overflow-x-hidden">

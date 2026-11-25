@@ -3,8 +3,6 @@ import { buildSvgGradeTables, isNeutralGrade, type ColorGrade } from '../../../s
 import type { CreditConfig } from '../../../shared/credits'
 import type { Lut3D } from '../../../shared/lut'
 import {
-  defaultClipTransform,
-  evaluateClipTransformAt,
   type SubtitleSegment,
   type SubtitleStyleConfig,
   type TimelineClip
@@ -17,104 +15,12 @@ import type { ProxyPlaybackMode, ProxyResolutionScale } from '../types'
 import CreditOverlay from './CreditOverlay'
 import { MEDIA_DRAG_TYPE } from './LeftPanel'
 import type { ComparisonMode } from './noirfilm/LookComparisonViewer'
-
-function computeClipTransformStyle(
-  clip: TimelineClip | null | undefined,
-  time: number
-): React.CSSProperties {
-  const tf = clip ? evaluateClipTransformAt(clip, time) : defaultClipTransform()
-  let scale = Math.max(0.1, Math.min(4, (tf.scale ?? 100) / 100))
-  let tx = tf.posX ?? 0
-  const ty = tf.posY ?? 0
-  const rot = tf.rotation ?? 0
-  let opacity = Math.max(0, Math.min(1, (tf.opacity ?? 100) / 100))
-  let clipPath: string | undefined
-  let filter: string | undefined
-
-  if (
-    clip &&
-    clip.transitionType &&
-    clip.transitionType !== 'none' &&
-    (clip.transitionDuration ?? 0) > 0.05
-  ) {
-    const trDur = Math.min(clip.duration * 0.5, clip.transitionDuration ?? 0.8)
-    const local = Math.max(0, Math.min(clip.duration, time - clip.start))
-    let f = 1
-    let isEntering = false
-    if (local < trDur) {
-      f = local / trDur
-      isEntering = true
-    } else if (clip.duration - local < trDur) {
-      f = (clip.duration - local) / trDur
-    }
-    f = Math.max(0, Math.min(1, f))
-
-    if (f < 1) {
-      switch (clip.transitionType) {
-        case 'wipe-left': {
-          const pct = ((1 - f) * 100).toFixed(2)
-          clipPath = isEntering ? `inset(0 ${pct}% 0 0)` : `inset(0 0 0 ${pct}%)`
-          break
-        }
-        case 'slide-left': {
-          tx += isEntering ? (1 - f) * 100 : -(1 - f) * 100
-          break
-        }
-        case 'zoom-in': {
-          scale *= 1 + (1 - f) * 0.45
-          opacity *= f
-          break
-        }
-        case 'film-burn': {
-          const burn = 1 - f
-          filter = `brightness(${(1 + burn * 1.45).toFixed(2)}) saturate(${(1 + burn * 0.9).toFixed(2)}) sepia(${(burn * 0.45).toFixed(2)})`
-          opacity *= Math.min(1, f * 1.25)
-          break
-        }
-        case 'dip-to-black': {
-          opacity *= Math.pow(f, 1.35)
-          break
-        }
-        default: {
-          opacity *= f
-          break
-        }
-      }
-    }
-  }
-
-  return {
-    transform: `translate(${tx}%, ${ty}%) scale(${scale}) rotate(${rot}deg)`,
-    opacity,
-    clipPath,
-    filter,
-    transformOrigin: 'center center'
-  }
-}
-
-/** Video seçilmemişken gösterilen yer tutucu kare */
-function Scene() {
-  return (
-    <svg viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" className="h-full w-full">
-      <defs>
-        <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#5d7a96" />
-          <stop offset="0.55" stopColor="#c9b79a" />
-          <stop offset="1" stopColor="#d9a76a" />
-        </linearGradient>
-        <radialGradient id="sun" cx="0.5" cy="0.5" r="0.5">
-          <stop offset="0" stopColor="#fff3d0" />
-          <stop offset="1" stopColor="#fff3d0" stopOpacity="0" />
-        </radialGradient>
-      </defs>
-      <rect width="1600" height="900" fill="url(#sky)" />
-      <circle cx="1100" cy="470" r="220" fill="url(#sun)" />
-      <path d="M0 620 L260 440 L480 560 L760 380 L1060 580 L1320 450 L1600 600 V900 H0Z" fill="#5a6b73" />
-      <path d="M0 720 L300 560 L620 700 L940 540 L1280 700 L1600 620 V900 H0Z" fill="#2c3a40" />
-      <path d="M0 820 Q400 740 800 800 T1600 790 V900 H0Z" fill="#12181b" />
-    </svg>
-  )
-}
+import {
+  computeClipTransformStyle,
+  MonitorEmptyScene as Scene
+} from './monitor/MonitorHelpers'
+import { MonitorSubtitleOverlay } from './monitor/MonitorSubtitleOverlay'
+import { MonitorTransportBar } from './monitor/MonitorTransportBar'
 
 export default function Monitor({
   media,
@@ -1400,77 +1306,11 @@ export default function Monitor({
           )}
 
           {/* Zaman Damgalı Altyazı (Subtitle) Canlı Önizleme Katmanı (Karaoke / Hormozi destekli) */}
-          {subtitles.length > 0 && (() => {
-            const curT = timeRef ? timeRef.current : time
-            const activeSub = subtitles.find((s) => curT >= s.start && curT <= s.end)
-            if (!activeSub) return null
-            const posCls =
-              subtitleStyle?.position === 'top'
-                ? 'top-6'
-                : subtitleStyle?.position === 'center'
-                  ? 'top-1/2 -translate-y-1/2'
-                  : 'bottom-6'
-            const anim = subtitleStyle?.animation ?? 'none'
-            const hiColor = subtitleStyle?.highlightColor ?? '#FACC15'
-            const words = activeSub.text.split(/\s+/).filter(Boolean)
-            const progress = Math.max(
-              0,
-              Math.min(0.999, (curT - activeSub.start) / Math.max(0.05, activeSub.end - activeSub.start))
-            )
-            const activeWordIdx = Math.floor(progress * Math.max(1, words.length))
-            const bgAlpha = Math.max(0, Math.min(1, (subtitleStyle?.backgroundOpacity ?? 72) / 100))
-
-            return (
-              <div
-                data-testid="monitor-subtitle-overlay"
-                className={`pointer-events-none absolute inset-x-6 z-30 flex justify-center ${posCls}`}
-              >
-                <span
-                  style={{
-                    fontFamily: subtitleStyle?.fontFamily ?? 'Inter, system-ui, sans-serif',
-                    fontSize: `${Math.max(12, Math.round((subtitleStyle?.fontSize ?? 26) * 0.72))}px`,
-                    color: subtitleStyle?.textColor ?? '#F1F2EE',
-                    backgroundColor:
-                      bgAlpha > 0 ? (subtitleStyle?.backgroundColor ?? '#0A0B0E') : 'transparent',
-                    opacity: 1
-                  }}
-                  className={`max-w-[85%] rounded-lg px-3.5 py-1.5 text-center shadow-lg ${
-                    anim === 'hormozi' ? 'font-black uppercase tracking-wide drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)]' : 'font-medium'
-                  }`}
-                >
-                  {anim === 'none'
-                    ? activeSub.text
-                    : anim === 'typewriter'
-                      ? activeSub.text.slice(0, Math.max(1, Math.ceil(progress * activeSub.text.length)))
-                      : words.map((w, idx) => {
-                          const isCurrent = idx === activeWordIdx
-                          const isPast = idx < activeWordIdx
-                          return (
-                            <span
-                              key={`${w}-${idx}`}
-                              style={{
-                                color:
-                                  anim === 'hormozi'
-                                    ? isCurrent
-                                      ? hiColor
-                                      : subtitleStyle?.textColor ?? '#FFFFFF'
-                                    : isCurrent || isPast
-                                      ? hiColor
-                                      : subtitleStyle?.textColor ?? '#F1F2EE',
-                                transform: anim === 'hormozi' && isCurrent ? 'scale(1.14)' : undefined,
-                                display: 'inline-block',
-                                marginRight: '0.32em',
-                                transition: 'transform 80ms ease'
-                              }}
-                            >
-                              {w}
-                            </span>
-                          )
-                        })}
-                </span>
-              </div>
-            )
-          })()}
+          <MonitorSubtitleOverlay
+            subtitles={subtitles}
+            subtitleStyle={subtitleStyle}
+            currentTime={timeRef ? timeRef.current : time}
+          />
 
           {wbPickerActive && (
             <>
@@ -1526,154 +1366,30 @@ export default function Monitor({
       </div>
 
       {/* Transport: J/K/L NLE Shuttle / Play-Pause / İlerleme Çubuğu / Zaman Kodu */}
-      <div className="flex items-center gap-2 border-t border-[color:var(--border-subtle)] bg-[var(--bg-app)]/70 px-4 py-2.5">
-        {onShuttleReverse && onShuttlePause && onShuttleForward ? (
-          <div className="flex items-center gap-1 rounded-full bg-white/[0.04] p-0.5">
-            <button
-              type="button"
-              data-testid="shuttle-j-btn"
-              onClick={onShuttleReverse}
-              disabled={!media}
-              title="Geri Sarma 1x / 2x (J)"
-              className={`flex h-6 items-center gap-1 rounded-full px-2 font-mono text-[9px] font-semibold transition disabled:opacity-30 ${
-                playing && shuttleRate < 0
-                  ? 'bg-amber-400/20 text-amber-300 '
-                  : 'text-white/60 hover:bg-white/[0.08] hover:text-white'
-              }`}
-            >
-              <span>◀◀</span>
-              <span>{playing && shuttleRate < 0 ? `${Math.abs(shuttleRate)}x` : 'J'}</span>
-            </button>
-            <button
-              type="button"
-              data-testid="shuttle-k-btn"
-              onClick={onShuttlePause}
-              disabled={!media}
-              title="Durdur / Pause (K)"
-              className={`flex h-6 items-center rounded-full px-2 font-mono text-[9px] font-semibold transition disabled:opacity-30 ${
-                !playing
-                  ? 'bg-white/[0.12] text-white'
-                  : 'text-white/60 hover:bg-white/[0.08] hover:text-white'
-              }`}
-            >
-              K
-            </button>
-            <button
-              type="button"
-              data-testid="shuttle-l-btn"
-              onClick={onShuttleForward}
-              disabled={!media}
-              title="İleri Oynatma 1x / 2x / 4x (L)"
-              className={`flex h-6 items-center gap-1 rounded-full px-2 font-mono text-[9px] font-semibold transition disabled:opacity-30 ${
-                playing && shuttleRate > 0
-                  ? 'bg-[var(--accent)]/20 text-[var(--accent)] '
-                  : 'text-white/60 hover:bg-white/[0.08] hover:text-white'
-              }`}
-            >
-              <span>{playing && shuttleRate > 0 ? `${shuttleRate}x` : 'L'}</span>
-              <span>▶▶</span>
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => onSeek(Math.max(0, (timeRef ? timeRef.current : time) - 5))}
-            disabled={!media}
-            title="5 sn Geri Sar"
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[color:var(--border-subtle)] bg-[var(--bg-panel)] text-[10px] text-[var(--text-muted)] transition hover:border-white/40 hover:text-white disabled:opacity-30"
-          >
-            ↺5
-          </button>
-        )}
-        <button
-          data-testid="play-btn"
-          onClick={onToggle}
-          disabled={!media}
-          title="Oynat / Durdur (Boşluk)"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[11px] font-bold text-[var(--accent-fg)] shadow-[0_2px_12px_var(--accent-glow)] transition duration-150 hover:bg-[var(--accent-hover)] hover:shadow-[0_4px_16px_var(--accent-glow)] active:scale-95 disabled:opacity-30"
-        >
-          {playing ? '❚❚' : '▶'}
-        </button>
-        <button
-          onClick={() => onSeek(Math.min(duration, (timeRef ? timeRef.current : time) + 5))}
-          disabled={!media}
-          title="5 sn İleri Sar"
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[color:var(--border-subtle)] bg-[var(--bg-surface)] text-[10px] text-[var(--text-muted)] transition duration-150 hover:border-white/30 hover:bg-[var(--bg-elevated,#292E36)] hover:text-white active:scale-95 disabled:opacity-30"
-        >
-          5↻
-        </button>
-        <div
-          className="relative mx-1 h-5 flex-1 cursor-pointer"
-          onPointerDown={(e) => {
-            onScrubStart()
-            ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-            scrub(e)
-          }}
-          onPointerMove={(e) => e.buttons === 1 && scrub(e)}
-          onPointerUp={() => onScrubEnd()}
-          onPointerCancel={() => onScrubEnd()}
-        >
-          <div className="absolute left-0 right-0 top-1/2 h-[4px] -translate-y-1/2 rounded-full bg-white/12" />
-          <div
-            ref={progressFillRef}
-            className="absolute left-0 top-1/2 h-[4px] -translate-y-1/2 rounded-full bg-[var(--accent)]"
-            style={{ width: `${progress}%` }}
-          />
-          <div
-            ref={progressThumbRef}
-            className="absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--accent)] ring-2 ring-[var(--bg-panel)] transition-transform duration-150 hover:scale-110"
-            style={{ left: `${progress}%` }}
-          />
-        </div>
-
-        {/* Kare Yakala (Grab Still) & Rengi Kopyala / Yapıştır */}
-        {(onGrabStill || onCopyGrade || onPasteGrade) && (
-          <div className="flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--border-subtle)] bg-[var(--bg-surface)] p-0.5">
-            {onGrabStill && (
-              <button
-                type="button"
-                data-testid="grab-still-btn"
-                onClick={onGrabStill}
-                title="Anlık Kare Yakala ve Referans Galerisine Kaydet (Grab Still)"
-                className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-medium text-white/80 transition duration-150 hover:bg-white/[0.1] hover:text-white active:scale-95"
-              >
-                <span>Kare Yakala</span>
-              </button>
-            )}
-            {onCopyGrade && (
-              <button
-                type="button"
-                data-testid="copy-grade-btn"
-                onClick={onCopyGrade}
-                title="Aktif Klibin Renk Ayarlarını Kopyala (Copy Grade)"
-                className="rounded-full px-2.5 py-1 text-[10px] font-medium text-white/70 transition duration-150 hover:bg-white/[0.1] hover:text-white active:scale-95"
-              >
-                Kopyala
-              </button>
-            )}
-            {onPasteGrade && (
-              <button
-                type="button"
-                data-testid="paste-grade-btn"
-                onClick={onPasteGrade}
-                disabled={!hasCopiedGrade}
-                title="Kopyalanan Renk Ayarlarını Bu Klibe Yapıştır (Paste Grade)"
-                className={`rounded-full px-2.5 py-1 text-[10px] font-medium transition duration-150 active:scale-95 disabled:opacity-25 ${
-                  hasCopiedGrade
-                    ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
-                    : 'text-white/50'
-                }`}
-              >
-                Yapıştır
-              </button>
-            )}
-          </div>
-        )}
-
-        <span className="shrink-0 rounded-full border border-[var(--accent)]/40 bg-[var(--bg-surface)] px-3 py-1 font-mono text-[10px] tracking-wider text-[var(--accent)]">
-          <span ref={bottomTimecodeCurrentRef}>{fmt(time, media?.fps || 25)}</span>{' '}
-          <span className="text-white/30">/</span> {fmt(duration, media?.fps || 25)}
-        </span>
-      </div>
+      <MonitorTransportBar
+        media={media}
+        playing={playing}
+        shuttleRate={shuttleRate}
+        time={time}
+        timeRef={timeRef}
+        duration={duration}
+        progress={progress}
+        progressFillRef={progressFillRef}
+        progressThumbRef={progressThumbRef}
+        bottomTimecodeCurrentRef={bottomTimecodeCurrentRef}
+        hasCopiedGrade={hasCopiedGrade}
+        onToggle={onToggle}
+        onSeek={onSeek}
+        onScrubStart={onScrubStart}
+        onScrubEnd={onScrubEnd}
+        onScrubPointer={scrub}
+        onShuttleReverse={onShuttleReverse}
+        onShuttlePause={onShuttlePause}
+        onShuttleForward={onShuttleForward}
+        onGrabStill={onGrabStill}
+        onCopyGrade={onCopyGrade}
+        onPasteGrade={onPasteGrade}
+      />
     </section>
   )
 }

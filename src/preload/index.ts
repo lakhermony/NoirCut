@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { MediaItem, NoirCutApi, ProxyUpdate, UpdateStatus } from '../shared/types'
+import type {
+  MediaItem,
+  NoirCutApi,
+  ProxyUpdate,
+  TranscribeProgress,
+  UpdateStatus
+} from '../shared/types'
 
 const api: NoirCutApi = {
   getEngineInfo: () => ipcRenderer.invoke('engine:info'),
@@ -56,6 +62,12 @@ const api: NoirCutApi = {
   resumeExport: () => ipcRenderer.invoke('export:resume'),
   transcribeMedia: (mediaId, language) =>
     ipcRenderer.invoke('media:transcribe', { mediaId, language }),
+  cancelTranscribe: () => ipcRenderer.invoke('media:transcribe-cancel'),
+  onTranscribeProgress: (cb) => {
+    const handler = (_e: unknown, p: TranscribeProgress) => cb(p)
+    ipcRenderer.on('media:transcribe-progress', handler)
+    return () => ipcRenderer.removeListener('media:transcribe-progress', handler)
+  },
   archiveProject: (project) => ipcRenderer.invoke('project:archive', project),
   saveSnapshot: (dataUrl, defaultName) =>
     ipcRenderer.invoke('snapshot:save', { dataUrl, defaultName })

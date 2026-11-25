@@ -14,6 +14,14 @@ import { app, BrowserWindow, dialog } from 'electron'
 import { copyFileSync, existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { cpus, tmpdir } from 'os'
 import { join, resolve } from 'path'
+import { resolveVaapiDevice } from './vaapi-device'
+import {
+  buildClipMaskFilter,
+  buildClipSpeedFilter,
+  buildSubtitleOverlayFilter,
+  escapeFilterPath,
+  selectSubtitleOverlays
+} from './export-filters'
 
 function resolveExportFfmpegPath(fallbackPath: string): string {
   if (process.platform === 'win32') {
@@ -211,8 +219,6 @@ export async function exportTimeline(
   const filterParts: string[] = []
 
   let tempLutDir: string | null = null
-  const escapeFilterPath = (p: string): string =>
-    p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'")
   const bakedLutCache = new Map<string, string>()
 
   /** Trim, hız, LUT renk derecelendirme, Halation/Mist/NoirFilm ve grain katmanını oluşturan ortak yardımcı. */
@@ -222,14 +228,9 @@ export async function exportTimeline(
   ): { streamLabel: string; pendingChain: string[] } => {
     const mediaItem = getMediaItem(c.mediaId)
     const inIdx = mediaInputIdx.get(c.mediaId)!
-    const speedFactor = effectiveAverageSpeedFactor(c)
-    const srcDur = Math.max(0.05, c.duration * speedFactor)
-    const clipIn = mediaItem?.mediaKind === 'image' ? 0 : c.in
+    const speedRes = buildClipSpeedFilter(c, mediaItem?.mediaKind === 'image')
 
-    const vChain: string[] = [
-      `trim=start=${clipIn.toFixed(4)}:duration=${srcDur.toFixed(4)}`,
-      `setpts=(PTS-STARTPTS)/${speedFactor.toFixed(4)}`
-    ]
+    const vChain: string[] = [speedRes.trimFilter, speedRes.setptsFilter]
     if (c.reverse && mediaItem?.mediaKind !== 'image') {
       vChain.push('reverse')
     }
@@ -252,7 +253,7 @@ export async function exportTimeline(
         bakedLutCache.set(gradeKey, cubeFileName)
       }
       // tempLutDir çalışma dizini olarak verildiği için göreli dosya adı Windows/ASCII-dışı yollardaki ':' sorununu önler
-      vChain.push(`format=rgb24`, `lut3d=file='${escapeFilterPath(cubeFileName)}':interp=trilinear`)
+      vChain.push(`format=rgb24`, `lut3d=file=${escapeFilterPath(cubeFileName)}:interp=trilinear`)
 
       const nf = c.grade.noirFilm
       const nfInt = Math.min(1, Math.max(0, (nf?.lookIntensity ?? 100) / 100))
@@ -565,33 +566,12 @@ export async function exportTimeline(
 
     // Maskeleme / Sansür / Vignette (Power Window)
     let postMaskLabel: string | null = null
-    if (c.mask?.enabled) {
-      const m = c.mask
-      const strength = Math.max(5, Math.min(100, m.strength ?? 65))
-      if (m.mode === 'vignette') {
-        vChain.push(`vignette=angle=${((strength / 100) * 1.25).toFixed(3)}`)
-      } else {
-        const cw = Math.max(16, Math.round(((m.w ?? 32) / 100) * width) & ~1)
-        const ch = Math.max(16, Math.round(((m.h ?? 32) / 100) * height) & ~1)
-        const cx = Math.max(0, Math.min(width - cw, Math.round(((m.x ?? 50) / 100) * width - cw / 2)))
-        const cy = Math.max(0, Math.min(height - ch, Math.round(((m.y ?? 50) / 100) * height - ch / 2)))
-        const pre = `mpre${segCounter}`
-        const bg = `mbg${segCounter}`
-        const fg = `mfg${segCounter}`
-        const fx = `mfx${segCounter}`
-        vChain.push(`trim=duration=${c.duration.toFixed(4)}`, `setpts=PTS-STARTPTS`, `format=yuv420p`)
-        filterParts.push(`${streamLabel}${vChain.join(',')}[${pre}]`)
-        const blurFilter =
-          m.mode === 'mosaic'
-            ? `scale=w=max(4\\,${Math.round(cw / Math.max(4, Math.round(strength / 4)))}):h=-1:flags=neighbor,scale=${cw}:${ch}:flags=neighbor`
-            : `boxblur=${Math.max(2, Math.round((strength / 100) * 28))}:2`
-        filterParts.push(
-          `[${pre}]split[${bg}][${fg}]`,
-          `[${fg}]crop=${cw}:${ch}:${cx}:${cy},${blurFilter}[${fx}]`,
-          `[${bg}][${fx}]overlay=${cx}:${cy}[${lbl}]`
-        )
-        postMaskLabel = lbl
-      }
+    const maskRes = buildClipMaskFilter(c, streamLabel, vChain, lbl, segCounter, width, height)
+    if (maskRes.inlineVignetteFilter) {
+      vChain.push(maskRes.inlineVignetteFilter)
+    } else if (maskRes.appliedAsPostChain) {
+      filterParts.push(...maskRes.filterParts)
+      postMaskLabel = lbl
     }
 
     if (!postMaskLabel) {
@@ -743,10 +723,7 @@ export async function exportTimeline(
   })
 
   // 1c) Altyazı (Burn-In Subtitles) PNG katmanları
-  const subtitleOverlays =
-    settings.burnInSubtitles !== false && Array.isArray(req.subtitleOverlays)
-      ? req.subtitleOverlays
-      : []
+  const subtitleOverlays = selectSubtitleOverlays(settings.burnInSubtitles, req.subtitleOverlays)
   subtitleOverlays.forEach((sub, idx) => {
     const startSec = Math.max(0, sub.start - rangeOffset)
     const endSec = Math.min(total, sub.end - rangeOffset)
@@ -759,15 +736,9 @@ export async function exportTimeline(
     const inIdx = nextInputIdx++
     inputArgs.push('-loop', '1', '-t', total.toFixed(4), '-i', pngPath)
 
-    const sStr = startSec.toFixed(4)
-    const eStr = endSec.toFixed(4)
-    const subLbl = `sub${idx}`
-    const nextVLabel = `[vsub${idx}]`
-    filterParts.push(`[${inIdx}:v]format=rgba[${subLbl}]`)
-    filterParts.push(
-      `${currentVLabel}[${subLbl}]overlay=x=0:y=0:enable='between(t,${sStr},${eStr})'${nextVLabel}`
-    )
-    currentVLabel = nextVLabel
+    const subOverlay = buildSubtitleOverlayFilter(currentVLabel, inIdx, idx, startSec, endSec)
+    filterParts.push(...subOverlay.filterParts)
+    currentVLabel = subOverlay.nextVLabel
   })
 
   filterParts.push(`${currentVLabel}format=yuv420p[vout]`)
@@ -943,7 +914,20 @@ export async function exportTimeline(
   const engine = await getEngineInfo()
   const baseBin = resolveExportFfmpegPath(engine.ffmpegPath)
 
-  const avail = engine.availableEncoders ?? ['libx264']
+  let avail = engine.availableEncoders ?? ['libx264']
+  let vaapiDevice: string | null = null
+  if (avail.includes('h264_vaapi')) {
+    vaapiDevice = await resolveVaapiDevice({
+      ffmpegBin: engine.gpuFfmpegPath ?? baseBin
+    })
+    if (!vaapiDevice) {
+      console.warn(
+        '[NoirCut] Çalışan VAAPI cihazı (/dev/dri/renderD*) bulunamadı; h264_vaapi devre dışı bırakıldı ve libx264 kullanılacak.'
+      )
+      avail = avail.filter((e) => e !== 'h264_vaapi')
+      if (avail.length === 0) avail = ['libx264']
+    }
+  }
   const reqEnc = settings.encoder ?? 'auto'
   const wantHevcCodec = settings.codec === 'h265'
   const hwEncoder: VideoEncoderId =
@@ -971,8 +955,8 @@ export async function exportTimeline(
     const bin = enc !== 'libx264' && engine.gpuFfmpegPath ? engine.gpuFfmpegPath : baseBin
 
     const preArgs: string[] = ['-y', '-v', 'error', '-progress', 'pipe:1', '-nostats']
-    if (isVaapi) {
-      preArgs.push('-vaapi_device', '/dev/dri/renderD128')
+    if (isVaapi && vaapiDevice) {
+      preArgs.push('-vaapi_device', vaapiDevice)
     }
 
     const wantHevc = settings.codec === 'h265' || enc === 'libx265' || enc === 'hevc_nvenc'

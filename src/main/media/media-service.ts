@@ -115,6 +115,20 @@ function nodeStreamToWeb(filePath: string, start: number, end: number): Readable
   })
 }
 
+export function resolveAllowedMediaOrigin(requestOrigin: string | null): string {
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  if (devUrl) {
+    try {
+      const devOrigin = new URL(devUrl).origin
+      if (!requestOrigin || requestOrigin === devOrigin) return devOrigin
+    } catch {
+      // yoksay
+    }
+  }
+  if (requestOrigin === 'file://' || requestOrigin === 'null') return requestOrigin
+  return `${MEDIA_SCHEME}://media`
+}
+
 /** app 'ready' olduktan sonra çağrılmalı (HTTP 206 Byte-Range destekli medya sunucusu). */
 export function registerMediaProtocol(): void {
   protocol.handle(MEDIA_SCHEME, async (request) => {
@@ -131,8 +145,10 @@ export function registerMediaProtocol(): void {
     }
 
     const contentType = MIME_BY_EXT[extname(filePath).toLowerCase()] ?? 'application/octet-stream'
+    const allowedOrigin = resolveAllowedMediaOrigin(request.headers.get('origin'))
     const baseHeaders: Record<string, string> = {
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': allowedOrigin,
+      Vary: 'Origin',
       'Accept-Ranges': 'bytes',
       'Content-Type': contentType
     }
