@@ -10,7 +10,7 @@
 [![CI](https://github.com/lakhermony/NoirCut/actions/workflows/ci.yml/badge.svg)](https://github.com/lakhermony/NoirCut/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Linux_AppImage_%7C_Windows_x64-1B1E24?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
 [![Teknoloji](https://img.shields.io/badge/Electron_45-React_19_%7C_WebGL2_%7C_WebAudio_%7C_FFmpeg-242830?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
-[![Lisans](https://img.shields.io/badge/lisans-MIT-B7E36A?style=for-the-badge&labelColor=101114)](LICENSE)
+[![Lisans](https://img.shields.io/badge/lisans-GNU_GPL_v3-B7E36A?style=for-the-badge&labelColor=101114)](LICENSE)
 
 *Aboneliksiz, bulut kilitsiz, Electron 45 ana süreci, yerel WebGL2 GPU renk motoru, Web Audio API (`NoirAudio Engine`) ve gömülü/sistem FFmpeg gücüyle çalışan modern çok kanallı doğrusal olmayan video düzenleyici (NLE).*
 
@@ -216,7 +216,9 @@ docs/
 - **[Son Kullanıcı Kullanım Kılavuzu](docs/KULLANIM_KILAVUZU.md)**
 - **[Değişiklik Günlüğü (CHANGELOG)](CHANGELOG.md)**
 - **[Katkıda Bulunma Rehberi (CONTRIBUTING)](CONTRIBUTING.md)**
-- **[Lisans (MIT)](LICENSE)**
+- **[Lisans (GNU GPL v3)](LICENSE)**
+
+> **Lisans & Marka Notu:** NoirCut kaynak kodu **GNU General Public License v3.0 (`GPL-3.0-only`)** kapsamında lisanslanmıştır. **NoirCut** adı ile özel logo ve marka varlıkları (`build/icon.*`, `resources/icon.png`, `noircut-logo.png`) münhasıran proje sahibinin mülkiyetindedir.
 
 ---
 
