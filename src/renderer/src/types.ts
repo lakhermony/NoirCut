@@ -27,8 +27,8 @@ export const THEME_OPTIONS: {
   {
     id: 'nordic-iris',
     label: 'Nordic Iris',
-    swatch: '#7C918D',
-    swatches: ['#7C918D', '#586F79', '#899A83']
+    swatch: '#748982',
+    swatches: ['#748982', '#435453', '#8D947A']
   }
 ]
 
