@@ -12,6 +12,7 @@ export type ThemeId =
   | 'tungsten'
   | 'noir-crimson'
   | 'nordic-iris'
+  | 'frosted-sage'
 
 export const THEME_OPTIONS: {
   id: ThemeId
@@ -29,6 +30,12 @@ export const THEME_OPTIONS: {
     label: 'Nordic Iris',
     swatch: '#748982',
     swatches: ['#748982', '#435453', '#8D947A']
+  },
+  {
+    id: 'frosted-sage',
+    label: 'Frosted Sage',
+    swatch: '#A5CDBB',
+    swatches: ['#A5CDBB', '#7C918D', '#586F79']
   }
 ]
 

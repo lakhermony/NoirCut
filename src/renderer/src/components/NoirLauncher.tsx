@@ -10,7 +10,7 @@ import type {
 const DEFAULT_CHANGELOG = [
   'Kesintisiz Çift Tamponlu Oynatma (Gapless Dual-Video Pre-roll): 1.5sn önceden gizli tampona kare hazırlama, sıfır siyah kare ile kesintisiz WebGL2 geçişi ve 12px hassas mıknatıs / sağ tık Boşluğu Kapat (Ripple Delete Gap).',
   'Çoklu Video & Ses Kanalları (V1..Vn, A1..An): kanallar arası sürükle-bırak geçişi, +V / +A dinamik kanal ekleme ve eşzamanlı üst video kompozisyonu.',
-  'Nordic Iris & NoirCut Kırmızısı: soğuk adaçayı/gri-yeşil ve karanlık oda safelight estetiğine uygun 6 stüdyo teması.',
+  'Frosted Sage & Nordic Iris: soğuk adaçayı/gri-yeşil ve karanlık oda safelight estetiğine uygun 7 stüdyo teması.',
   'NoirFilm Studio: 12 kategoride sinematik LUT kütüphanesi, 35mm/16mm/8mm dijital film emülasyonu, organik film greni ve yığılabilir Halation / Bloom / Diffusion / Mist ışık motorları.'
 ]
 

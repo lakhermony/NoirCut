@@ -151,6 +151,40 @@
   --clip-audio: color-mix(in srgb, #8d947a 20%, #131a1a);
 }
 
+:root[data-theme='frosted-sage'] {
+  --bg-app: #151b1c;
+  --bg-panel: #202829;
+  --bg-surface: #202829;
+  --bg-elevated: #293334;
+  --bg-glass: rgba(41, 51, 52, 0.84);
+  --border-subtle: #394847;
+  --accent: #a5cdbb;
+  --accent-hover: #b8dacb;
+  --accent-fg: #151b1c;
+  --accent-primary: #7c918d;
+  --accent-secondary: #586f79;
+  --accent-tertiary: #899a83;
+  --accent-soft: rgba(165, 205, 187, 0.16);
+  --accent-glow: rgba(165, 205, 187, 0.24);
+  --text-primary: #e4ece8;
+  --text-secondary: #9baaa5;
+  --text-muted: #9baaa5;
+  --text-dim: #627370;
+  --clip-video: color-mix(in srgb, #586f79 44%, #202829);
+  --clip-header: color-mix(in srgb, #586f79 56%, #293334);
+  --clip-tray: color-mix(in srgb, #899a83 16%, #202829);
+  --clip-border-default: color-mix(in srgb, #7c918d 45%, #394847);
+  --clip-border-hover: #a5cdbb;
+  --clip-border-selected: #7c918d;
+  --clip-divider: #394847;
+  --clip-audio: color-mix(in srgb, #899a83 22%, #202829);
+}
+
+:root[data-theme='frosted-sage'] :focus-visible {
+  outline: 1.5px solid #a5cdbb;
+  outline-offset: 1px;
+}
+
 html,
 body,
 #root {
