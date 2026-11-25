@@ -351,20 +351,25 @@ export default function CommandIsland({
         >
           {THEME_OPTIONS.map((t) => {
             const active = theme === t.id
+            const bgStyle = t.swatches
+              ? {
+                  background: `linear-gradient(135deg, ${t.swatches[0]} 0 34%, ${t.swatches[1]} 34% 67%, ${t.swatches[2]} 67% 100%)`
+                }
+              : { backgroundColor: t.swatch }
             return (
               <button
                 key={t.id}
                 type="button"
                 data-testid={`theme-btn-${t.id}`}
                 onClick={() => onThemeChange(t.id)}
-                title={t.label}
+                title={t.swatches ? `${t.label} (${t.swatches.join(' · ')})` : t.label}
                 aria-label={`Tema: ${t.label}`}
                 className={`h-2.5 w-2.5 rounded-full transition-transform duration-150 ${
                   active
                     ? 'scale-125 ring-1 ring-white ring-offset-1 ring-offset-[var(--bg-surface)]'
                     : 'opacity-60 hover:scale-110 hover:opacity-100'
                 }`}
-                style={{ backgroundColor: t.swatch }}
+                style={bgStyle}
               />
             )
           })}

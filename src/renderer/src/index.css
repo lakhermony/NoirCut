@@ -123,6 +123,34 @@
   --clip-audio: #1f1a23;
 }
 
+:root[data-theme='nordic-iris'] {
+  --bg-app: #0e1111;
+  --bg-panel: #151a1b;
+  --bg-surface: #151a1b;
+  --bg-elevated: #1d2425;
+  --bg-glass: rgba(29, 36, 37, 0.78);
+  --border-subtle: #283335;
+  --accent: #7c918d;
+  --accent-hover: #8fa5a1;
+  --accent-fg: #0e1111;
+  --accent-secondary: #586f79;
+  --accent-tertiary: #899a83;
+  --accent-soft: rgba(124, 145, 141, 0.16);
+  --accent-glow: rgba(124, 145, 141, 0.24);
+  --text-primary: #e4eae9;
+  --text-secondary: #8b9997;
+  --text-muted: #8b9997;
+  --text-dim: #556361;
+  --clip-video: color-mix(in srgb, #586f79 26%, #151a1b);
+  --clip-header: color-mix(in srgb, #586f79 34%, #1d2425);
+  --clip-tray: color-mix(in srgb, #899a83 12%, #151a1b);
+  --clip-border-default: color-mix(in srgb, #7c918d 38%, rgba(255, 255, 255, 0.08));
+  --clip-border-hover: color-mix(in srgb, #7c918d 68%, rgba(255, 255, 255, 0.16));
+  --clip-border-selected: #7c918d;
+  --clip-divider: #283335;
+  --clip-audio: color-mix(in srgb, #899a83 18%, #151a1b);
+}
+
 html,
 body,
 #root {
@@ -167,7 +195,8 @@ body {
 
 @layer components {
   .glass {
-    background: var(--bg-panel);
+    background: var(--bg-glass, var(--bg-panel));
+    backdrop-filter: blur(16px);
     border: 1px solid var(--border-subtle);
     border-radius: 20px;
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.24);
