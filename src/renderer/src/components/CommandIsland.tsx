@@ -98,6 +98,28 @@ export default function CommandIsland({
 }) {
   const refs = useRef<Record<string, HTMLButtonElement | null>>({})
   const [ind, setInd] = useState({ left: 0, width: 0, visible: false })
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false)
+  const themeMenuRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!themeMenuOpen) return
+    const onDocDown = (e: MouseEvent) => {
+      if (themeMenuRef.current && !themeMenuRef.current.contains(e.target as Node)) {
+        setThemeMenuOpen(false)
+      }
+    }
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') setThemeMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDocDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [themeMenuOpen])
+
+  const activeThemeOpt = THEME_OPTIONS.find((t) => t.id === theme) ?? THEME_OPTIONS[0]
 
   useEffect(() => {
     const update = () => {
@@ -344,35 +366,74 @@ export default function CommandIsland({
           <span>{exportSettings.fps} fps</span>
         </div>
 
-        <div
-          data-testid="theme-switcher"
-          className="flex items-center gap-1.5 rounded-full bg-[var(--bg-surface)] px-2.5 py-1.5"
-          title="Tema Seç"
-        >
-          {THEME_OPTIONS.map((t) => {
-            const active = theme === t.id
-            const bgStyle = t.swatches
-              ? {
-                  background: `linear-gradient(135deg, ${t.swatches[0]} 0 34%, ${t.swatches[1]} 34% 67%, ${t.swatches[2]} 67% 100%)`
-                }
-              : { backgroundColor: t.swatch }
-            return (
-              <button
-                key={t.id}
-                type="button"
-                data-testid={`theme-btn-${t.id}`}
-                onClick={() => onThemeChange(t.id)}
-                title={t.swatches ? `${t.label} (${t.swatches.join(' · ')})` : t.label}
-                aria-label={`Tema: ${t.label}`}
-                className={`h-2.5 w-2.5 rounded-full transition-transform duration-150 ${
-                  active
-                    ? 'scale-125 ring-1 ring-white ring-offset-1 ring-offset-[var(--bg-surface)]'
-                    : 'opacity-60 hover:scale-110 hover:opacity-100'
-                }`}
-                style={bgStyle}
-              />
-            )
-          })}
+        <div ref={themeMenuRef} data-testid="theme-switcher" className="relative">
+          <button
+            type="button"
+            data-testid="theme-switcher-btn"
+            onClick={() => setThemeMenuOpen((o) => !o)}
+            title={`Tema: ${activeThemeOpt.label}`}
+            aria-haspopup="listbox"
+            aria-expanded={themeMenuOpen}
+            className="flex items-center gap-1.5 rounded-full border border-[color:var(--border-subtle)] bg-[var(--bg-surface)] px-2.5 py-1 text-[10px] font-medium text-[var(--text-primary)] transition hover:border-[var(--accent)]/60"
+          >
+            <span
+              className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/20"
+              style={{ backgroundColor: activeThemeOpt.swatch }}
+            />
+            <span className="hidden max-w-[96px] truncate xl:inline">{activeThemeOpt.label}</span>
+            <span className="text-[8px] text-[var(--text-muted)]">▾</span>
+          </button>
+
+          {themeMenuOpen && (
+            <div
+              role="listbox"
+              aria-label="Tema Seçenekleri"
+              className="glass absolute right-0 top-full z-50 mt-2 w-60 rounded-xl border border-[color:var(--border-subtle)] bg-[var(--bg-elevated)] p-1.5 shadow-2xl"
+            >
+              <div className="mb-1 flex items-center justify-between px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                <span>Temalar</span>
+                <span>Dark</span>
+              </div>
+              <div className="space-y-0.5">
+                {THEME_OPTIONS.map((t) => {
+                  const active = theme === t.id
+                  const previewColors = t.swatches ?? [t.swatch]
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      data-testid={`theme-btn-${t.id}`}
+                      onClick={() => {
+                        onThemeChange(t.id)
+                        setThemeMenuOpen(false)
+                      }}
+                      className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] transition ${
+                        active
+                          ? 'bg-[var(--accent-soft)] font-semibold text-[var(--text-primary)] ring-1 ring-[var(--accent)]/50'
+                          : 'text-[var(--text-muted)] hover:bg-white/[0.06] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2 truncate">
+                        <span className="truncate">{t.label}</span>
+                      </span>
+                      <span className="flex shrink-0 items-center gap-1">
+                        {previewColors.map((hex) => (
+                          <span
+                            key={hex}
+                            title={hex}
+                            className="h-2.5 w-2.5 rounded-full ring-1 ring-white/15"
+                            style={{ backgroundColor: hex }}
+                          />
+                        ))}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {onOpenAbout && (

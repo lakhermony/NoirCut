@@ -848,7 +848,31 @@ async function runAllTests() {
     assert.equal(twFrames[twFrames.length - 1].visibleCharCount, subSeg.text.length)
     console.log('[PASS] 14/14 Karaoke/Hormozi/Typewriter Kelime Zamanlaması Export Kareleri')
 
-    console.log('\nALL 14 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
+    // 15. Theme Registry & Frosted Sage Integration
+    const typesSrc = readFileSync(resolve('src/renderer/src/types.ts'), 'utf8')
+    const cssSrc = readFileSync(resolve('src/renderer/src/index.css'), 'utf8')
+    const helpersSrc = readFileSync(resolve('src/renderer/src/lib/app-helpers.ts'), 'utf8')
+    for (const tid of [
+      'noir-green',
+      'monochrome',
+      'midnight-blue',
+      'tungsten',
+      'noir-crimson',
+      'nordic-iris',
+      'frosted-sage'
+    ]) {
+      assert.ok(typesSrc.includes(`id: '${tid}'`), `Theme registry eksik: ${tid}`)
+      assert.ok(cssSrc.includes(`:root[data-theme='${tid}']`), `CSS tema bloğu eksik: ${tid}`)
+    }
+    assert.ok(typesSrc.includes("label: 'Frosted Sage'"))
+    assert.ok(typesSrc.includes("category: 'Dark'"))
+    for (const hex of ['#7C918D', '#586F79', '#899A83', '#A5CDBB']) {
+      assert.ok(typesSrc.includes(hex), `Frosted Sage önizleme rengi eksik: ${hex}`)
+    }
+    assert.ok(helpersSrc.includes('THEME_OPTIONS.some((t) => t.id === saved)'))
+    console.log('[PASS] 15/15 Theme Registry & Frosted Sage Entegrasyonu')
+
+    console.log('\nALL 15 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
   } finally {
     rmSync(TEMP_ROOT, { recursive: true, force: true })
   }
