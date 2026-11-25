@@ -31,7 +31,7 @@
 
 ---
 
-## Özellik Envanteri ve Olgunluk Durumu (v1.0.5)
+## Özellik Envanteri ve Olgunluk Durumu (v1.0.6)
 
 Her özelliğin mevcut gerçek durum etiketi aşağıda şeffaf biçimde belirtilmiştir:
 - `STABLE`: Test edilmiş ve tam kapsamlı çalışıyor.
@@ -164,7 +164,7 @@ npm test
 
 ### Masaüstü Paketi Oluşturma
 ```bash
-# Linux AppImage (dist/NoirCut-1.0.5.AppImage)
+# Linux AppImage (dist/NoirCut-1.0.6.AppImage)
 npm run dist:linux
 
 # Windows Portable & NSIS Setup (resources/bin/win/ffmpeg.exe mevcutsa)
