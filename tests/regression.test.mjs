@@ -657,6 +657,20 @@ async function runAllTests() {
     console.log('[PASS] 11/14 Gerçek FFmpeg Export Eşliği (Speed Ramp, Power Window Mask, Altyazı Burn-In)')
 
     // 12. Adversarial Filter Escaping (drawtext + lut3d path)
+    const hasDrawtext = (bin) => {
+      try {
+        const out = execFileSync(bin, ['-hide_banner', '-filters'], { encoding: 'utf8' })
+        return /\bdrawtext\b/.test(out)
+      } catch {
+        return false
+      }
+    }
+    const drawtextBin = hasDrawtext(ffmpegPath)
+      ? ffmpegPath
+      : hasDrawtext('ffmpeg')
+        ? 'ffmpeg'
+        : null
+
     const adversarialTexts = [
       'Çağrı\'nın "kahve" : %{pts} 50%',
       'C:\\Users\\Ömer\\a b.mp4',
@@ -669,8 +683,10 @@ async function runAllTests() {
     for (let idx = 0; idx < adversarialTexts.length; idx++) {
       const txt = adversarialTexts[idx]
       const escaped = escapeDrawtextText(txt)
+      assert.ok(!escaped.includes('\n'), 'escapeDrawtextText yeni satır içermemeli')
+      if (!drawtextBin) continue
       const outRaw = join(MEDIA_DIR, `esc-${idx}.rgb`)
-      execFileSync(ffmpegPath, [
+      execFileSync(drawtextBin, [
         '-y',
         '-v',
         'error',
