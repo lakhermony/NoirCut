@@ -6,7 +6,7 @@
 
 **Sinema Karanlık Odası & Profesyonel Masaüstü Video Kurgu / Post-Prodüksiyon Sistemi**
 
-[![Sürüm](https://img.shields.io/badge/sürüm-v1.0.5_Studio-B7E36A?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
+[![Sürüm](https://img.shields.io/badge/sürüm-v1.0.6_Studio-B7E36A?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
 [![CI](https://github.com/lakhermony/NoirCut/actions/workflows/ci.yml/badge.svg)](https://github.com/lakhermony/NoirCut/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Linux_AppImage_%7C_Windows_x64-1B1E24?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
 [![Teknoloji](https://img.shields.io/badge/Electron_45-React_19_%7C_WebGL2_%7C_WebAudio_%7C_FFmpeg-242830?style=for-the-badge&labelColor=101114)](https://github.com/lakhermony/NoirCut)
@@ -121,25 +121,25 @@ flowchart LR
 
 ---
 
-## İndirme ve Paket Boyutları (v1.0.5)
+## İndirme ve Paket Boyutları (v1.0.6)
 
-Tüm kurulum paketleri [Releases (v1.0.5)](https://github.com/lakhermony/NoirCut/releases/tag/v1.0.5) sayfasından indirilebilir:
+Tüm kurulum paketleri [Releases (v1.0.6)](https://github.com/lakhermony/NoirCut/releases/tag/v1.0.6) sayfasından indirilebilir:
 
 | Platform / Paket | Dosya Adı | Mimari |
 | :--- | :--- | :--- |
-| **Linux Taşınabilir (AppImage)** | `NoirCut-1.0.5.AppImage` | Electron 45 (`x64`) |
-| **Windows Kurulum (NSIS)** | `NoirCut.Setup.1.0.5.exe` | Electron 45 (`x64`) |
-| **Windows Taşınabilir** | `NoirCut.1.0.5.exe` | Electron 45 (`x64`) |
+| **Linux Taşınabilir (AppImage)** | `NoirCut-1.0.6.AppImage` | Electron 45 (`x64`) |
+| **Windows Kurulum (NSIS)** | `NoirCut.Setup.1.0.6.exe` | Electron 45 (`x64`) |
+| **Windows Taşınabilir** | `NoirCut.1.0.6.exe` | Electron 45 (`x64`) |
 
 ## Kurulum ve Geliştirme
 
 ### Son Kullanıcı Kurulumu
-- **Linux (x64 — AppImage):** [Releases](https://github.com/lakhermony/NoirCut/releases/tag/v1.0.5) sayfasından `NoirCut-1.0.5.AppImage` dosyasını indirin, çalıştırma izni verin ve başlatın:
+- **Linux (x64 — AppImage):** [Releases](https://github.com/lakhermony/NoirCut/releases/tag/v1.0.6) sayfasından `NoirCut-1.0.6.AppImage` dosyasını indirin, çalıştırma izni verin ve başlatın:
   ```bash
-  chmod +x NoirCut-1.0.5.AppImage
-  ./NoirCut-1.0.5.AppImage
+  chmod +x NoirCut-1.0.6.AppImage
+  ./NoirCut-1.0.6.AppImage
   ```
-- **Windows (x64):** `NoirCut.Setup.1.0.5.exe` veya taşınabilir `NoirCut.1.0.5.exe` ile çalıştırılabilir.
+- **Windows (x64):** `NoirCut.Setup.1.0.6.exe` veya taşınabilir `NoirCut.1.0.6.exe` ile çalıştırılabilir.
 
 ### Geliştirici Kurulumu ve Testler
 
@@ -247,6 +247,6 @@ The **NoirCut** name, wordmark, and custom logo/branding assets (`build/icon.png
 
 <div align="center">
 
-**NoirCut Studio v1.0.5** · Copyright © 2026 NoirCut Studio
+**NoirCut Studio v1.0.6** · Copyright © 2026 NoirCut Studio
 
 </div>
