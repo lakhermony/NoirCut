@@ -16,6 +16,16 @@ import {
 } from '../../../shared/color'
 import type { Lut3D } from '../../../shared/lut'
 import { hexToRgb01 } from '../../../shared/noirfilm'
+import {
+  HALATION_GAIN,
+  HALATION_TINT,
+  analogGrainParams,
+  analogHalationParams,
+  defaultAnalogFilm,
+  isAnalogFilmActive,
+  isAnalogGrainActive,
+  isAnalogHalationActive
+} from '../../../shared/analog-film'
 
 const VERT_SRC = `#version 300 es
 in vec2 a_pos;
@@ -464,6 +474,109 @@ void main() {
   outColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }`
 
+const FBO_VERT_SRC = `#version 300 es
+in vec2 a_pos;
+out vec2 v_uv;
+void main() {
+  v_uv = a_pos * 0.5 + 0.5;
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}`
+
+const BLUR_FRAG_SRC = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+out vec4 outColor;
+uniform sampler2D u_tex;
+uniform vec2 u_texelDir;
+uniform float u_extract;
+uniform float u_threshold;
+
+vec3 sampleSrc(vec2 uv) {
+  vec3 c = texture(u_tex, clamp(uv, 0.0, 1.0)).rgb;
+  if (u_extract > 0.5) {
+    float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    float hi = max(luma - u_threshold, 0.0) / max(0.02, 1.0 - u_threshold);
+    return c * hi;
+  }
+  return c;
+}
+
+void main() {
+  float w[5] = float[5](0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216);
+  vec3 sum = sampleSrc(v_uv) * w[0];
+  for (int i = 1; i < 5; i++) {
+    vec2 off = u_texelDir * float(i);
+    sum += sampleSrc(v_uv + off) * w[i];
+    sum += sampleSrc(v_uv - off) * w[i];
+  }
+  outColor = vec4(sum, 1.0);
+}`
+
+const POST_FRAG_SRC = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+out vec4 outColor;
+uniform sampler2D u_gradeTex;
+uniform sampler2D u_halTex;
+uniform sampler2D u_stillTex;
+uniform float u_halActive;
+uniform float u_halIntensity;
+uniform vec3 u_halTint;
+uniform float u_grainActive;
+uniform float u_grainAmp;
+uniform float u_grainCell;
+uniform float u_grainRoughness;
+uniform vec2 u_res;
+uniform float u_time;
+uniform float u_hasStill;
+uniform float u_compareMode;
+uniform float u_wipe;
+
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+void main() {
+  // Referans kare (FBO_Still) ile bölünmüş ekran karşılaştırması
+  if (u_hasStill > 0.5) {
+    float yTopDown = 1.0 - v_uv.y;
+    if (u_compareMode > 2.5 && u_compareMode < 3.5 && v_uv.x < 0.5) {
+      outColor = texture(u_stillTex, vec2(v_uv.x * 2.0, v_uv.y));
+      return;
+    }
+    if ((u_compareMode > 0.5 && u_compareMode < 1.5 && v_uv.x < u_wipe) ||
+        (u_compareMode > 1.5 && u_compareMode < 2.5 && yTopDown < u_wipe)) {
+      outColor = texture(u_stillTex, v_uv);
+      return;
+    }
+  }
+
+  vec3 c = texture(u_gradeTex, v_uv).rgb;
+
+  // 1) Fiziksel Halation (ayrılabilir Gauss blur + kırmızı-turuncu tint + screen blend)
+  if (u_halActive > 0.5) {
+    vec3 hal = texture(u_halTex, v_uv).rgb * u_halTint;
+    vec3 screened = 1.0 - (1.0 - c) * (1.0 - clamp(hal * u_halIntensity, 0.0, 1.0));
+    c = clamp(screened, 0.0, 1.0);
+  }
+
+  // 2) Parlaklığa duyarlı prosedürel film greni (gölge/orta ton güçlü, highlight zayıf)
+  if (u_grainActive > 0.5 && u_grainAmp > 0.0005) {
+    vec2 cellPx = floor((v_uv * u_res) / max(1.0, u_grainCell));
+    float seed = floor(u_time * 24.0);
+    float n0 = hash12(cellPx + vec2(seed * 17.3, seed * 31.7)) - 0.5;
+    float n1 = hash12(cellPx * 1.7 + vec2(seed * 9.1, seed * 47.2)) - 0.5;
+    float n = mix(n1 * 0.65, n0, 0.35 + 0.65 * u_grainRoughness) * 2.0;
+    float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    float toneWeight = max(0.08, 1.0 - 0.92 * luma * luma);
+    c = clamp(c + vec3(n * u_grainAmp * toneWeight), 0.0, 1.0);
+  }
+
+  outColor = vec4(c, 1.0);
+}`
+
 function compileShader(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
   const s = gl.createShader(type)
   if (!s) throw new Error('WebGL shader oluşturulamadı')
@@ -482,9 +595,21 @@ export type PlaybackQuality = 1 | 0.5 | 0.25
 export class WebGLColorEngine {
   private gl: WebGL2RenderingContext
   private program: WebGLProgram
+  private blurProg: WebGLProgram
+  private postProg: WebGLProgram
   private videoTex: WebGLTexture
   private lutTex: WebGLTexture
   private curveTex: WebGLTexture
+  private fboGrade: WebGLFramebuffer | null = null
+  private texGrade: WebGLTexture | null = null
+  private fboBlurH: WebGLFramebuffer | null = null
+  private texBlurH: WebGLTexture | null = null
+  private fboBlurV: WebGLFramebuffer | null = null
+  private texBlurV: WebGLTexture | null = null
+  private fboW = 0
+  private fboH = 0
+  private stillTex: WebGLTexture | null = null
+  private hasStill = false
   private vao: WebGLVertexArrayObject
   private vbo: WebGLBuffer
   private uploadedLutKey = ''
@@ -496,6 +621,8 @@ export class WebGLColorEngine {
   private lastUploadedVideoTime = -1
 
   private loc: Record<string, WebGLUniformLocation | null>
+  private blurLoc: Record<string, WebGLUniformLocation | null>
+  private postLoc: Record<string, WebGLUniformLocation | null>
 
   constructor(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', {
@@ -616,6 +743,137 @@ export class WebGLColorEngine {
     for (const n of names) {
       this.loc[n] = gl.getUniformLocation(prog, n)
     }
+
+    const linkPass = (fragSrc: string): WebGLProgram => {
+      const fvs = compileShader(gl, gl.VERTEX_SHADER, FBO_VERT_SRC)
+      const ffs = compileShader(gl, gl.FRAGMENT_SHADER, fragSrc)
+      const p = gl.createProgram()!
+      gl.attachShader(p, fvs)
+      gl.attachShader(p, ffs)
+      gl.linkProgram(p)
+      gl.deleteShader(fvs)
+      gl.deleteShader(ffs)
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+        throw new Error(`Post shader link hatası: ${gl.getProgramInfoLog(p)}`)
+      }
+      const pLoc = gl.getAttribLocation(p, 'a_pos')
+      if (pLoc >= 0) {
+        gl.enableVertexAttribArray(pLoc)
+        gl.vertexAttribPointer(pLoc, 2, gl.FLOAT, false, 0, 0)
+      }
+      return p
+    }
+
+    this.blurProg = linkPass(BLUR_FRAG_SRC)
+    this.blurLoc = {
+      u_tex: gl.getUniformLocation(this.blurProg, 'u_tex'),
+      u_texelDir: gl.getUniformLocation(this.blurProg, 'u_texelDir'),
+      u_extract: gl.getUniformLocation(this.blurProg, 'u_extract'),
+      u_threshold: gl.getUniformLocation(this.blurProg, 'u_threshold')
+    }
+
+    this.postProg = linkPass(POST_FRAG_SRC)
+    this.postLoc = {
+      u_gradeTex: gl.getUniformLocation(this.postProg, 'u_gradeTex'),
+      u_halTex: gl.getUniformLocation(this.postProg, 'u_halTex'),
+      u_stillTex: gl.getUniformLocation(this.postProg, 'u_stillTex'),
+      u_halActive: gl.getUniformLocation(this.postProg, 'u_halActive'),
+      u_halIntensity: gl.getUniformLocation(this.postProg, 'u_halIntensity'),
+      u_halTint: gl.getUniformLocation(this.postProg, 'u_halTint'),
+      u_grainActive: gl.getUniformLocation(this.postProg, 'u_grainActive'),
+      u_grainAmp: gl.getUniformLocation(this.postProg, 'u_grainAmp'),
+      u_grainCell: gl.getUniformLocation(this.postProg, 'u_grainCell'),
+      u_grainRoughness: gl.getUniformLocation(this.postProg, 'u_grainRoughness'),
+      u_res: gl.getUniformLocation(this.postProg, 'u_res'),
+      u_time: gl.getUniformLocation(this.postProg, 'u_time'),
+      u_hasStill: gl.getUniformLocation(this.postProg, 'u_hasStill'),
+      u_compareMode: gl.getUniformLocation(this.postProg, 'u_compareMode'),
+      u_wipe: gl.getUniformLocation(this.postProg, 'u_wipe')
+    }
+  }
+
+  private createFboPair(w: number, h: number): { fbo: WebGLFramebuffer; tex: WebGLTexture } {
+    const gl = this.gl
+    const tex = gl.createTexture()!
+    gl.bindTexture(gl.TEXTURE_2D, tex)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+    const fbo = gl.createFramebuffer()!
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo)
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    return { fbo, tex }
+  }
+
+  private disposePostFbos(): void {
+    const gl = this.gl
+    if (this.fboGrade) gl.deleteFramebuffer(this.fboGrade)
+    if (this.texGrade) gl.deleteTexture(this.texGrade)
+    if (this.fboBlurH) gl.deleteFramebuffer(this.fboBlurH)
+    if (this.texBlurH) gl.deleteTexture(this.texBlurH)
+    if (this.fboBlurV) gl.deleteFramebuffer(this.fboBlurV)
+    if (this.texBlurV) gl.deleteTexture(this.texBlurV)
+    this.fboGrade = null
+    this.texGrade = null
+    this.fboBlurH = null
+    this.texBlurH = null
+    this.fboBlurV = null
+    this.texBlurV = null
+    this.fboW = 0
+    this.fboH = 0
+  }
+
+  private ensurePostFbos(w: number, h: number): void {
+    if (this.fboW === w && this.fboH === h && this.fboGrade) return
+    this.disposePostFbos()
+    const g = this.createFboPair(w, h)
+    const bh = this.createFboPair(w, h)
+    const bv = this.createFboPair(w, h)
+    this.fboGrade = g.fbo
+    this.texGrade = g.tex
+    this.fboBlurH = bh.fbo
+    this.texBlurH = bh.tex
+    this.fboBlurV = bv.fbo
+    this.texBlurV = bv.tex
+    this.fboW = w
+    this.fboH = h
+  }
+
+  /** Aktif çizili kareyi kalıcı FBO_Still dokusuna yakalar. */
+  captureStillFromCanvas(): boolean {
+    const gl = this.gl
+    const canvas = gl.canvas as HTMLCanvasElement
+    if (!canvas || canvas.width <= 0 || canvas.height <= 0) return false
+    if (!this.stillTex) {
+      this.stillTex = gl.createTexture()!
+      gl.bindTexture(gl.TEXTURE_2D, this.stillTex)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    } else {
+      gl.bindTexture(gl.TEXTURE_2D, this.stillTex)
+    }
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas)
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+    this.hasStill = true
+    return true
+  }
+
+  clearStill(): void {
+    if (this.stillTex) {
+      this.gl.deleteTexture(this.stillTex)
+      this.stillTex = null
+    }
+    this.hasStill = false
+  }
+
+  hasStillTexture(): boolean {
+    return this.hasStill && this.stillTex !== null
   }
 
   private ensureLut(lut: Lut3D | null): void {
@@ -868,8 +1126,6 @@ export class WebGLColorEngine {
       (tex?.luminanceGrain ?? 75) / 100,
       (tex?.colorGrain ?? 25) / 100
     )
-    gl.uniform1f(this.loc['u_compareMode'], cmpVal)
-
     const ck = nf?.chromaKey
     const ckCol = hexToRgb01(ck?.keyColor ?? '#00B140')
     const ckBg = hexToRgb01(ck?.bgColor ?? '#0B0D12')
@@ -888,17 +1144,95 @@ export class WebGLColorEngine {
       (ck?.opacity ?? 100) / 100
     )
 
+    const analog = grade.analog ?? defaultAnalogFilm()
+    const useStillCompare = this.hasStill && cmpVal > 0.5 && cmpVal < 3.5
+    const usePostPass = isAnalogFilmActive(analog) || useStillCompare
+
+    if (!usePostPass) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.uniform1f(this.loc['u_compareMode'], cmpVal)
+      gl.drawArrays(gl.TRIANGLES, 0, 6)
+      return true
+    }
+
+    // Pass 1: Renk derecelendirme + LUT + LGG -> texGrade
+    this.ensurePostFbos(canvas.width, canvas.height)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboGrade)
+    gl.uniform1f(this.loc['u_compareMode'], useStillCompare ? 0 : cmpVal)
+    gl.drawArrays(gl.TRIANGLES, 0, 6)
+
+    const halOn = isAnalogHalationActive(analog)
+    const hp = analogHalationParams(analog)
+    if (halOn) {
+      const stepPx = Math.max(1, canvas.height * hp.sigmaFrac * 0.45)
+      gl.useProgram(this.blurProg)
+      // Pass 2a: Eşik üstü parlak alanlar + Yatay Gauss Blur -> texBlurH
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboBlurH)
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, this.texGrade)
+      gl.uniform1i(this.blurLoc['u_tex'], 0)
+      gl.uniform2f(this.blurLoc['u_texelDir'], stepPx / canvas.width, 0)
+      gl.uniform1f(this.blurLoc['u_extract'], 1)
+      gl.uniform1f(this.blurLoc['u_threshold'], hp.threshold)
+      gl.drawArrays(gl.TRIANGLES, 0, 6)
+
+      // Pass 2b: Dikey Gauss Blur -> texBlurV
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboBlurV)
+      gl.bindTexture(gl.TEXTURE_2D, this.texBlurH)
+      gl.uniform2f(this.blurLoc['u_texelDir'], 0, stepPx / canvas.height)
+      gl.uniform1f(this.blurLoc['u_extract'], 0)
+      gl.drawArrays(gl.TRIANGLES, 0, 6)
+    }
+
+    // Pass 3: Halation screen + Luminance-Aware Film Grain + Still Wipe -> Ekran
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    gl.useProgram(this.postProg)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, this.texGrade)
+    gl.uniform1i(this.postLoc['u_gradeTex'], 0)
+
+    gl.activeTexture(gl.TEXTURE1)
+    gl.bindTexture(gl.TEXTURE_2D, halOn ? this.texBlurV : this.texGrade)
+    gl.uniform1i(this.postLoc['u_halTex'], 1)
+
+    gl.activeTexture(gl.TEXTURE2)
+    gl.bindTexture(gl.TEXTURE_2D, useStillCompare ? this.stillTex : this.texGrade)
+    gl.uniform1i(this.postLoc['u_stillTex'], 2)
+
+    const gp = analogGrainParams(analog)
+    const grainOn = isAnalogGrainActive(analog)
+    gl.uniform1f(this.postLoc['u_halActive'], halOn ? 1 : 0)
+    gl.uniform1f(this.postLoc['u_halIntensity'], hp.opacity)
+    gl.uniform3f(
+      this.postLoc['u_halTint'],
+      HALATION_TINT[0] * HALATION_GAIN,
+      HALATION_TINT[1] * HALATION_GAIN,
+      HALATION_TINT[2] * HALATION_GAIN
+    )
+    gl.uniform1f(this.postLoc['u_grainActive'], grainOn ? 1 : 0)
+    gl.uniform1f(this.postLoc['u_grainAmp'], gp.amplitude)
+    gl.uniform1f(this.postLoc['u_grainCell'], Math.max(1, gp.cellPx1080 * (canvas.height / 1080)))
+    gl.uniform1f(this.postLoc['u_grainRoughness'], gp.roughness)
+    gl.uniform2f(this.postLoc['u_res'], canvas.width, canvas.height)
+    gl.uniform1f(this.postLoc['u_time'], (performance.now() % 10000) / 1000)
+    gl.uniform1f(this.postLoc['u_hasStill'], useStillCompare ? 1 : 0)
+    gl.uniform1f(this.postLoc['u_compareMode'], cmpVal)
+    gl.uniform1f(this.postLoc['u_wipe'], wipePercent / 100)
     gl.drawArrays(gl.TRIANGLES, 0, 6)
     return true
   }
 
   dispose(): void {
     const gl = this.gl
+    this.disposePostFbos()
+    this.clearStill()
     gl.deleteTexture(this.videoTex)
     gl.deleteTexture(this.lutTex)
     gl.deleteTexture(this.curveTex)
     gl.deleteBuffer(this.vbo)
     gl.deleteVertexArray(this.vao)
     gl.deleteProgram(this.program)
+    gl.deleteProgram(this.blurProg)
+    gl.deleteProgram(this.postProg)
   }
 }

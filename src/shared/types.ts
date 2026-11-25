@@ -192,6 +192,29 @@ export interface ArchiveProjectResult {
   error?: string
 }
 
+export interface ClipMetadataInfo {
+  mediaId: string
+  name: string
+  cameraOrEncoder: string
+  width: number
+  height: number
+  fps: number
+  colorPrimaries: string
+  codec: string
+}
+
+export interface SceneDetectResult {
+  ok: boolean
+  timestamps: number[]
+  error?: string
+}
+
+export interface TransientDetectResult {
+  ok: boolean
+  timestamps: number[]
+  error?: string
+}
+
 export interface NoirCutApi {
   getEngineInfo: () => Promise<EngineInfo>
   /** Dosya seçici açar, seçilen videoları analiz edip döndürür */
@@ -275,4 +298,10 @@ export interface NoirCutApi {
   ) => Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>
   /** GNU GPL v3 LICENSE ve THIRD-PARTY-LICENSES.txt içeriklerini okur */
   getLicenseInfo?: () => Promise<{ gplText: string; thirdPartyText: string }>
+  /** Timeline kliplerinin FFprobe teknik meta verilerini çıkarır (jenerik üretimi için) */
+  extractClipsMetadata?: (mediaIds: string[]) => Promise<ClipMetadataInfo[]>
+  /** FFmpeg scene filtresi ile sert sahne kesim zamanlarını algılar */
+  detectSceneCuts?: (mediaId: string, threshold?: number) => Promise<SceneDetectResult>
+  /** Çözülmüş PCM ses üzerinde RMS / enerji akısı (transient) tepe noktalarını algılar */
+  detectAudioTransients?: (mediaId: string, sensitivity?: number) => Promise<TransientDetectResult>
 }

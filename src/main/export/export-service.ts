@@ -16,10 +16,15 @@ import { cpus, tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { resolveVaapiDevice } from './vaapi-device'
 import {
+  buildAnalogFilmFilters,
+  buildAspectMaskFilter,
   buildClipMaskFilter,
   buildClipSpeedFilter,
+  buildLoudnormPass2Filter,
   buildSubtitleOverlayFilter,
   escapeFilterPath,
+  LOUDNESS_TARGETS,
+  parseLoudnormJson,
   selectSubtitleOverlays
 } from './export-filters'
 
@@ -36,6 +41,7 @@ function resolveExportFfmpegPath(fallbackPath: string): string {
   return fallbackPath
 }
 import { bakeColorGradeToCube, isNeutralGrade } from '../../shared/color'
+import { isAnalogFilmActive } from '../../shared/analog-film'
 import { hexToRgb01 } from '../../shared/noirfilm'
 import { synthesizeCreditFoleyWav } from '../../shared/foley-wav'
 import {
@@ -385,6 +391,27 @@ export async function exportTimeline(
         const flags = (tex?.colorGrain ?? 0) > 30 ? 't+u' : 't'
         vChain.push(`noise=alls=${combinedGrain}:allf=${flags}`)
       }
+
+      // Analog Film Pass: fiziksel Halation + parlaklığa duyarlı film greni (WebGL2 shader ile aynı matematik)
+      if (isAnalogFilmActive(c.grade.analog) && c.grade.analog) {
+        const srcLbl = fxOutLabel ? `[${fxOutLabel}]` : `[${inIdx}:v]`
+        const preLbl = `an_pre${segId}`
+        filterParts.push(
+          `${srcLbl}${vChain.length > 0 ? `${vChain.join(',')},` : ''}format=rgb24[${preLbl}]`
+        )
+        vChain.length = 0
+        const analogRes = buildAnalogFilmFilters({
+          inLabel: preLbl,
+          segId,
+          analog: c.grade.analog,
+          width,
+          height,
+          fps,
+          duration: c.duration
+        })
+        filterParts.push(...analogRes.parts)
+        fxOutLabel = analogRes.outLabel
+      }
       const ck = nf?.chromaKey
       if (ck?.enabled) {
         const hexClean = ck.keyColor.replace('#', '').trim() || '00B140'
@@ -705,9 +732,10 @@ export async function exportTimeline(
     const nextVLabel = `[vov${idx}]`
 
     if (ov.mode === 'rolling') {
+      const totalFrames = Math.max(1, Math.round(c.duration * Math.max(1, fps)))
       filterParts.push(`[${inIdx}:v]format=rgba[${crLabel}]`)
       filterParts.push(
-        `${currentVLabel}[${crLabel}]overlay=x=0:y='H-(t-${start})/${dur}*(H+h)':enable='between(t,${start},${end})'${nextVLabel}`
+        `${currentVLabel}[${crLabel}]overlay=x=0:y='H-round(round((t-${start})*${fps})*max(1,round((H+h)/${totalFrames})))':enable='between(t,${start},${end})'${nextVLabel}`
       )
     } else {
       const fadeDur = Math.min(0.6, c.duration * 0.18)
@@ -741,7 +769,10 @@ export async function exportTimeline(
     currentVLabel = subOverlay.nextVLabel
   })
 
-  filterParts.push(`${currentVLabel}format=yuv420p[vout]`)
+  const aspectMask = buildAspectMaskFilter(settings.aspectMaskBurnIn, width, height)
+  filterParts.push(
+    `${currentVLabel}${aspectMask ? `${aspectMask},` : ''}format=yuv420p[vout]`
+  )
 
   // 2) Ses akışı (V* gömülü + A1..An) + Auto-Ducking (Diyalog Önceliği)
   const audibleClips: TimelineClip[] = clips.filter((c) => {
@@ -903,16 +934,52 @@ export async function exportTimeline(
   const masterVolFilter =
     Math.abs(masterGain - 1) > 0.01 ? `,volume=${masterGain.toFixed(4)}` : ''
 
-  if (aLabels.length === 1) {
-    filterParts.push(`[abase]anull${masterVolFilter}[aout]`)
-  } else {
-    filterParts.push(
-      `${aLabels.join('')}amix=inputs=${aLabels.length}:duration=first:dropout_transition=0:normalize=0${masterVolFilter}[aout]`
-    )
-  }
-
   const engine = await getEngineInfo()
   const baseBin = resolveExportFfmpegPath(engine.ffmpegPath)
+
+  const loudnessPreset = settings.loudnessPreset ?? 'off'
+  const audioPreFilterParts = filterParts.slice()
+  const audioMixExpr =
+    aLabels.length === 1
+      ? `[abase]anull${masterVolFilter}`
+      : `${aLabels.join('')}amix=inputs=${aLabels.length}:duration=first:dropout_transition=0:normalize=0${masterVolFilter}`
+
+  let loudnormFilter = ''
+  if (loudnessPreset !== 'off') {
+    const tgt = LOUDNESS_TARGETS[loudnessPreset]
+    const measureParts = [
+      ...audioPreFilterParts,
+      `${audioMixExpr},loudnorm=I=${tgt.i}:TP=${tgt.tp.toFixed(1)}:LRA=${tgt.lra}:print_format=json[aout_m]`
+    ]
+    const measured = await new Promise<ReturnType<typeof parseLoudnormJson>>((res) => {
+      const mProc = spawn(
+        baseBin,
+        [
+          '-y',
+          '-hide_banner',
+          ...inputArgs,
+          '-filter_complex',
+          measureParts.join(';'),
+          '-map',
+          '[aout_m]',
+          '-vn',
+          '-f',
+          'null',
+          '-'
+        ],
+        { ...(tempLutDir ? { cwd: tempLutDir } : {}), windowsHide: true }
+      )
+      let mErr = ''
+      mProc.stderr.on('data', (c: Buffer) => {
+        mErr += c.toString()
+      })
+      mProc.on('error', () => res(null))
+      mProc.on('close', () => res(parseLoudnormJson(mErr)))
+    })
+    loudnormFilter = `,${buildLoudnormPass2Filter(loudnessPreset, measured)}`
+  }
+
+  filterParts.push(`${audioMixExpr}${loudnormFilter}[aout]`)
 
   let avail = engine.availableEncoders ?? ['libx264']
   let vaapiDevice: string | null = null

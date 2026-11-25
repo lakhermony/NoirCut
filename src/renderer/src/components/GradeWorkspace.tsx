@@ -13,6 +13,7 @@ import {
   type WheelValue
 } from '../../../shared/color'
 import { BUILTIN_LUTS, type Lut3D } from '../../../shared/lut'
+import { defaultAnalogFilm, type AnalogFilmConfig } from '../../../shared/analog-film'
 import type { GradeStill, TimelineClip } from '../../../shared/timeline'
 import type { MediaItem } from '../../../shared/types'
 import { fmtDuration } from '../lib/format'
@@ -211,6 +212,7 @@ export default function GradeWorkspace({
   const [compareMode, setCompareMode] = useState<ComparisonMode>('none')
   const [compareWipe, setCompareWipe] = useState(50)
   const [fullscreenCompareOpen, setFullscreenCompareOpen] = useState(false)
+  const [stillsCollapsed, setStillsCollapsed] = useState(false)
 
   const displayGrade = previewGrade ?? grade
   const allLuts = [...BUILTIN_LUTS, ...customLuts]
@@ -250,6 +252,7 @@ export default function GradeWorkspace({
           activeLut={effectiveLut}
           compareMode={compareMode}
           externalWipe={compareWipe}
+          onWipeChange={setCompareWipe}
           forceWebGL={true}
           wbPickerActive={wbPickerActive}
           onPickWbRgb={onPickWbRgb}
@@ -365,6 +368,34 @@ export default function GradeWorkspace({
             />
             LUT KÜTÜPHANESİ
           </button>
+        </div>
+
+        {/* Split-Screen Referans Karşılaştırma Modları */}
+        <div
+          data-testid="grade-compare-switcher"
+          className="hidden items-center gap-1 rounded-full border border-[color:var(--border-subtle)] bg-[var(--bg-panel)] p-0.5 lg:inline-flex"
+        >
+          {(
+            [
+              ['none', 'Karşılaştırma: Kapalı'],
+              ['v-wipe', 'Dikey Wipe'],
+              ['h-wipe', 'Yatay Wipe'],
+              ['side-by-side', 'Yan Yana']
+            ] as Array<[ComparisonMode, string]>
+          ).map(([mId, mLbl]) => (
+            <button
+              key={mId}
+              type="button"
+              onClick={() => setCompareMode(mId)}
+              className={`rounded-full px-2.5 py-0.5 text-[9.5px] font-semibold transition ${
+                compareMode === mId
+                  ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
+                  : 'text-[var(--text-muted)] hover:text-white'
+              }`}
+            >
+              {mLbl}
+            </button>
+          ))}
         </div>
 
         <span className="truncate text-[9.5px] text-[var(--text-muted)]">
@@ -889,6 +920,96 @@ export default function GradeWorkspace({
               onChange={(vignette) => onGrade({ ...grade, vignette })}
             />
           </div>
+
+          {/* Analog Film Pass: Physical Halation & Luminance-Aware Film Grain (WebGL2 FBO) */}
+          {(() => {
+            const analog: AnalogFilmConfig = grade.analog ?? defaultAnalogFilm()
+            const patchAnalog = (patch: Partial<AnalogFilmConfig>) =>
+              onGrade({ ...grade, analog: { ...analog, ...patch, enabled: patch.enabled ?? true } })
+            return (
+              <div
+                data-testid="analog-film-pass-panel"
+                className="mt-2 rounded-xl border border-white/[0.07] bg-black/25 p-2"
+              >
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="text-[9.5px] font-semibold text-white/85">
+                    Analog Film Pass (Halation &amp; Luma Grain)
+                  </span>
+                  <label className="flex cursor-pointer items-center gap-1 text-[9px] text-white/70">
+                    <input
+                      type="checkbox"
+                      checked={analog.enabled}
+                      onChange={(e) => patchAnalog({ enabled: e.target.checked })}
+                      className="accent-[var(--accent)]"
+                    />
+                    Aktif
+                  </label>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <CompactSlider
+                    label="Hal. Eşik"
+                    value={analog.halationThreshold}
+                    min={10}
+                    max={98}
+                    step={1}
+                    defaultValue={70}
+                    unit="%"
+                    onChange={(halationThreshold) => patchAnalog({ halationThreshold })}
+                  />
+                  <CompactSlider
+                    label="Hal. Yoğunluk"
+                    value={analog.halationIntensity}
+                    min={0}
+                    max={100}
+                    step={1}
+                    defaultValue={45}
+                    unit="%"
+                    onChange={(halationIntensity) => patchAnalog({ halationIntensity })}
+                  />
+                  <CompactSlider
+                    label="Hal. Yarıçap"
+                    value={analog.halationRadius}
+                    min={0}
+                    max={100}
+                    step={1}
+                    defaultValue={40}
+                    unit="%"
+                    onChange={(halationRadius) => patchAnalog({ halationRadius })}
+                  />
+                  <CompactSlider
+                    label="Grain Miktar"
+                    value={analog.grainAmount}
+                    min={0}
+                    max={100}
+                    step={1}
+                    defaultValue={30}
+                    unit="%"
+                    onChange={(grainAmount) => patchAnalog({ grainAmount })}
+                  />
+                  <CompactSlider
+                    label="Grain Boyut"
+                    value={analog.grainSize}
+                    min={0}
+                    max={100}
+                    step={1}
+                    defaultValue={35}
+                    unit="%"
+                    onChange={(grainSize) => patchAnalog({ grainSize })}
+                  />
+                  <CompactSlider
+                    label="Pürüzlülük"
+                    value={analog.grainRoughness}
+                    min={0}
+                    max={100}
+                    step={1}
+                    defaultValue={50}
+                    unit="%"
+                    onChange={(grainRoughness) => patchAnalog({ grainRoughness })}
+                  />
+                </div>
+              </div>
+            )
+          })()}
         </section>
 
         {/* 2. BLOK (ORTA): Canlı Renk Skopları (RGB Parade / Waveform / Vectorscope / Histogram) */}
@@ -899,6 +1020,8 @@ export default function GradeWorkspace({
           activeLut={activeLut}
           playing={playing}
           time={time}
+          referenceStillUrl={stills[0]?.thumbnailDataUrl ?? null}
+          splitCompare={compareMode !== 'none'}
           className="soft-card col-span-4 flex h-full flex-col justify-between overflow-hidden p-3.5"
         />
 
@@ -1009,8 +1132,14 @@ export default function GradeWorkspace({
         >
           <div className="flex flex-col justify-between">
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px]"></span>
-              <span className="panel-title">Referans Kareler</span>
+              <button
+                type="button"
+                onClick={() => setStillsCollapsed((c) => !c)}
+                title={stillsCollapsed ? 'Galeriyi Genişlet' : 'Galeriyi Daralt'}
+                className="panel-title hover:text-white"
+              >
+                Referans Kareler {stillsCollapsed ? '▸' : '▾'}
+              </button>
             </div>
             <div className="flex items-center gap-1 pt-1">
               {onGrabStill && (
@@ -1047,7 +1176,8 @@ export default function GradeWorkspace({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto py-0.5">
+          {!stillsCollapsed && (
+            <div className="flex items-center gap-2 overflow-x-auto py-0.5">
             {stills.length === 0 ? (
               <div className="rounded-xl bg-white/[0.03] px-3 py-2 text-[9.5px] text-white/40">
                 Henüz yakalanmış referans kare yok
@@ -1095,7 +1225,8 @@ export default function GradeWorkspace({
                 </div>
               ))
             )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
 

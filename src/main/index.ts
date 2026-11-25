@@ -40,6 +40,11 @@ import {
   quitAndInstallAppUpdate
 } from './updater'
 import { cancelActiveTranscription, transcribeMediaFile } from './transcribe/transcribe-service'
+import {
+  detectAudioTransients,
+  detectSceneCuts,
+  extractClipsMetadata
+} from './media/media-analysis'
 
 // Özel protokol 'ready' öncesi kaydedilmek zorunda
 registerMediaScheme()
@@ -171,6 +176,28 @@ app.whenReady().then(async () => {
   )
   ipcMain.handle('media:reconnect', (e, mediaId: string) =>
     reconnectMediaItem(mediaId, BrowserWindow.fromWebContents(e.sender))
+  )
+  ipcMain.handle('media:extract-metadata', async (_e, mediaIds: string[]) => {
+    if (!Array.isArray(mediaIds)) return []
+    return extractClipsMetadata(mediaIds)
+  })
+  ipcMain.handle(
+    'media:detect-scenes',
+    async (_e, args: { mediaId: string; threshold?: number }) => {
+      if (!args || typeof args.mediaId !== 'string') {
+        return { ok: false, timestamps: [], error: 'Geçersiz mediaId.' }
+      }
+      return detectSceneCuts(args.mediaId, args.threshold)
+    }
+  )
+  ipcMain.handle(
+    'media:detect-transients',
+    async (_e, args: { mediaId: string; sensitivity?: number }) => {
+      if (!args || typeof args.mediaId !== 'string') {
+        return { ok: false, timestamps: [], error: 'Geçersiz mediaId.' }
+      }
+      return detectAudioTransients(args.mediaId, args.sensitivity)
+    }
   )
   ipcMain.handle('media:transcribe', async (e, args: { mediaId: string; language: string }) => {
     if (!args || typeof args.mediaId !== 'string' || !args.mediaId.trim()) {

@@ -57,6 +57,7 @@ export default function Monitor({
   hasCopiedGrade = false,
   compareMode = 'none',
   externalWipe,
+  onWipeChange,
   forceWebGL = false,
   proxyPlaybackMode = 'auto',
   onProxyPlaybackModeChange,
@@ -109,6 +110,7 @@ export default function Monitor({
   hasCopiedGrade?: boolean
   compareMode?: ComparisonMode
   externalWipe?: number
+  onWipeChange?: (pct: number) => void
   forceWebGL?: boolean
   proxyPlaybackMode?: ProxyPlaybackMode
   onProxyPlaybackModeChange?: (mode: ProxyPlaybackMode) => void
@@ -169,7 +171,8 @@ export default function Monitor({
   const effWipe = externalWipe ?? wipe
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [falseColor, setFalseColor] = useState(false)
-  const [safeFrame, setSafeFrame] = useState<'off' | '2.39:1' | '16:9' | '9:16'>('off')
+  const [safeFrame, setSafeFrame] = useState<'off' | '2.39:1' | '1.85:1' | '16:9' | '9:16' | '4:3'>('off')
+  const [safeFrameOpacity, setSafeFrameOpacity] = useState(65)
   const [playbackQuality, setPlaybackQuality] = useState<PlaybackQuality>(() => {
     try {
       const saved = window.localStorage.getItem('noircut-playback-quality')
@@ -426,8 +429,20 @@ export default function Monitor({
 
   const drag = (e: React.PointerEvent) => {
     const r = box.current!.getBoundingClientRect()
-    setWipe(Math.max(0, Math.min(100, ((e.clientX - r.left) / r.width) * 100)))
+    const pct =
+      effCompareMode === 'h-wipe'
+        ? Math.max(0, Math.min(100, ((e.clientY - r.top) / Math.max(1, r.height)) * 100))
+        : Math.max(0, Math.min(100, ((e.clientX - r.left) / Math.max(1, r.width)) * 100))
+    setWipe(pct)
+    onWipeChange?.(pct)
   }
+
+  const handleGrabStillClick = onGrabStill
+    ? () => {
+        engineRef.current?.captureStillFromCanvas()
+        onGrabStill()
+      }
+    : undefined
 
   const renderFrame = useCallback(
     (forceUpload = false) => {
@@ -735,7 +750,7 @@ export default function Monitor({
             ))}
           </div>
 
-          {/* Açılıp kapanabilir Safe Frame (2.39:1 / 16:9 / 9:16) seçici */}
+          {/* Açılıp kapanabilir Safe Frame (2.39:1 / 1.85:1 / 16:9 / 9:16 / 4:3) seçici + maske opaklığı */}
           <div
             data-testid="safe-frame-selector"
             className="flex items-center gap-0.5 rounded-full border border-[color:var(--border-subtle)] bg-[var(--bg-surface)] p-0.5"
@@ -745,8 +760,10 @@ export default function Monitor({
               [
                 ['off', 'SAFE: KAPALI'],
                 ['2.39:1', '2.39:1'],
+                ['1.85:1', '1.85:1'],
                 ['16:9', '16:9'],
-                ['9:16', '9:16']
+                ['9:16', '9:16'],
+                ['4:3', '4:3']
               ] as const
             ).map(([id, label]) => (
               <button
@@ -763,6 +780,18 @@ export default function Monitor({
                 {label}
               </button>
             ))}
+            {safeFrame !== 'off' && (
+              <input
+                type="range"
+                min={10}
+                max={100}
+                step={5}
+                value={safeFrameOpacity}
+                onChange={(e) => setSafeFrameOpacity(Number(e.target.value))}
+                title={`Maske Opaklığı: %${safeFrameOpacity}`}
+                className="mx-1 h-1 w-12 accent-[var(--accent)]"
+              />
+            )}
           </div>
 
           <button
@@ -929,46 +958,91 @@ export default function Monitor({
             </div>
           )}
 
-          {/* Safe Frame (2.39:1 / 16:9 / 9:16) Kadraj Kılavuz Çizgileri */}
-          {safeFrame !== 'off' && (
-            <div
-              data-testid="safe-frame-overlay"
-              className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
-            >
-              {safeFrame === '2.39:1' && (
-                <>
-                  <div className="absolute inset-x-0 top-0 h-[12.8%] bg-black/65 border-b border-dashed border-amber-400/65" />
-                  <div className="absolute inset-x-0 bottom-0 h-[12.8%] bg-black/65 border-t border-dashed border-amber-400/65" />
-                  <span className="absolute bottom-[13.8%] right-3 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[8px] text-amber-300/90">
-                    2.39:1 ANAMORPHIC SCOPE
-                  </span>
-                </>
-              )}
-              {safeFrame === '16:9' && (
-                <>
-                  <div className="h-[90%] w-[90%] border border-dashed border-white/30" />
-                  <div className="absolute h-[80%] w-[80%] border border-white/20" />
-                  <span className="absolute bottom-[6%] right-[6%] rounded bg-black/75 px-1.5 py-0.5 font-mono text-[8px] text-white/70">
-                    16:9 ACTION / TITLE SAFE
-                  </span>
-                </>
-              )}
-              {safeFrame === '9:16' && (
-                <>
-                  <div className="absolute inset-y-0 left-0 w-[34.2%] bg-black/65 border-r border-dashed border-cyan-400/65" />
-                  <div className="absolute inset-y-0 right-0 w-[34.2%] bg-black/65 border-l border-dashed border-cyan-400/65" />
-                  <span className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[8px] text-cyan-300/90">
-                    9:16 VERTICAL SAFE
-                  </span>
-                </>
-              )}
-              {/* Merkez Vizör Artı İşareti (Center Crosshair) */}
-              <div className="relative h-4 w-4">
-                <span className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-white/35" />
-                <span className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-white/35" />
+          {/* Safe Frame (2.39:1 / 1.85:1 / 16:9 / 9:16 / 4:3) Kadraj Kılavuz Çizgileri */}
+          {safeFrame !== 'off' && (() => {
+            const maskBg = `rgba(0, 0, 0, ${(safeFrameOpacity / 100).toFixed(2)})`
+            return (
+              <div
+                data-testid="safe-frame-overlay"
+                className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
+              >
+                {safeFrame === '2.39:1' && (
+                  <>
+                    <div
+                      style={{ backgroundColor: maskBg }}
+                      className="absolute inset-x-0 top-0 h-[12.8%] border-b border-dashed border-amber-400/65"
+                    />
+                    <div
+                      style={{ backgroundColor: maskBg }}
+                      className="absolute inset-x-0 bottom-0 h-[12.8%] border-t border-dashed border-amber-400/65"
+                    />
+                    <span className="absolute bottom-[13.8%] right-3 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[8px] text-amber-300/90">
+                      2.39:1 ANAMORPHIC SCOPE
+                    </span>
+                  </>
+                )}
+                {safeFrame === '1.85:1' && (
+                  <>
+                    <div
+                      style={{ backgroundColor: maskBg }}
+                      className="absolute inset-x-0 top-0 h-[2.2%] border-b border-dashed border-emerald-400/65"
+                    />
+                    <div
+                      style={{ backgroundColor: maskBg }}
+                      className="absolute inset-x-0 bottom-0 h-[2.2%] border-t border-dashed border-emerald-400/65"
+                    />
+                    <span className="absolute bottom-[3.2%] right-3 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[8px] text-emerald-300/90">
+                      1.85:1 CINEMA FLAT
+                    </span>
+                  </>
+                )}
+                {safeFrame === '16:9' && (
+                  <>
+                    <div className="h-[90%] w-[90%] border border-dashed border-white/30" />
+                    <div className="absolute h-[80%] w-[80%] border border-white/20" />
+                    <span className="absolute bottom-[6%] right-[6%] rounded bg-black/75 px-1.5 py-0.5 font-mono text-[8px] text-white/70">
+                      16:9 ACTION / TITLE SAFE
+                    </span>
+                  </>
+                )}
+                {safeFrame === '9:16' && (
+                  <>
+                    <div
+                      style={{ backgroundColor: maskBg }}
+                      className="absolute inset-y-0 left-0 w-[34.2%] border-r border-dashed border-cyan-400/65"
+                    />
+                    <div
+                      style={{ backgroundColor: maskBg }}
+                      className="absolute inset-y-0 right-0 w-[34.2%] border-l border-dashed border-cyan-400/65"
+                    />
+                    <span className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[8px] text-cyan-300/90">
+                      9:16 VERTICAL SAFE
+                    </span>
+                  </>
+                )}
+                {safeFrame === '4:3' && (
+                  <>
+                    <div
+                      style={{ backgroundColor: maskBg }}
+                      className="absolute inset-y-0 left-0 w-[12.5%] border-r border-dashed border-purple-400/65"
+                    />
+                    <div
+                      style={{ backgroundColor: maskBg }}
+                      className="absolute inset-y-0 right-0 w-[12.5%] border-l border-dashed border-purple-400/65"
+                    />
+                    <span className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[8px] text-purple-300/90">
+                      4:3 ACADEMY / CLASSIC
+                    </span>
+                  </>
+                )}
+                {/* Merkez Vizör Artı İşareti (Center Crosshair) */}
+                <div className="relative h-4 w-4">
+                  <span className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-white/35" />
+                  <span className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-white/35" />
+                </div>
               </div>
-            </div>
-          )}
+            )
+          })()}
           {/* SVG Renk Motoru Filtresi (Sahne önizlemesi ve WebGL2 yedek katmanı için tam Lift/Gamma/Gain/LUT) */}
           <svg className="pointer-events-none absolute h-0 w-0" aria-hidden="true">
             <defs>
@@ -1337,29 +1411,49 @@ export default function Monitor({
             </>
           )}
 
-          {split && (
+          {(split || effCompareMode === 'v-wipe' || effCompareMode === 'h-wipe' || effCompareMode === 'side-by-side') && (
             <>
-              <span className="pointer-events-none absolute left-3 top-3 rounded bg-black/60 px-2 py-0.5 text-[10px] font-semibold tracking-widest text-white/70">
-                ÖNCE
+              <span className="pointer-events-none absolute left-3 top-3 z-20 rounded bg-black/65 px-2 py-0.5 text-[10px] font-semibold tracking-widest text-white/80">
+                {engineRef.current?.hasStillTexture() ? 'REF STILL' : 'ÖNCE'}
               </span>
-              <span className="pointer-events-none absolute right-3 top-3 rounded bg-[#27272A] px-2 py-0.5 text-[10px] font-semibold tracking-widest text-white ring-1 ring-[#71717A]/50">
-                SONRA
+              <span className="pointer-events-none absolute right-3 top-3 z-20 rounded bg-[#27272A] px-2 py-0.5 text-[10px] font-semibold tracking-widest text-white ring-1 ring-[#71717A]/50">
+                {engineRef.current?.hasStillTexture() ? 'AKTİF KARE' : 'SONRA'}
               </span>
-              <div
-                data-testid="wipe-handle"
-                className="absolute inset-y-0 z-10 w-6 -translate-x-1/2 cursor-ew-resize"
-                style={{ left: `${wipe}%` }}
-                onPointerDown={(e) => {
-                  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
-                  drag(e)
-                }}
-                onPointerMove={(e) => e.buttons === 1 && drag(e)}
-              >
-                <div className="mx-auto h-full w-[2px] bg-[var(--text-muted)]" />
-                <div className="absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[color:var(--border-subtle)] bg-[var(--bg-panel)]/90 text-[10px] text-[var(--text-muted)]">
-                  ⇆
+              {effCompareMode === 'h-wipe' ? (
+                <div
+                  data-testid="wipe-handle"
+                  className="absolute inset-x-0 z-20 h-6 -translate-y-1/2 cursor-ns-resize"
+                  style={{ top: `${effWipe}%` }}
+                  onPointerDown={(e) => {
+                    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+                    drag(e)
+                  }}
+                  onPointerMove={(e) => e.buttons === 1 && drag(e)}
+                >
+                  <div className="my-auto h-[2px] w-full bg-[var(--accent)]/80" />
+                  <div className="absolute left-1/2 top-1/2 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[color:var(--border-subtle)] bg-[var(--bg-panel)]/95 text-[10px] text-[var(--accent)]">
+                    ⇅
+                  </div>
                 </div>
-              </div>
+              ) : effCompareMode === 'side-by-side' ? (
+                <div className="pointer-events-none absolute inset-y-0 left-1/2 z-20 w-[2px] -translate-x-1/2 bg-[var(--accent)]/70" />
+              ) : (
+                <div
+                  data-testid="wipe-handle"
+                  className="absolute inset-y-0 z-20 w-6 -translate-x-1/2 cursor-ew-resize"
+                  style={{ left: `${effWipe}%` }}
+                  onPointerDown={(e) => {
+                    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+                    drag(e)
+                  }}
+                  onPointerMove={(e) => e.buttons === 1 && drag(e)}
+                >
+                  <div className="mx-auto h-full w-[2px] bg-[var(--accent)]/80" />
+                  <div className="absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-[color:var(--border-subtle)] bg-[var(--bg-panel)]/95 text-[10px] text-[var(--accent)]">
+                    ⇆
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -1386,7 +1480,7 @@ export default function Monitor({
         onShuttleReverse={onShuttleReverse}
         onShuttlePause={onShuttlePause}
         onShuttleForward={onShuttleForward}
-        onGrabStill={onGrabStill}
+        onGrabStill={handleGrabStillClick}
         onCopyGrade={onCopyGrade}
         onPasteGrade={onPasteGrade}
       />

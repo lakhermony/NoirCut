@@ -557,3 +557,20 @@ export function creditTypewriterInfo(
   const visibleChars = Math.min(totalChars, Math.floor(p * totalChars + 0.0001))
   return { totalChars, visibleChars, titleLen, subtitleLen }
 }
+
+/**
+ * Kayan jenerik (Rolling Credits) için alt-piksel dikey titremesini (judder) ortadan kaldıran
+ * tam sayı piksel-adım (integer pixel-per-frame) dikey kaydırma hesaplayıcısı.
+ */
+export function computeRollingCreditOffsetPx(
+  localTime: number,
+  duration: number,
+  fps: number,
+  totalDistancePx: number
+): number {
+  const safeFps = Math.max(1, Math.round(fps || 24))
+  const totalFrames = Math.max(1, Math.round(Math.max(0.1, duration) * safeFps))
+  const frameIndex = Math.max(0, Math.min(totalFrames, Math.round(localTime * safeFps)))
+  const pixelsPerFrame = Math.max(1, Math.round(totalDistancePx / totalFrames))
+  return Math.round(frameIndex * pixelsPerFrame)
+}

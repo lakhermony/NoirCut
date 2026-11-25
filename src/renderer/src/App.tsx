@@ -126,6 +126,7 @@ export default function App() {
   const [lanes, setLanes] = useState<LaneMap>(defaultLanes)
   const [markers, setMarkers] = useState<CaseMarker[]>([])
   const [activeMarkerId, setActiveMarkerId] = useState<string | null>(null)
+  const [analyzingMarkers, setAnalyzingMarkers] = useState(false)
   const [stills, setStills] = useState<GradeStill[]>([])
   const [copiedGrade, setCopiedGrade] = useState<ColorGrade | null>(null)
   const [autoDucking, setAutoDucking] = useState<boolean>(false)
@@ -1289,6 +1290,53 @@ export default function App() {
     setActiveMarkerId(newMarker.id)
     showToast(`◆ Sahne İşaretçisi eklendi (${t.toFixed(2)}s)`)
   }, [player.timeRef, recordHistory, showToast])
+
+  const handleDetectMarkers = useCallback(
+    async (kind: 'scene-cut' | 'audio-transient') => {
+      const clip = targetEditClip
+      if (!clip || !clip.mediaId || analyzingMarkers) return
+      setAnalyzingMarkers(true)
+      try {
+        const res =
+          kind === 'scene-cut'
+            ? await window.noircut?.detectSceneCuts?.(clip.mediaId, 0.32)
+            : await window.noircut?.detectAudioTransients?.(clip.mediaId, 0.65)
+        if (!res?.ok) {
+          showToast(res?.error || 'Analiz başarısız oldu')
+          return
+        }
+        const spd = Math.max(0.25, Math.min(4, (clip.speed ?? 100) / 100))
+        const srcEnd = clip.in + clip.duration * spd
+        const mapped = res.timestamps
+          .filter((ts) => ts > clip.in + 0.05 && ts < srcEnd - 0.05)
+          .map((ts) => Number((clip.start + (ts - clip.in) / spd).toFixed(3)))
+        if (mapped.length === 0) {
+          showToast(
+            kind === 'scene-cut'
+              ? 'Seçili klipte sert sahne kesimi bulunamadı'
+              : 'Seçili klipte belirgin ses transient vuruşu bulunamadı'
+          )
+          return
+        }
+        recordHistory(kind === 'scene-cut' ? 'Sahne Kesimi İşaretçileri' : 'Ses Transient İşaretçileri')
+        const added: CaseMarker[] = mapped.map((timeSec, idx) => ({
+          id: `marker-${nextId.current++}-${idx}`,
+          time: timeSec,
+          title: kind === 'scene-cut' ? `Kesim ${idx + 1}` : `Vuruş ${idx + 1}`,
+          note: kind === 'scene-cut' ? 'FFmpeg Scene Cut' : 'PCM Audio Transient',
+          color: kind === 'scene-cut' ? 'amber' : 'cyan',
+          kind
+        }))
+        setMarkers((ms) => [...ms, ...added].sort((a, b) => a.time - b.time))
+        showToast(
+          `${added.length} ${kind === 'scene-cut' ? 'sahne kesimi' : 'ses transient'} işaretçisi eklendi`
+        )
+      } finally {
+        setAnalyzingMarkers(false)
+      }
+    },
+    [analyzingMarkers, recordHistory, showToast, targetEditClip]
+  )
 
   const handleUpdateMarker = useCallback(
     (id: string, patch: Partial<CaseMarker>) => {
@@ -2617,6 +2665,8 @@ export default function App() {
               autoDucking={autoDucking}
               onToggleAutoDucking={handleToggleAutoDucking}
               onAddSoundscapeClip={handleAddSoundscapeClip}
+              clips={clips}
+              customLuts={Object.values(customLuts)}
             />
               </>
             )}
@@ -2661,6 +2711,9 @@ export default function App() {
             markers={markers}
             activeMarkerId={activeMarkerId}
             onAddMarkerAtPlayhead={handleAddMarkerAtPlayhead}
+            onDetectScenes={() => void handleDetectMarkers('scene-cut')}
+            onDetectTransients={() => void handleDetectMarkers('audio-transient')}
+            analyzingMarkers={analyzingMarkers}
             onSelectMarker={setActiveMarkerId}
             onUpdateMarker={handleUpdateMarker}
             onDeleteMarker={handleDeleteMarker}

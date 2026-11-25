@@ -3,6 +3,7 @@
  * Hem WebGL önizleme (renderer) hem de FFmpeg export (main) tarafından kullanılır.
  */
 import { BUILTIN_LUTS, sampleLut3D, type Lut3D } from './lut'
+import { cloneAnalogFilm, isAnalogFilmActive, type AnalogFilmConfig } from './analog-film'
 import {
   cloneNoirFilmConfig,
   evaluateFilmEmulationRgb,
@@ -150,6 +151,8 @@ export interface ColorGrade {
   lutIntensity: number
   /** NoirFilm sinematik görünüm, film emülasyonu, gren ve ışık efektleri */
   noirFilm?: NoirFilmConfig
+  /** Analog Film Pass: fiziksel Halation + parlaklığa duyarlı film greni (FBO post-process) */
+  analog?: AnalogFilmConfig
 }
 
 export const neutralWheel = (): WheelValue => ({ x: 0, y: 0, l: 0 })
@@ -215,7 +218,8 @@ export function cloneColorGrade(g?: ColorGrade): ColorGrade {
     },
     hueVsSat: g.hueVsSat ? ([...g.hueVsSat] as HueBandArray) : defaultHueBands(),
     hueVsHue: g.hueVsHue ? ([...g.hueVsHue] as HueBandArray) : defaultHueBands(),
-    noirFilm: g.noirFilm ? cloneNoirFilmConfig(g.noirFilm) : undefined
+    noirFilm: g.noirFilm ? cloneNoirFilmConfig(g.noirFilm) : undefined,
+    analog: g.analog ? cloneAnalogFilm(g.analog) : undefined
   }
 }
 
@@ -273,7 +277,8 @@ export function isNeutralGrade(g?: ColorGrade): boolean {
     areHueBandsNeutral(g.hueVsSat) &&
     areHueBandsNeutral(g.hueVsHue) &&
     (!g.lutId || g.lutIntensity <= 0.01) &&
-    isNeutralNoirFilm(g.noirFilm)
+    isNeutralNoirFilm(g.noirFilm) &&
+    !isAnalogFilmActive(g.analog)
   )
 }
 

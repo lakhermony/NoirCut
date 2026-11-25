@@ -28,6 +28,8 @@ export default function VideoScopes({
   activeLut,
   playing,
   time,
+  referenceStillUrl = null,
+  splitCompare = false,
   className = 'glass flex h-full w-[340px] shrink-0 flex-col justify-between overflow-hidden p-3'
 }: {
   videoRef: React.MutableRefObject<HTMLVideoElement | null>
@@ -36,6 +38,8 @@ export default function VideoScopes({
   activeLut: Lut3D | null
   playing: boolean
   time: number
+  referenceStillUrl?: string | null
+  splitCompare?: boolean
   className?: string
 }) {
   const [mode, setMode] = useState<ScopeMode>('parade')
@@ -47,6 +51,22 @@ export default function VideoScopes({
   })
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const sampleCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const stillImgRef = useRef<{ url: string; img: HTMLImageElement; ready: boolean } | null>(null)
+
+  useEffect(() => {
+    if (!referenceStillUrl) {
+      stillImgRef.current = null
+      return
+    }
+    if (stillImgRef.current?.url === referenceStillUrl) return
+    const img = new Image()
+    const entry = { url: referenceStillUrl, img, ready: false }
+    stillImgRef.current = entry
+    img.onload = () => {
+      entry.ready = true
+    }
+    img.src = referenceStillUrl
+  }, [referenceStillUrl])
 
   const drawScopes = useCallback(() => {
     const outCanvas = canvasRef.current
@@ -272,6 +292,95 @@ export default function VideoScopes({
       ctx.fillText(String(ire), 4, y + 3)
     }
 
+    if (
+      splitCompare &&
+      stillImgRef.current?.ready &&
+      (mode === 'parade' || mode === 'waveform')
+    ) {
+      // Split Compare Telemetry: sol yarı = Reference Still, sağ yarı = Active Timeline Frame
+      const halfW = Math.floor((plotW - 8) / 2)
+      const leftX = plotX
+      const rightX = plotX + halfW + 8
+
+      sctx.clearRect(0, 0, sw, sh)
+      sctx.drawImage(stillImgRef.current.img, 0, 0, sw, sh)
+      const refData = sctx.getImageData(0, 0, sw, sh).data
+      const refR = new Uint16Array(sw * binsY)
+      const refG = new Uint16Array(sw * binsY)
+      const refB = new Uint16Array(sw * binsY)
+      const refL = new Uint16Array(sw * binsY)
+      for (let py = 0; py < sh; py++) {
+        for (let px = 0; px < sw; px++) {
+          const i = (py * sw + px) * 4
+          const r0 = refData[i] / 255
+          const g0 = refData[i + 1] / 255
+          const b0 = refData[i + 2] / 255
+          const y0 = Math.max(0, Math.min(1, 0.2126 * r0 + 0.7152 * g0 + 0.0722 * b0))
+          refR[px * binsY + Math.min(binsY - 1, Math.floor((1 - r0) * (binsY - 1)))]++
+          refG[px * binsY + Math.min(binsY - 1, Math.floor((1 - g0) * (binsY - 1)))]++
+          refB[px * binsY + Math.min(binsY - 1, Math.floor((1 - b0) * (binsY - 1)))]++
+          refL[px * binsY + Math.min(binsY - 1, Math.floor((1 - y0) * (binsY - 1)))]++
+        }
+      }
+
+      const drawHalf = (
+        baseX: number,
+        wSpan: number,
+        cR: Uint16Array,
+        cG: Uint16Array,
+        cB: Uint16Array,
+        cL: Uint16Array,
+        tag: string
+      ) => {
+        if (mode === 'parade') {
+          const gap = 3
+          const secW = (wSpan - gap * 2) / 3
+          const secs = [
+            { data: cR, color: '239, 68, 68', x0: baseX },
+            { data: cG, color: '34, 197, 94', x0: baseX + secW + gap },
+            { data: cB, color: '56, 189, 248', x0: baseX + (secW + gap) * 2 }
+          ]
+          for (const sec of secs) {
+            for (let px = 0; px < sw; px++) {
+              const x = sec.x0 + (px / sw) * secW
+              const cw = Math.max(1, secW / sw + 0.4)
+              for (let by = 0; by < binsY; by++) {
+                const cnt = sec.data[px * binsY + by]
+                if (cnt === 0) continue
+                const y = padTop + (by / (binsY - 1)) * plotH
+                ctx.fillStyle = `rgba(${sec.color}, ${Math.min(0.95, 0.18 + (cnt / sh) * 2.8).toFixed(3)})`
+                ctx.fillRect(x, y, cw, Math.max(1.5, plotH / binsY))
+              }
+            }
+          }
+        } else {
+          const cw = Math.max(1, wSpan / sw + 0.4)
+          for (let px = 0; px < sw; px++) {
+            const x = baseX + (px / sw) * wSpan
+            for (let by = 0; by < binsY; by++) {
+              const cl = cL[px * binsY + by]
+              if (cl === 0) continue
+              const y = padTop + (by / (binsY - 1)) * plotH
+              ctx.fillStyle = `rgba(244, 244, 245, ${Math.min(0.85, 0.16 + (cl / sh) * 2.4).toFixed(3)})`
+              ctx.fillRect(x, y, cw, Math.max(1.5, plotH / binsY))
+            }
+          }
+        }
+        ctx.fillStyle = 'rgba(255,255,255,0.75)'
+        ctx.font = 'bold 8px "JetBrains Mono", monospace'
+        ctx.fillText(tag, baseX + 4, padTop + 10)
+      }
+
+      drawHalf(leftX, halfW, refR, refG, refB, refL, 'REF STILL')
+      ctx.strokeStyle = 'rgba(255,255,255,0.28)'
+      ctx.beginPath()
+      ctx.moveTo(plotX + halfW + 4, padTop)
+      ctx.lineTo(plotX + halfW + 4, padTop + plotH)
+      ctx.stroke()
+      drawHalf(rightX, halfW, colR, colG, colB, colL, 'ACTIVE')
+      return
+    }
+
     if (mode === 'parade') {
       const gap = 6
       const secW = (plotW - gap * 2) / 3
@@ -360,7 +469,7 @@ export default function VideoScopes({
       drawCurve(histB, 'rgba(56,189,248,0.85)', 'rgba(56,189,248,0.18)')
       drawCurve(histY, 'rgba(255,255,255,0.9)', 'rgba(255,255,255,0.10)')
     }
-  }, [activeLut, grade, media, mode, playing, videoRef])
+  }, [activeLut, grade, media, mode, playing, referenceStillUrl, splitCompare, videoRef])
 
   useEffect(() => {
     if (!playing) {

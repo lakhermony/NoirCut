@@ -33,6 +33,9 @@ export interface TimelineToolbarProps {
   outPoint: number | null
   onClearInOut?: () => void
   onAddMarkerAtPlayhead?: () => void
+  onDetectScenes?: () => void
+  onDetectTransients?: () => void
+  analyzingMarkers?: boolean
   markersCount: number
   onStepMarker?: (dir: -1 | 1) => void
   activeMarker: CaseMarker | null | undefined
@@ -76,6 +79,9 @@ export function TimelineToolbar({
   outPoint,
   onClearInOut,
   onAddMarkerAtPlayhead,
+  onDetectScenes,
+  onDetectTransients,
+  analyzingMarkers = false,
   markersCount,
   onStepMarker,
   activeMarker,
@@ -337,6 +343,30 @@ export function TimelineToolbar({
               </span>
             )}
           </button>
+          {onDetectScenes && (
+            <button
+              type="button"
+              data-testid="detect-scenes-btn"
+              onClick={onDetectScenes}
+              disabled={!selectedClip || analyzingMarkers}
+              title="Seçili Video Klibinde FFmpeg ile Sahne Kesimi Algıla"
+              className="rounded-full px-2 py-0.5 font-mono text-[9px] font-semibold text-amber-300/85 transition hover:bg-amber-500/15 hover:text-amber-200 disabled:opacity-30"
+            >
+              {analyzingMarkers ? '...' : 'Sahne Kesimi'}
+            </button>
+          )}
+          {onDetectTransients && (
+            <button
+              type="button"
+              data-testid="detect-transients-btn"
+              onClick={onDetectTransients}
+              disabled={!selectedClip || analyzingMarkers}
+              title="Seçili Klipte Ses Transient / Ritim Vuruşu Algıla"
+              className="rounded-full px-2 py-0.5 font-mono text-[9px] font-semibold text-cyan-300/85 transition hover:bg-cyan-500/15 hover:text-cyan-200 disabled:opacity-30"
+            >
+              Ses Transient
+            </button>
+          )}
           {markersCount > 0 && onStepMarker && (
             <button
               type="button"

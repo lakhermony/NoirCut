@@ -71,7 +71,12 @@ const api: NoirCutApi = {
   archiveProject: (project) => ipcRenderer.invoke('project:archive', project),
   saveSnapshot: (dataUrl, defaultName) =>
     ipcRenderer.invoke('snapshot:save', { dataUrl, defaultName }),
-  getLicenseInfo: () => ipcRenderer.invoke('app:licenses')
+  getLicenseInfo: () => ipcRenderer.invoke('app:licenses'),
+  extractClipsMetadata: (mediaIds) => ipcRenderer.invoke('media:extract-metadata', mediaIds),
+  detectSceneCuts: (mediaId, threshold) =>
+    ipcRenderer.invoke('media:detect-scenes', { mediaId, threshold }),
+  detectAudioTransients: (mediaId, sensitivity) =>
+    ipcRenderer.invoke('media:detect-transients', { mediaId, sensitivity })
 }
 
 contextBridge.exposeInMainWorld('noircut', api)

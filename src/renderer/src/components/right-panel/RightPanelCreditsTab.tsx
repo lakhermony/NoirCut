@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { BUILTIN_LUTS, type Lut3D } from '../../../../shared/lut'
+import type { TimelineClip } from '../../../../shared/timeline'
 import {
   CINEMATIC_FONTS,
   CREDIT_FONT_CATEGORIES,
@@ -21,16 +23,127 @@ import { Accordion, Slider, SoftToggle } from './RightPanelControls'
 export function RightPanelCreditsTab({
   credit,
   onCredit,
-  onAddCreditToTimeline
+  onAddCreditToTimeline,
+  clips = [],
+  customLuts = []
 }: {
   credit: CreditConfig
   onCredit: (c: CreditConfig) => void
   onAddCreditToTimeline: () => void
+  clips?: TimelineClip[]
+  customLuts?: Lut3D[]
 }) {
   const [customFonts, setCustomFonts] = useState<CustomFontAsset[]>(() => loadStoredCustomFonts())
   const [fontCategoryFilter, setFontCategoryFilter] = useState<'ALL' | CreditFontCategory>('ALL')
   const [fontUploadError, setFontUploadError] = useState<string | null>(null)
+  const [extractingMeta, setExtractingMeta] = useState(false)
+  const [castMarkup, setCastMarkup] = useState('')
   const fontFileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const handleAutoTechCredits = async () => {
+    const mediaIds = Array.from(
+      new Set(clips.filter((c) => c.mediaId && !c.credit).map((c) => c.mediaId))
+    )
+    if (mediaIds.length === 0 || !window.noircut?.extractClipsMetadata) return
+    setExtractingMeta(true)
+    try {
+      const metaList = await window.noircut.extractClipsMetadata(mediaIds)
+      const allLuts = [...BUILTIN_LUTS, ...customLuts]
+      const usedLuts = Array.from(
+        new Set(
+          clips
+            .map((c) => c.grade?.lutId)
+            .filter((id): id is string => Boolean(id))
+            .map((id) => allLuts.find((l) => l.id === id)?.name ?? id)
+        )
+      )
+      const techRows: Array<{ id: string; role: string; name: string }> = []
+      const first = metaList[0]
+      if (first) {
+        techRows.push({
+          id: `tech-cam-${Date.now()}`,
+          role: 'SHOT ON / ENCODER',
+          name: first.cameraOrEncoder
+        })
+        techRows.push({
+          id: `tech-fmt-${Date.now() + 1}`,
+          role: 'FORMAT',
+          name: `${first.width}x${first.height} · ${first.fps} FPS (${first.codec.toUpperCase()})`
+        })
+        techRows.push({
+          id: `tech-col-${Date.now() + 2}`,
+          role: 'COLOR SPACE',
+          name: first.colorPrimaries.toUpperCase()
+        })
+      }
+      if (usedLuts.length > 0) {
+        techRows.push({
+          id: `tech-lut-${Date.now() + 3}`,
+          role: '3D LUT GRADE',
+          name: usedLuts.join(', ')
+        })
+      }
+      techRows.push({
+        id: `tech-nle-${Date.now() + 4}`,
+        role: 'EDITED & GRADED IN',
+        name: 'NOIRCUT STUDIO'
+      })
+      onCredit({
+        ...credit,
+        templateId: 'rolling-credits',
+        rows: [...credit.rows, ...techRows]
+      })
+    } finally {
+      setExtractingMeta(false)
+    }
+  }
+
+  const handleApplyCastMarkup = () => {
+    const raw = castMarkup.trim()
+    if (!raw) return
+    const parsed: Array<{ id: string; role: string; name: string }> = []
+    if (raw.startsWith('[')) {
+      try {
+        const arr = JSON.parse(raw) as Array<{ role?: string; name?: string }>
+        if (Array.isArray(arr)) {
+          arr.forEach((item, idx) => {
+            if (item?.role || item?.name) {
+              parsed.push({
+                id: `json-${Date.now()}-${idx}`,
+                role: String(item.role ?? 'CREW').trim(),
+                name: String(item.name ?? '').trim()
+              })
+            }
+          })
+        }
+      } catch {
+        // JSON geçersizse satır ayrıştırmaya düş
+      }
+    }
+    if (parsed.length === 0) {
+      raw.split('\n').forEach((line, idx) => {
+        const clean = line.replace(/^[-*•]\s*/, '').trim()
+        if (!clean) return
+        const sepIdx = clean.indexOf(':')
+        if (sepIdx > 0) {
+          parsed.push({
+            id: `md-${Date.now()}-${idx}`,
+            role: clean.slice(0, sepIdx).trim(),
+            name: clean.slice(sepIdx + 1).trim()
+          })
+        } else {
+          parsed.push({
+            id: `md-${Date.now()}-${idx}`,
+            role: 'CREDIT',
+            name: clean
+          })
+        }
+      })
+    }
+    if (parsed.length > 0) {
+      onCredit({ ...credit, templateId: 'rolling-credits', rows: parsed })
+    }
+  }
 
   useEffect(() => {
     for (const f of customFonts) {
@@ -144,6 +257,40 @@ export function RightPanelCreditsTab({
                   </button>
                 </div>
               ))}
+            </div>
+
+            {/* FFprobe Teknik Künye & Markdown/JSON Cast/Crew Üreticisi */}
+            <div className="space-y-1.5 rounded-lg border border-white/10 bg-black/30 p-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[9.5px] font-semibold text-white/80">
+                  Otomatik Teknik Künye (FFprobe)
+                </span>
+                <button
+                  type="button"
+                  data-testid="credit-auto-tech-btn"
+                  disabled={extractingMeta || clips.length === 0}
+                  onClick={() => void handleAutoTechCredits()}
+                  className="rounded border border-[var(--accent)]/40 bg-[var(--accent)]/15 px-2 py-0.5 text-[9px] font-semibold text-[var(--accent)] hover:bg-[var(--accent)]/25 disabled:opacity-35"
+                >
+                  {extractingMeta ? 'Okunuyor...' : '+ Shot On Ekle'}
+                </button>
+              </div>
+              <textarea
+                rows={3}
+                value={castMarkup}
+                onChange={(e) => setCastMarkup(e.target.value)}
+                placeholder={'Markdown veya JSON Cast/Crew:\nYÖNETMEN: Ahmet Yılmaz\nGÖRÜNTÜ YÖN.: Zeynep Kaya'}
+                className="w-full resize-y rounded border border-white/10 bg-black/45 px-2 py-1 font-mono text-[10px] text-white outline-none focus:border-[var(--accent)]"
+              />
+              <button
+                type="button"
+                data-testid="credit-apply-markup-btn"
+                onClick={handleApplyCastMarkup}
+                disabled={!castMarkup.trim()}
+                className="w-full rounded bg-white/10 py-1 text-[9.5px] font-semibold text-white hover:bg-white/15 disabled:opacity-30"
+              >
+                Markdown / JSON Listeyi Jeneriğe Aktar
+              </button>
             </div>
           </div>
         ) : credit.templateId === 'standard-text' ? (

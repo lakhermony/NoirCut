@@ -392,6 +392,71 @@ export default function ExportWorkspace({
             </div>
           </div>
 
+          {/* İki Geçişli LUFS Ses Normalizasyonu & En-Boy Oranı Maskesi */}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Ses Yüksekliği Normalizasyonu (2-Pass LUFS)
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(
+                  [
+                    ['off', 'Kapalı'],
+                    ['youtube', 'YouTube (-14 LUFS)'],
+                    ['cinema', 'Sinema (-24 LUFS)']
+                  ] as const
+                ).map(([id, lbl]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    data-testid={`export-loudness-${id}-btn`}
+                    disabled={exporting}
+                    onClick={() => onSettings({ ...settings, loudnessPreset: id })}
+                    className={`rounded-full border px-2 py-1.5 text-[9.5px] transition ${
+                      (settings.loudnessPreset ?? 'off') === id
+                        ? 'border-[var(--accent)] bg-[var(--accent)]/15 font-semibold text-[var(--accent)]'
+                        : 'border-[color:var(--border-subtle)] bg-[var(--bg-panel)] text-white/70 hover:border-white/25'
+                    }`}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Kadraj Maskesi Gömme (Letterbox Burn-In)
+              </div>
+              <div className="grid grid-cols-5 gap-1">
+                {(
+                  [
+                    ['none', 'Yok'],
+                    ['2.39:1', '2.39:1'],
+                    ['1.85:1', '1.85:1'],
+                    ['9:16', '9:16'],
+                    ['4:3', '4:3']
+                  ] as const
+                ).map(([id, lbl]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    data-testid={`export-aspect-${id}-btn`}
+                    disabled={exporting}
+                    onClick={() => onSettings({ ...settings, aspectMaskBurnIn: id })}
+                    className={`rounded-full border py-1.5 font-mono text-[9.5px] transition ${
+                      (settings.aspectMaskBurnIn ?? 'none') === id
+                        ? 'border-[var(--accent)] bg-[var(--accent)]/15 font-semibold text-[var(--accent)]'
+                        : 'border-[color:var(--border-subtle)] bg-[var(--bg-panel)] text-white/70 hover:border-white/25'
+                    }`}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
           {/* Donanım Kodlayıcı (GPU / CPU), In-Out Aralığı ve Altyazı Gömme */}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>

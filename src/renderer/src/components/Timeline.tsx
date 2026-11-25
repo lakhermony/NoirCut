@@ -59,6 +59,9 @@ export default function Timeline({
   activeMarkerId = null,
   onSelectMarker,
   onAddMarkerAtPlayhead,
+  onDetectScenes,
+  onDetectTransients,
+  analyzingMarkers = false,
   onUpdateMarker,
   onDeleteMarker,
   onStepMarker,
@@ -121,6 +124,9 @@ export default function Timeline({
   activeMarkerId?: string | null
   onSelectMarker?: (id: string | null) => void
   onAddMarkerAtPlayhead?: () => void
+  onDetectScenes?: () => void
+  onDetectTransients?: () => void
+  analyzingMarkers?: boolean
   onUpdateMarker?: (id: string, patch: Partial<CaseMarker>) => void
   onDeleteMarker?: (id: string) => void
   onStepMarker?: (dir: -1 | 1) => void
@@ -1041,6 +1047,9 @@ export default function Timeline({
         outPoint={outPoint}
         onClearInOut={onClearInOut}
         onAddMarkerAtPlayhead={onAddMarkerAtPlayhead}
+        onDetectScenes={onDetectScenes}
+        onDetectTransients={onDetectTransients}
+        analyzingMarkers={analyzingMarkers}
         markersCount={markers.length}
         onStepMarker={onStepMarker}
         activeMarker={activeMarker}
@@ -1304,15 +1313,18 @@ export default function Timeline({
                 </div>
               )}
 
-              {/* Cetvel Üzeri Sahne İşaretçileri (Case Markers) */}
+              {/* Cetvel Üzeri Sahne İşaretçileri (Case Markers + Scene Cut + Audio Transient) */}
               {markers.map((m) => {
                 const meta = CASE_MARKER_COLOR_META[m.color] ?? CASE_MARKER_COLOR_META.amber
                 const isSelected = m.id === activeMarkerId
+                const kindBadge =
+                  m.kind === 'scene-cut' ? 'SC' : m.kind === 'audio-transient' ? 'TR' : null
                 return (
                   <button
                     key={m.id}
                     type="button"
                     data-testid={`case-marker-${m.id}`}
+                    data-marker-kind={m.kind ?? 'manual'}
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation()
@@ -1334,6 +1346,9 @@ export default function Timeline({
                         boxShadow: `0 0 8px ${meta.glow}`
                       }}
                     />
+                    {kindBadge && (
+                      <span className="text-[7px] opacity-80">{kindBadge}</span>
+                    )}
                     <span className="max-w-[72px] truncate">{m.title}</span>
                   </button>
                 )

@@ -514,6 +514,10 @@ export interface ExportSettings {
   presetId?: ExportPlatformPresetId
   useInOutRange?: boolean
   burnInSubtitles?: boolean
+  /** İki geçişli LUFS ses normalizasyonu */
+  loudnessPreset?: 'off' | 'youtube' | 'cinema'
+  /** İsteğe bağlı en-boy oranı kırpma / letterbox maske gömme */
+  aspectMaskBurnIn?: 'none' | '2.39:1' | '1.85:1' | '9:16' | '4:3'
 }
 
 export interface ExportPlatformPresetMeta {
@@ -634,7 +638,9 @@ export function defaultExportSettings(): ExportSettings {
     encoder: 'auto',
     presetId: 'custom',
     useInOutRange: false,
-    burnInSubtitles: true
+    burnInSubtitles: true,
+    loudnessPreset: 'off',
+    aspectMaskBurnIn: 'none'
   }
 }
 
@@ -650,6 +656,8 @@ export interface CaseMarker {
   note: string
   /** İşaretçi rengi */
   color: CaseMarkerColor
+  /** İşaretçi kaynağı: manuel / sahne kesimi / ses transient */
+  kind?: 'manual' | 'scene-cut' | 'audio-transient'
 }
 
 export const CASE_MARKER_COLOR_META: Record<

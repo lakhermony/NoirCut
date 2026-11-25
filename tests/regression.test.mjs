@@ -43,6 +43,7 @@ async function runAllTests() {
       [
         '--ignoreConfig',
         join(ROOT, 'src/shared/timeline.ts'),
+        join(ROOT, 'src/shared/analog-film.ts'),
         join(ROOT, 'src/shared/color.ts'),
         join(ROOT, 'src/shared/lut.ts'),
         join(ROOT, 'src/shared/noirfilm.ts'),
@@ -878,7 +879,50 @@ async function runAllTests() {
     assert.ok(helpersSrc.includes('THEME_OPTIONS.some((t) => t.id === saved)'))
     console.log('[PASS] 15/15 Theme Registry & Frosted Sage Entegrasyonu')
 
-    console.log('\nALL 15 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
+    // 16. Analog Film Pass, Integer Rolling Credits, LUFS 2-Pass & Aspect Mask
+    const {
+      defaultAnalogFilm,
+      grainToneWeight
+    } = require(join(COMPILED_DIR, 'shared', 'analog-film.js'))
+    const { computeRollingCreditOffsetPx } = require(join(COMPILED_DIR, 'shared', 'credits.js'))
+    const {
+      buildAnalogFilmFilters,
+      buildAspectMaskFilter,
+      buildLoudnormPass2Filter,
+      parseLoudnormJson
+    } = require(join(COMPILED_DIR, 'main', 'export', 'export-filters.js'))
+
+    assert.ok(grainToneWeight(0.08) > grainToneWeight(0.92), 'Gölge greni highlighttan güçlü olmalı')
+    const analogCfg = { ...defaultAnalogFilm(), enabled: true, halationIntensity: 60, grainAmount: 45 }
+    const anGraph = buildAnalogFilmFilters({
+      inLabel: '0:v',
+      segId: 1,
+      analog: analogCfg,
+      width: 160,
+      height: 90,
+      fps: 24,
+      duration: 0.4
+    })
+    assert.ok(anGraph.parts.some((p) => p.includes('blend=all_mode=screen')))
+    assert.ok(anGraph.parts.some((p) => p.includes('maskedmerge')))
+
+    const yStep1 = computeRollingCreditOffsetPx(1 / 24, 10, 24, 2400)
+    const yStep2 = computeRollingCreditOffsetPx(2 / 24, 10, 24, 2400)
+    assert.equal(Number.isInteger(yStep1), true)
+    assert.equal(yStep2 - yStep1, 10)
+
+    const lnSample = '{"input_i":"-18.50","input_tp":"-2.10","input_lra":"6.20","input_thresh":"-29.00","target_offset":"0.45"}'
+    const parsedLn = parseLoudnormJson(lnSample)
+    assert.ok(parsedLn && parsedLn.input_i === '-18.50')
+    const p2 = buildLoudnormPass2Filter('youtube', parsedLn)
+    assert.ok(p2.includes('I=-14') && p2.includes('linear=true') && p2.includes('measured_I=-18.50'))
+
+    const scopeMask = buildAspectMaskFilter('2.39:1', 1920, 1080)
+    assert.ok(scopeMask && scopeMask.includes('drawbox='))
+    assert.equal(buildAspectMaskFilter('none', 1920, 1080), null)
+    console.log('[PASS] 16/16 Analog Film Pass, Integer Credits, 2-Pass LUFS & Aspect Mask')
+
+    console.log('\nALL 16 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
   } finally {
     rmSync(TEMP_ROOT, { recursive: true, force: true })
   }

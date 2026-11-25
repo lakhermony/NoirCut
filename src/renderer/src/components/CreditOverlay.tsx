@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  computeRollingCreditOffsetPx,
   creditTypewriterInfo,
   formatCreditText,
   resolveCreditFontCss,
@@ -17,7 +18,8 @@ export default function CreditOverlay({
   subscribeTime,
   duration,
   playing = false,
-  isPreview = false
+  isPreview = false,
+  fps = 24
 }: {
   credit: CreditConfig
   localTime: number
@@ -26,6 +28,7 @@ export default function CreditOverlay({
   duration: number
   playing?: boolean
   isPreview?: boolean
+  fps?: number
 }) {
   const [, setFontLoadTick] = useState(0)
   const [liveLocalTime, setLiveLocalTime] = useState(initialLocalTime)
@@ -173,8 +176,8 @@ export default function CreditOverlay({
         <div
           className="absolute inset-x-0 flex flex-col items-center gap-4 px-8 text-center"
           style={{
-            top: `${(1 - p) * 105 - p * 85}%`,
-            transform: 'translateY(-10%)'
+            top: '100%',
+            transform: `translate3d(0, -${computeRollingCreditOffsetPx(localTime, dur, fps, 1080)}px, 0)`
           }}
         >
           {credit.title.trim() && (

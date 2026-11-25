@@ -1,5 +1,6 @@
 import { type ColorGrade } from '../../../shared/color'
 import type { CreditConfig } from '../../../shared/credits'
+import type { Lut3D } from '../../../shared/lut'
 import {
   MAX_DB,
   MIN_DB,
@@ -41,7 +42,9 @@ export default function RightPanel({
   onAddCreditToTimeline,
   autoDucking = false,
   onToggleAutoDucking,
-  onAddSoundscapeClip
+  onAddSoundscapeClip,
+  clips = [],
+  customLuts = []
 }: {
   tab: Tab
   width?: number
@@ -61,6 +64,8 @@ export default function RightPanel({
   autoDucking?: boolean
   onToggleAutoDucking?: (enabled: boolean) => void
   onAddSoundscapeClip?: (presetId: NoirSoundscapeId) => void
+  clips?: TimelineClip[]
+  customLuts?: Lut3D[]
 }) {
   const wbDirty = Math.abs(grade.temperature) > 0.01 || Math.abs(grade.tint) > 0.01
 
@@ -888,6 +893,8 @@ export default function RightPanel({
           credit={credit}
           onCredit={onCredit}
           onAddCreditToTimeline={onAddCreditToTimeline}
+          clips={clips}
+          customLuts={customLuts}
         />
       )}
     </aside>
