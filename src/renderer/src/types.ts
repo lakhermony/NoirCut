@@ -13,6 +13,7 @@ export type ThemeId =
   | 'noir-crimson'
   | 'nordic-iris'
   | 'frosted-sage'
+  | 'arctic-blue'
 
 export interface ThemeOption {
   id: ThemeId
@@ -41,6 +42,13 @@ export const THEME_OPTIONS: ThemeOption[] = [
     category: 'Dark',
     swatch: '#A5CDBB',
     swatches: ['#7C918D', '#586F79', '#899A83', '#A5CDBB']
+  },
+  {
+    id: 'arctic-blue',
+    label: 'Arctic Blue',
+    category: 'Dark',
+    swatch: '#8FAFCF',
+    swatches: ['#8FAFCF', '#B8D8F2', '#628DB8']
   }
 ]
 

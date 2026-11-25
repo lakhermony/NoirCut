@@ -185,6 +185,38 @@
   outline-offset: 1px;
 }
 
+:root[data-theme='arctic-blue'] {
+  --bg-app: #0b1018;
+  --bg-panel: #131d2a;
+  --bg-surface: #131d2a;
+  --bg-elevated: #1b2939;
+  --bg-glass: rgba(27, 41, 57, 0.84);
+  --border-subtle: #30465d;
+  --accent: #8fafcf;
+  --accent-hover: #b8d8f2;
+  --accent-active: #628db8;
+  --accent-fg: #0b1018;
+  --accent-soft: rgba(143, 175, 207, 0.16);
+  --accent-glow: rgba(184, 216, 242, 0.22);
+  --text-primary: #e5edf5;
+  --text-secondary: #9baec2;
+  --text-muted: #9baec2;
+  --text-dim: #5e748b;
+  --clip-video: color-mix(in srgb, #628db8 24%, #131d2a);
+  --clip-header: color-mix(in srgb, #628db8 34%, #1b2939);
+  --clip-tray: color-mix(in srgb, #8fafcf 12%, #131d2a);
+  --clip-border-default: color-mix(in srgb, #8fafcf 38%, #30465d);
+  --clip-border-hover: #b8d8f2;
+  --clip-border-selected: #8fafcf;
+  --clip-divider: #30465d;
+  --clip-audio: color-mix(in srgb, #628db8 20%, #131d2a);
+}
+
+:root[data-theme='arctic-blue'] :focus-visible {
+  outline: 1.5px solid #b8d8f2;
+  outline-offset: 1px;
+}
+
 html,
 body,
 #root {
