@@ -9,7 +9,7 @@ interface AboutModalProps {
 type LicenseTab = 'gpl' | 'third-party'
 
 export default function AboutModal({ open, onClose }: AboutModalProps): React.ReactElement | null {
-  const [version, setVersion] = useState('1.0.5')
+  const [version, setVersion] = useState('1.0.6')
   const [tab, setTab] = useState<LicenseTab>('gpl')
   const [gplText, setGplText] = useState('')
   const [thirdPartyText, setThirdPartyText] = useState('')
@@ -24,7 +24,7 @@ export default function AboutModal({ open, onClose }: AboutModalProps): React.Re
     void (async () => {
       try {
         const [ver, lic] = await Promise.all([
-          window.noircut?.getAppVersion?.().catch(() => '1.0.5'),
+          window.noircut?.getAppVersion?.().catch(() => '1.0.6'),
           window.noircut?.getLicenseInfo?.().catch(() => null)
         ])
         if (cancelled) return

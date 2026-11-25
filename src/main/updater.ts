@@ -26,6 +26,7 @@ function broadcast(status: UpdateStatus): void {
 }
 
 export function initAutoUpdater(): void {
+  if (!app.isPackaged) return
   if (initialized) return
   initialized = true
 
@@ -33,6 +34,7 @@ export function initAutoUpdater(): void {
   autoUpdater.autoInstallOnAppQuit = true
 
   autoUpdater.on('checking-for-update', () => {
+    console.info('[NoirCut Updater] GitHub Releases üzerinden güncelleme denetleniyor...')
     broadcast({
       state: 'checking',
       currentVersion: app.getVersion(),
@@ -42,6 +44,7 @@ export function initAutoUpdater(): void {
   })
 
   autoUpdater.on('update-available', (info) => {
+    console.info(`[NoirCut Updater] Yeni sürüm bulundu: v${info.version}`)
     const notes =
       typeof info.releaseNotes === 'string'
         ? info.releaseNotes
@@ -60,6 +63,7 @@ export function initAutoUpdater(): void {
 
   autoUpdater.on('update-not-available', () => {
     const v = app.getVersion()
+    console.info(`[NoirCut Updater] Güncel sürüm kullanılıyor: v${v}`)
     broadcast({
       state: 'not-available',
       currentVersion: v,
@@ -70,16 +74,21 @@ export function initAutoUpdater(): void {
   })
 
   autoUpdater.on('download-progress', (p) => {
+    const pct = Math.round(p.percent)
+    if (pct === 0 || pct === 25 || pct === 50 || pct === 75 || pct === 100) {
+      console.info(`[NoirCut Updater] İndiriliyor: %${pct}`)
+    }
     broadcast({
       ...latestStatus,
       state: 'downloading',
       currentVersion: app.getVersion(),
       progress: p.percent,
-      message: `Güncelleme indiriliyor… (%${Math.round(p.percent)})`
+      message: `Güncelleme indiriliyor… (%${pct})`
     })
   })
 
   autoUpdater.on('update-downloaded', (info) => {
+    console.info(`[NoirCut Updater] Güncelleme indirildi ve kuruluma hazır: v${info.version}`)
     broadcast({
       ...latestStatus,
       state: 'downloaded',
@@ -90,22 +99,19 @@ export function initAutoUpdater(): void {
     })
   })
 
-  autoUpdater.on('error', () => {
-    // Yayın sunucusu henüz mevcut değilse şık bir yerel sürüm mesajı döndür
-    const v = app.getVersion()
+  autoUpdater.on('error', (err) => {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[NoirCut Updater] Güncelleme hatası:', msg)
     broadcast({
-      state: 'not-available',
-      currentVersion: v,
-      latestVersion: v,
-      message: `NoirCut v${v} — En güncel sürümü kullanıyorsunuz`,
-      lastCheckedAt: new Date().toISOString(),
-      isSimulated: true
+      state: 'error',
+      currentVersion: app.getVersion(),
+      message: `Güncelleme denetlenemedi: ${msg}`,
+      lastCheckedAt: new Date().toISOString()
     })
   })
 }
 
 export async function checkForAppUpdates(): Promise<UpdateStatus> {
-  initAutoUpdater()
   const v = app.getVersion()
   const now = new Date().toISOString()
 
@@ -122,6 +128,8 @@ export async function checkForAppUpdates(): Promise<UpdateStatus> {
     return devStatus
   }
 
+  initAutoUpdater()
+
   try {
     const result = await autoUpdater.checkForUpdates()
     if (!result || !result.updateInfo || result.updateInfo.version === v) {
@@ -136,27 +144,32 @@ export async function checkForAppUpdates(): Promise<UpdateStatus> {
       return upToDate
     }
     return latestStatus
-  } catch {
-    const fallback: UpdateStatus = {
-      state: 'not-available',
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[NoirCut Updater] checkForUpdates hatası:', msg)
+    const errStatus: UpdateStatus = {
+      state: 'error',
       currentVersion: v,
-      latestVersion: v,
-      message: `NoirCut v${v} — En güncel sürümü kullanıyorsunuz`,
-      lastCheckedAt: now,
-      isSimulated: true
+      message: `Güncelleme denetlenemedi: ${msg}`,
+      lastCheckedAt: now
     }
-    broadcast(fallback)
-    return fallback
+    broadcast(errStatus)
+    return errStatus
   }
 }
 
 export async function downloadAppUpdate(): Promise<{ ok: boolean; error?: string }> {
+  if (!app.isPackaged) {
+    return { ok: false, error: 'Otomatik güncelleme yalnızca paketlenmiş uygulamada çalışır.' }
+  }
   initAutoUpdater()
   try {
     await autoUpdater.downloadUpdate()
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[NoirCut Updater] downloadUpdate hatası:', msg)
+    return { ok: false, error: msg }
   }
 }
 
