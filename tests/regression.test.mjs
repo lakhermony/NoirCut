@@ -860,7 +860,12 @@ async function runAllTests() {
       'noir-crimson',
       'nordic-iris',
       'frosted-sage',
-      'arctic-blue'
+      'arctic-blue',
+      'bloodline',
+      'obsidian-gold',
+      'deep-forest',
+      'ultraviolet',
+      'vintage-cinema'
     ]) {
       assert.ok(typesSrc.includes(`id: '${tid}'`), `Theme registry eksik: ${tid}`)
       assert.ok(cssSrc.includes(`:root[data-theme='${tid}']`), `CSS tema bloğu eksik: ${tid}`)

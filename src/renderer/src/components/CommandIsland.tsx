@@ -388,11 +388,11 @@ export default function CommandIsland({
             <div
               role="listbox"
               aria-label="Tema Seçenekleri"
-              className="absolute right-0 top-full z-[100] mt-2 w-60 rounded-xl border border-[color:var(--border-subtle)] bg-[var(--bg-elevated)] p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.65)] backdrop-blur-xl"
+              className="absolute right-0 top-full z-[100] mt-2 max-h-[72vh] w-64 overflow-y-auto rounded-xl border border-[color:var(--border-subtle)] bg-[var(--bg-elevated)] p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.65)] backdrop-blur-xl"
             >
               <div className="mb-1 flex items-center justify-between px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                <span>Temalar</span>
-                <span>Dark</span>
+                <span>Stüdyo Temaları</span>
+                <span>{THEME_OPTIONS.length} Tema</span>
               </div>
               <div className="space-y-0.5">
                 {THEME_OPTIONS.map((t) => {
@@ -415,8 +415,13 @@ export default function CommandIsland({
                           : 'text-[var(--text-muted)] hover:bg-white/[0.06] hover:text-[var(--text-primary)]'
                       }`}
                     >
-                      <span className="flex items-center gap-2 truncate">
-                        <span className="truncate">{t.label}</span>
+                      <span className="min-w-0">
+                        <span className="block truncate">{t.label}</span>
+                        {t.subtitle && (
+                          <span className="block truncate text-[9px] font-normal opacity-75">
+                            {t.subtitle}
+                          </span>
+                        )}
                       </span>
                       <span className="flex shrink-0 items-center gap-1">
                         {previewColors.map((hex) => (

@@ -14,11 +14,17 @@ export type ThemeId =
   | 'nordic-iris'
   | 'frosted-sage'
   | 'arctic-blue'
+  | 'bloodline'
+  | 'obsidian-gold'
+  | 'deep-forest'
+  | 'ultraviolet'
+  | 'vintage-cinema'
 
 export interface ThemeOption {
   id: ThemeId
   label: string
-  category: 'Dark'
+  category: 'Dark' | 'Signature'
+  subtitle?: string
   swatch: string
   swatches?: string[]
 }
@@ -46,9 +52,50 @@ export const THEME_OPTIONS: ThemeOption[] = [
   {
     id: 'arctic-blue',
     label: 'Arctic Blue',
-    category: 'Dark',
+    category: 'Signature',
+    subtitle: 'Buz mavisi · Soğuk',
     swatch: '#8FAFCF',
     swatches: ['#8FAFCF', '#B8D8F2', '#628DB8']
+  },
+  {
+    id: 'bloodline',
+    label: 'Bloodline',
+    category: 'Signature',
+    subtitle: 'Bordo · Obsidyen',
+    swatch: '#B83245',
+    swatches: ['#B83245', '#D65365', '#8F2639']
+  },
+  {
+    id: 'obsidian-gold',
+    label: 'Obsidian Gold',
+    category: 'Signature',
+    subtitle: 'Bronz · Eskitilmiş Altın',
+    swatch: '#C7A66A',
+    swatches: ['#C7A66A', '#DEC18A', '#A8874D']
+  },
+  {
+    id: 'deep-forest',
+    label: 'Deep Forest',
+    category: 'Signature',
+    subtitle: 'Orman Yeşili · Zümrüt',
+    swatch: '#36A783',
+    swatches: ['#36A783', '#55C59F', '#278566']
+  },
+  {
+    id: 'ultraviolet',
+    label: 'Ultraviolet',
+    category: 'Signature',
+    subtitle: 'Mor · Elektrik Mavisi',
+    swatch: '#9B7BDA',
+    swatches: ['#9B7BDA', '#B69AEF', '#7859B7']
+  },
+  {
+    id: 'vintage-cinema',
+    label: 'Vintage Cinema',
+    category: 'Signature',
+    subtitle: 'Analog Film · Sepya',
+    swatch: '#D9CFB8',
+    swatches: ['#D9CFB8', '#EEE3CA', '#BBA987']
   }
 ]
 

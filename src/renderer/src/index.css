@@ -217,6 +217,141 @@
   outline-offset: 1px;
 }
 
+:root[data-theme='bloodline'] {
+  --bg-app: #100d11;
+  --bg-panel: #1b141a;
+  --bg-surface: #1b141a;
+  --bg-elevated: #261923;
+  --bg-glass: rgba(38, 25, 35, 0.84);
+  --border-subtle: #49303b;
+  --accent: #b83245;
+  --accent-hover: #d65365;
+  --accent-active: #8f2639;
+  --accent-fg: #f0e6e9;
+  --accent-soft: rgba(184, 50, 69, 0.16);
+  --accent-glow: rgba(214, 83, 101, 0.24);
+  --text-primary: #f0e6e9;
+  --text-secondary: #b9a3ac;
+  --text-muted: #b9a3ac;
+  --text-dim: #745d67;
+  --clip-video: color-mix(in srgb, #8f2639 28%, #1b141a);
+  --clip-header: color-mix(in srgb, #8f2639 38%, #261923);
+  --clip-tray: color-mix(in srgb, #b83245 14%, #1b141a);
+  --clip-border-default: color-mix(in srgb, #b83245 38%, #49303b);
+  --clip-border-hover: #d65365;
+  --clip-border-selected: #b83245;
+  --clip-divider: #49303b;
+  --clip-audio: color-mix(in srgb, #8f2639 22%, #1b141a);
+}
+
+:root[data-theme='obsidian-gold'] {
+  --bg-app: #12110f;
+  --bg-panel: #1c1915;
+  --bg-surface: #1c1915;
+  --bg-elevated: #28231d;
+  --bg-glass: rgba(40, 35, 29, 0.84);
+  --border-subtle: #493e30;
+  --accent: #c7a66a;
+  --accent-hover: #dec18a;
+  --accent-active: #a8874d;
+  --accent-fg: #12110f;
+  --accent-soft: rgba(199, 166, 106, 0.16);
+  --accent-glow: rgba(222, 193, 138, 0.24);
+  --text-primary: #f0e9dc;
+  --text-secondary: #b9aa94;
+  --text-muted: #b9aa94;
+  --text-dim: #766a58;
+  --clip-video: color-mix(in srgb, #a8874d 24%, #1c1915);
+  --clip-header: color-mix(in srgb, #a8874d 34%, #28231d);
+  --clip-tray: color-mix(in srgb, #c7a66a 12%, #1c1915);
+  --clip-border-default: color-mix(in srgb, #c7a66a 38%, #493e30);
+  --clip-border-hover: #dec18a;
+  --clip-border-selected: #c7a66a;
+  --clip-divider: #493e30;
+  --clip-audio: color-mix(in srgb, #a8874d 20%, #1c1915);
+}
+
+:root[data-theme='deep-forest'] {
+  --bg-app: #0c1512;
+  --bg-panel: #13221c;
+  --bg-surface: #13221c;
+  --bg-elevated: #1b3027;
+  --bg-glass: rgba(27, 48, 39, 0.84);
+  --border-subtle: #29483b;
+  --accent: #36a783;
+  --accent-hover: #55c59f;
+  --accent-active: #278566;
+  --accent-fg: #0c1512;
+  --accent-soft: rgba(54, 167, 131, 0.16);
+  --accent-glow: rgba(85, 197, 159, 0.24);
+  --text-primary: #e2efe9;
+  --text-secondary: #9fb8ab;
+  --text-muted: #9fb8ab;
+  --text-dim: #5d796c;
+  --clip-video: color-mix(in srgb, #278566 26%, #13221c);
+  --clip-header: color-mix(in srgb, #278566 36%, #1b3027);
+  --clip-tray: color-mix(in srgb, #36a783 12%, #13221c);
+  --clip-border-default: color-mix(in srgb, #36a783 38%, #29483b);
+  --clip-border-hover: #55c59f;
+  --clip-border-selected: #36a783;
+  --clip-divider: #29483b;
+  --clip-audio: color-mix(in srgb, #278566 20%, #13221c);
+}
+
+:root[data-theme='ultraviolet'] {
+  --bg-app: #100e19;
+  --bg-panel: #191626;
+  --bg-surface: #191626;
+  --bg-elevated: #252038;
+  --bg-glass: rgba(37, 32, 56, 0.84);
+  --border-subtle: #40365d;
+  --accent: #9b7bda;
+  --accent-hover: #b69aef;
+  --accent-active: #7859b7;
+  --accent-fg: #100e19;
+  --accent-soft: rgba(155, 123, 218, 0.16);
+  --accent-glow: rgba(182, 154, 239, 0.24);
+  --text-primary: #eee9f8;
+  --text-secondary: #b0a6c8;
+  --text-muted: #b0a6c8;
+  --text-dim: #6f658a;
+  --clip-video: color-mix(in srgb, #7859b7 26%, #191626);
+  --clip-header: color-mix(in srgb, #7859b7 36%, #252038);
+  --clip-tray: color-mix(in srgb, #9b7bda 14%, #191626);
+  --clip-border-default: color-mix(in srgb, #9b7bda 38%, #40365d);
+  --clip-border-hover: #b69aef;
+  --clip-border-selected: #9b7bda;
+  --clip-divider: #40365d;
+  --clip-audio: color-mix(in srgb, #7859b7 22%, #191626);
+}
+
+:root[data-theme='vintage-cinema'] {
+  --bg-app: #28221d;
+  --bg-panel: #332b24;
+  --bg-surface: #332b24;
+  --bg-elevated: #40352b;
+  --bg-glass: rgba(64, 53, 43, 0.86);
+  --border-subtle: #5b4a39;
+  --accent: #d9cfb8;
+  --accent-hover: #eee3ca;
+  --accent-active: #bba987;
+  --accent-fg: #28221d;
+  --accent-soft: rgba(217, 207, 184, 0.16);
+  --accent-glow: rgba(238, 227, 202, 0.24);
+  --text-primary: #f0e7d8;
+  --text-secondary: #bbae9a;
+  --text-muted: #bbae9a;
+  --text-dim: #847663;
+  --clip-video: color-mix(in srgb, #bba987 24%, #332b24);
+  --clip-header: color-mix(in srgb, #bba987 34%, #40352b);
+  --clip-tray: color-mix(in srgb, #d9cfb8 12%, #332b24);
+  --clip-border-default: color-mix(in srgb, #d9cfb8 38%, #5b4a39);
+  --clip-border-hover: #eee3ca;
+  --clip-border-selected: #d9cfb8;
+  --clip-divider: #5b4a39;
+  --clip-audio: color-mix(in srgb, #bba987 20%, #332b24);
+}
+
 html,
 body,
 #root {
@@ -347,11 +482,11 @@ body {
   height: 7px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(146, 152, 163, 0.28);
+  background: color-mix(in srgb, var(--text-muted, #9298a3) 34%, transparent);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(146, 152, 163, 0.55);
+  background: color-mix(in srgb, var(--accent, #9298a3) 60%, transparent);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
