@@ -42,6 +42,11 @@ async function runAllTests() {
       tscBin,
       [
         '--ignoreConfig',
+        join(ROOT, 'src/core/timebase.ts'),
+        join(ROOT, 'src/core/types/timeline.ts'),
+        join(ROOT, 'src/core/clip-ops.ts'),
+        join(ROOT, 'src/core/legacy-adapter.ts'),
+        join(ROOT, 'src/ui/timeline/viewport-math.ts'),
         join(ROOT, 'src/shared/timeline.ts'),
         join(ROOT, 'src/shared/analog-film.ts'),
         join(ROOT, 'src/shared/color.ts'),
@@ -1013,7 +1018,101 @@ async function runAllTests() {
 
     console.log('[PASS] 17/17 Hardware Encoder Resolution & Flag Generation (NVENC / VAAPI / CPU)')
 
-    console.log('\nALL 17 NOIRCUT REGRESSION TEST SUITES PASSED.')
+    // 18. Integer Tick Timebase, Media-Time Keyframes & Legacy Adapter
+    const {
+      TICKS_PER_SECOND,
+      ticksPerFrame,
+      snapToFrameGrid,
+      secondsToMediaTicks,
+      secondsToTimelineTicks,
+      ticksToFFmpegSeconds
+    } = require(join(COMPILED_DIR, 'core', 'timebase.js'))
+    const {
+      timelineToMediaTick,
+      evaluateParameterAtMediaTick,
+      trimClipLeft,
+      splitClipAtTimelineTick
+    } = require(join(COMPILED_DIR, 'core', 'clip-ops.js'))
+    const {
+      timelineClipToCoreClip,
+      adaptAnalysisTimestampsToMediaTicks,
+      adaptLegacyProjectToTickTimeline
+    } = require(join(COMPILED_DIR, 'core', 'legacy-adapter.js'))
+    const {
+      ticksToPixels,
+      pixelsToTicks
+    } = require(join(COMPILED_DIR, 'ui', 'timeline', 'viewport-math.js'))
+
+    assert.equal(TICKS_PER_SECOND, 254_016_000_000)
+    for (const rate of [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]) {
+      assert.equal(Number.isInteger(ticksPerFrame(rate)), true, `${rate} fps tam sayı tick vermeli`)
+    }
+    for (const sr of [44100, 48000, 96000]) {
+      assert.equal(TICKS_PER_SECOND % sr, 0, `${sr} Hz tam bölünmeli`)
+    }
+    assert.equal(ticksToFFmpegSeconds(secondsToMediaTicks(1.5)), '1.500000')
+
+    const coreClip = {
+      id: 'c1',
+      mediaId: 'm1',
+      lane: 'V1',
+      timelineStart: secondsToTimelineTicks(2),
+      sourceIn: secondsToMediaTicks(1),
+      sourceOut: secondsToMediaTicks(5),
+      speed: 1,
+      keyframes: [
+        { id: 'k1', time: secondsToMediaTicks(2), param: 'scale', value: 100, interpolation: 'linear' },
+        { id: 'k2', time: secondsToMediaTicks(4), param: 'scale', value: 200, interpolation: 'hold' }
+      ],
+      baseValues: { scale: 100, posX: 0, posY: 0, rotation: 0, opacity: 100, gainDb: 0 }
+    }
+    const midMedia = timelineToMediaTick(coreClip, secondsToTimelineTicks(4))
+    assert.equal(midMedia, secondsToMediaTicks(3))
+    assert.equal(evaluateParameterAtMediaTick(coreClip.keyframes, 'scale', midMedia, 100), 150)
+
+    const trimmed = trimClipLeft(coreClip, secondsToTimelineTicks(1), 30)
+    assert.equal(trimmed.sourceIn, secondsToMediaTicks(2))
+    assert.equal(trimmed.keyframes[0].time, secondsToMediaTicks(2), 'trimClipLeft keyframe media-time değerini bozmamalı')
+
+    const split = splitClipAtTimelineTick(coreClip, secondsToTimelineTicks(4), 'c1_r')
+    assert.ok(split)
+    assert.equal(split[0].sourceOut, secondsToMediaTicks(3))
+    assert.equal(split[1].sourceIn, secondsToMediaTicks(3))
+    assert.equal(split[1].keyframes[1].time, secondsToMediaTicks(4), 'splitClip keyframe media-time değerini korumalı')
+
+    const scTicks = adaptAnalysisTimestampsToMediaTicks([1.25, 3.5])
+    assert.equal(scTicks[0], secondsToMediaTicks(1.25))
+    const px = ticksToPixels(secondsToTimelineTicks(2), 100)
+    assert.equal(px, 200)
+    assert.equal(pixelsToTicks(200, 100), secondsToTimelineTicks(2))
+    const snapped = snapToFrameGrid(secondsToTimelineTicks(1.01), 25)
+    assert.equal(snapped % ticksPerFrame(25), 0)
+
+    const legacyProj = {
+      clips: [{
+        id: 'leg1',
+        mediaId: 'm1',
+        lane: 'V1',
+        name: 'Clip 1',
+        start: 1,
+        in: 0.5,
+        duration: 4,
+        gainDb: 0,
+        fadeIn: 0,
+        fadeOut: 0,
+        audioDetached: false,
+        speed: 100,
+        keyframes: [{ id: 'lk1', time: 1, param: 'opacity', value: 50, easing: 'linear' }]
+      }],
+      markers: [{ id: 'mk1', time: 2.5, title: 'SC', note: '', color: 'amber', kind: 'scene-cut' }]
+    }
+    const adaptedProj = adaptLegacyProjectToTickTimeline(legacyProj, 24)
+    assert.equal(adaptedProj.clips[0].keyframes[0].time, secondsToMediaTicks(1.5))
+    assert.equal(adaptedProj.markers[0].time, secondsToTimelineTicks(2.5))
+    assert.equal(timelineClipToCoreClip(legacyProj.clips[0]).sourceOut, secondsToMediaTicks(4.5))
+    console.log('[PASS] 18/18 Integer Tick Timebase, Media-Time Keyframes & Legacy Adapter')
+
+    console.log('\nALL 18 NOIRCUT REGRESSION TEST SUITES PASSED.')
   } finally {
     rmSync(TEMP_ROOT, { recursive: true, force: true })
   }

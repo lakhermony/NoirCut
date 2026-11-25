@@ -216,12 +216,14 @@ export interface ClipMetadataInfo {
 export interface SceneDetectResult {
   ok: boolean
   timestamps: number[]
+  mediaTicks?: number[]
   error?: string
 }
 
 export interface TransientDetectResult {
   ok: boolean
   timestamps: number[]
+  mediaTicks?: number[]
   error?: string
 }
 

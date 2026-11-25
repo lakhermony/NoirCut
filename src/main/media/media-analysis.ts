@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'child_process'
 import { existsSync } from 'fs'
 import { promisify } from 'util'
+import { adaptAnalysisTimestampsToMediaTicks } from '../../core/legacy-adapter'
 import type {
   ClipMetadataInfo,
   SceneDetectResult,
@@ -136,7 +137,11 @@ export async function detectSceneCuts(
           timestamps.push(Number(t.toFixed(3)))
         }
       }
-      resolve({ ok: true, timestamps })
+      resolve({
+        ok: true,
+        timestamps,
+        mediaTicks: adaptAnalysisTimestampsToMediaTicks(timestamps)
+      })
     })
   })
 }
@@ -234,7 +239,11 @@ export async function detectAudioTransients(
           }
         }
       }
-      resolve({ ok: true, timestamps })
+      resolve({
+        ok: true,
+        timestamps,
+        mediaTicks: adaptAnalysisTimestampsToMediaTicks(timestamps)
+      })
     })
   })
 }

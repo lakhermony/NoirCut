@@ -8,6 +8,9 @@
 
 import type { ColorGrade } from './color'
 import type { CreditConfig } from './credits'
+import { evaluateParameterAtMediaTick } from '../core/clip-ops'
+import { secondsToMediaTicks, ticksToFFmpegSeconds } from '../core/timebase'
+import type { Keyframe as CoreKeyframe } from '../core/types/timeline'
 import type { Lut3D } from './lut'
 
 export type LaneId = string
@@ -192,31 +195,34 @@ export function findKeyframeAt(
   )
 }
 
+function toCoreParamKeyframes(
+  clip: Pick<TimelineClip, 'keyframes' | 'keyframeEasing'> | null | undefined,
+  param: TransformParam
+): CoreKeyframe[] {
+  const kfs = getParamKeyframes(clip, param)
+  const fallbackEasing = clip?.keyframeEasing ?? 'ease-in-out'
+  return kfs.map((k) => ({
+    id: k.id,
+    time: secondsToMediaTicks(k.time),
+    param: k.param,
+    value: k.value,
+    interpolation: (k.easing ?? fallbackEasing) === 'linear' ? 'linear' : 'bezier'
+  }))
+}
+
 export function evaluateTransformParamAt(
   clip: Pick<TimelineClip, 'transform' | 'keyframes' | 'keyframeEasing'> | null | undefined,
   param: TransformParam,
   localTime: number
 ): number {
   const baseTf = clip?.transform ?? defaultClipTransform()
-  const kfs = getParamKeyframes(clip, param)
-  if (kfs.length === 0) return baseTf[param]
-  if (kfs.length === 1) return kfs[0].value
-  if (localTime <= kfs[0].time) return kfs[0].value
-  const last = kfs[kfs.length - 1]
-  if (localTime >= last.time) return last.value
-
-  for (let i = 0; i < kfs.length - 1; i++) {
-    const a = kfs[i]
-    const b = kfs[i + 1]
-    if (localTime >= a.time && localTime <= b.time) {
-      const dt = Math.max(1e-6, b.time - a.time)
-      const u = Math.max(0, Math.min(1, (localTime - a.time) / dt))
-      const mode: KeyframeEasing = a.easing ?? clip?.keyframeEasing ?? 'ease-in-out'
-      const eased = mode === 'ease-in-out' ? u * u * (3 - 2 * u) : u
-      return a.value + (b.value - a.value) * eased
-    }
-  }
-  return last.value
+  const coreKfs = toCoreParamKeyframes(clip, param)
+  return evaluateParameterAtMediaTick(
+    coreKfs,
+    param,
+    secondsToMediaTicks(localTime),
+    baseTf[param]
+  )
 }
 
 export function evaluateClipTransformAt(
@@ -247,33 +253,36 @@ export function buildFfmpegKeyframeExpr(
   timeVar = 't'
 ): string {
   const baseTf = clip.transform ?? defaultClipTransform()
-  const kfs = getParamKeyframes(clip, param)
-  if (kfs.length === 0) return baseTf[param].toFixed(4)
-  if (kfs.length === 1) return kfs[0].value.toFixed(4)
-
-  const mode: KeyframeEasing = clip.keyframeEasing ?? 'ease-in-out'
+  const coreKfs = toCoreParamKeyframes(clip, param)
+  if (coreKfs.length === 0) return baseTf[param].toFixed(4)
+  if (coreKfs.length === 1) {
+    return evaluateParameterAtMediaTick(coreKfs, param, coreKfs[0].time, baseTf[param]).toFixed(4)
+  }
 
   // Parçalı ifadeyi sondan başa doğru iç içe if(lte(t, ...), ..., ...) olarak kur
-  let expr = kfs[kfs.length - 1].value.toFixed(4)
-  for (let i = kfs.length - 2; i >= 0; i--) {
-    const a = kfs[i]
-    const b = kfs[i + 1]
-    const t0 = a.time.toFixed(4)
-    const t1 = b.time.toFixed(4)
-    const dt = Math.max(0.001, b.time - a.time).toFixed(4)
-    const v0 = a.value.toFixed(4)
-    const dv = (b.value - a.value).toFixed(4)
+  const last = coreKfs[coreKfs.length - 1]
+  let expr = evaluateParameterAtMediaTick(coreKfs, param, last.time, baseTf[param]).toFixed(4)
+  for (let i = coreKfs.length - 2; i >= 0; i--) {
+    const a = coreKfs[i]
+    const b = coreKfs[i + 1]
+    const t0 = ticksToFFmpegSeconds(a.time, 4)
+    const t1 = ticksToFFmpegSeconds(b.time, 4)
+    const dtTicks = Math.max(1, b.time - a.time)
+    const dt = Math.max(0.001, Number(ticksToFFmpegSeconds(dtTicks as typeof a.time, 4))).toFixed(4)
+    const v0Num = evaluateParameterAtMediaTick(coreKfs, param, a.time, baseTf[param])
+    const v1Num = evaluateParameterAtMediaTick(coreKfs, param, b.time, baseTf[param])
+    const v0 = v0Num.toFixed(4)
+    const dv = (v1Num - v0Num).toFixed(4)
     const uExpr = `((${timeVar}-${t0})/${dt})`
-    const segMode = a.easing ?? mode
     const easedExpr =
-      segMode === 'ease-in-out'
+      a.interpolation === 'bezier'
         ? `(pow(${uExpr},2)*(3-2*${uExpr}))`
         : uExpr
-    const segVal = `(${v0}+(${dv})*${easedExpr})`
+    const segVal = a.interpolation === 'hold' ? v0 : `(${v0}+(${dv})*${easedExpr})`
     expr = `if(lte(${timeVar},${t1}),${segVal},${expr})`
   }
-  const firstT = kfs[0].time.toFixed(4)
-  const firstV = kfs[0].value.toFixed(4)
+  const firstT = ticksToFFmpegSeconds(coreKfs[0].time, 4)
+  const firstV = evaluateParameterAtMediaTick(coreKfs, param, coreKfs[0].time, baseTf[param]).toFixed(4)
   return `if(lte(${timeVar},${firstT}),${firstV},${expr})`
 }
 
