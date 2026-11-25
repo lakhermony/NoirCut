@@ -40,6 +40,7 @@ jobs:
         run: |
           npm run typecheck
           npm run build
+          npm run licenses:generate
 
       - name: Package AppImage, DEB, RPM
         run: npx electron-builder --linux AppImage deb rpm --x64 --publish never
@@ -48,8 +49,8 @@ jobs:
         run: |
           ls -lh dist/
           test -f dist/NoirCut-*.AppImage
-          test -f dist/noircut_*_amd64.deb
-          test -f dist/noircut-*.x86_64.rpm
+          test -f dist/*.deb
+          test -f dist/*.rpm
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -90,6 +91,7 @@ jobs:
         run: |
           npm run typecheck
           npm run build
+          npm run licenses:generate
 
       - name: Package Windows Portable & NSIS
         run: npx electron-builder --win portable nsis --x64 --publish never
@@ -108,8 +110,8 @@ jobs:
           $asarFpOut = & "dist/win-unpacked/resources/app.asar.unpacked/node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe" -version
           if ($LASTEXITCODE -ne 0) { throw "ASAR ffprobe.exe failed" }
           $asarFpOut | Select-Object -First 2
-          $portable = Get-Item "dist/NoirCut *.exe" | Where-Object { $_.Name -notlike "*Setup*" }
-          $setup = Get-Item "dist/NoirCut Setup *.exe"
+          $portable = Get-Item "dist/NoirCut-*-Portable.exe"
+          $setup = Get-Item "dist/NoirCut-*-win-*.exe" | Where-Object { $_.Name -notlike "*-Portable*" }
           if (!$portable -or !$setup) { throw "Portable or Setup EXE missing" }
           Write-Host "Portable: $($portable.Name) ($($portable.Length) bytes)"
           Write-Host "Setup: $($setup.Name) ($($setup.Length) bytes)"

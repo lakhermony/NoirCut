@@ -92,7 +92,8 @@
       "executableName": "noircut",
       "executableArgs": [
         "--no-sandbox"
-      ]
+      ],
+      "artifactName": "NoirCut-${version}-${os}-${arch}.${ext}"
     },
     "win": {
       "target": [
@@ -143,7 +144,11 @@
       "icon": "build/icon.ico",
       "signExecutable": false
     },
+    "portable": {
+      "artifactName": "NoirCut-${version}-${os}-${arch}-Portable.${ext}"
+    },
     "nsis": {
+      "artifactName": "NoirCut-${version}-${os}-${arch}.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,

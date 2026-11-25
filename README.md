@@ -121,25 +121,25 @@ flowchart LR
 
 ---
 
-## İndirme ve Paket Boyutları (v1.0.6)
+## Doğrudan İndirme ve Paketler (v1.0.6)
 
-Tüm kurulum paketleri [Releases (v1.0.6)](https://github.com/lakhermony/NoirCut/releases/tag/v1.0.6) sayfasından indirilebilir:
+En son sürüm sayfası: [https://github.com/lakhermony/NoirCut/releases/latest](https://github.com/lakhermony/NoirCut/releases/latest)
 
-| Platform / Paket | Dosya Adı | Mimari |
+| Platform / Paket | Dosya Adı | Doğrudan İndirme |
 | :--- | :--- | :--- |
-| **Linux Taşınabilir (AppImage)** | `NoirCut-1.0.6.AppImage` | Electron 45 (`x64`) |
-| **Windows Kurulum (NSIS)** | `NoirCut.Setup.1.0.6.exe` | Electron 45 (`x64`) |
-| **Windows Taşınabilir** | `NoirCut.1.0.6.exe` | Electron 45 (`x64`) |
+| **Windows Kurulum (NSIS)** | `NoirCut-1.0.6-win-x64.exe` | [Tek Tıkla İndir (.exe)](https://github.com/lakhermony/NoirCut/releases/download/v1.0.6/NoirCut-1.0.6-win-x64.exe) |
+| **Windows Taşınabilir (Portable)** | `NoirCut-1.0.6-win-x64-Portable.exe` | [Tek Tıkla İndir (Portable .exe)](https://github.com/lakhermony/NoirCut/releases/download/v1.0.6/NoirCut-1.0.6-win-x64-Portable.exe) |
+| **Linux Taşınabilir (AppImage)** | `NoirCut-1.0.6-linux-x86_64.AppImage` | [Tek Tıkla İndir (.AppImage)](https://github.com/lakhermony/NoirCut/releases/download/v1.0.6/NoirCut-1.0.6-linux-x86_64.AppImage) |
 
 ## Kurulum ve Geliştirme
 
 ### Son Kullanıcı Kurulumu
-- **Linux (x64 — AppImage):** [Releases](https://github.com/lakhermony/NoirCut/releases/tag/v1.0.6) sayfasından `NoirCut-1.0.6.AppImage` dosyasını indirin, çalıştırma izni verin ve başlatın:
+- **Linux (x64 — AppImage):** Yukarıdaki bağlantıdan veya [Releases](https://github.com/lakhermony/NoirCut/releases/latest) sayfasından `NoirCut-1.0.6-linux-x86_64.AppImage` dosyasını indirin, çalıştırma izni verin ve başlatın:
   ```bash
-  chmod +x NoirCut-1.0.6.AppImage
-  ./NoirCut-1.0.6.AppImage
+  chmod +x NoirCut-1.0.6-linux-x86_64.AppImage
+  ./NoirCut-1.0.6-linux-x86_64.AppImage
   ```
-- **Windows (x64):** `NoirCut.Setup.1.0.6.exe` veya taşınabilir `NoirCut.1.0.6.exe` ile çalıştırılabilir.
+- **Windows (x64):** `NoirCut-1.0.6-win-x64.exe` kurulum sihirbazı veya taşınabilir `NoirCut-1.0.6-win-x64-Portable.exe` ile doğrudan çalıştırılabilir.
 
 ### Geliştirici Kurulumu ve Testler
 
