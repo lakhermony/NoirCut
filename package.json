@@ -79,7 +79,10 @@
       ],
       "category": "AudioVideo",
       "icon": "build/icon.png",
-      "executableName": "noircut"
+      "executableName": "noircut",
+      "executableArgs": [
+        "--no-sandbox"
+      ]
     },
     "win": {
       "target": [

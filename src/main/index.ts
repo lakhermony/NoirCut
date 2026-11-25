@@ -47,10 +47,16 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('com.noircut.studio')
 }
 
-// NVIDIA / Linux Donanım Video Çözme (Hardware Video Decode) ve Sıfır-Kopya (Zero-Copy) GPU Bayrakları
+// NVIDIA / Linux Donanım Video Çözme (Hardware Video Decode) ve AppImage Sandbox Uyumluluğu
+if (process.platform === 'linux' && process.env['APPIMAGE']) {
+  app.commandLine.appendSwitch('no-sandbox')
+  app.commandLine.appendSwitch('disable-gpu-sandbox')
+}
 app.commandLine.appendSwitch('ignore-gpu-blocklist')
 app.commandLine.appendSwitch('enable-gpu-rasterization')
-app.commandLine.appendSwitch('enable-zero-copy')
+if (!process.env['NOIRCUT_SAFE_GPU']) {
+  app.commandLine.appendSwitch('enable-zero-copy')
+}
 app.commandLine.appendSwitch(
   'enable-features',
   'VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,UseChromeOSDirectVideoDecoder'
