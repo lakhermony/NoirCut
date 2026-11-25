@@ -14,7 +14,7 @@ import { app, BrowserWindow, dialog } from 'electron'
 import { copyFileSync, existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { cpus, tmpdir } from 'os'
 import { join, resolve } from 'path'
-import { resolveVaapiDevice } from './vaapi-device'
+import { probeHardwareEncoders } from './hw-probe'
 import {
   buildAnalogFilmFilters,
   buildAspectMaskFilter,
@@ -22,9 +22,11 @@ import {
   buildClipSpeedFilter,
   buildLoudnormPass2Filter,
   buildSubtitleOverlayFilter,
+  buildVideoEncoderConfig,
   escapeFilterPath,
   LOUDNESS_TARGETS,
   parseLoudnormJson,
+  resolveHwAccelEncoder,
   selectSubtitleOverlays
 } from './export-filters'
 
@@ -981,80 +983,53 @@ export async function exportTimeline(
 
   filterParts.push(`${audioMixExpr}${loudnormFilter}[aout]`)
 
-  let avail = engine.availableEncoders ?? ['libx264']
-  let vaapiDevice: string | null = null
-  if (avail.includes('h264_vaapi')) {
-    vaapiDevice = await resolveVaapiDevice({
-      ffmpegBin: engine.gpuFfmpegPath ?? baseBin
-    })
-    if (!vaapiDevice) {
-      console.warn(
-        '[NoirCut] Çalışan VAAPI cihazı (/dev/dri/renderD*) bulunamadı; h264_vaapi devre dışı bırakıldı ve libx264 kullanılacak.'
-      )
-      avail = avail.filter((e) => e !== 'h264_vaapi')
-      if (avail.length === 0) avail = ['libx264']
-    }
-  }
-  const reqEnc = settings.encoder ?? 'auto'
   const wantHevcCodec = settings.codec === 'h265'
-  const hwEncoder: VideoEncoderId =
-    reqEnc === 'auto'
-      ? wantHevcCodec
-        ? (avail.find((e) => e === 'hevc_nvenc') ??
-          (avail.includes('libx265') ? 'libx265' : 'libx264'))
-        : (avail.find(
-            (e) =>
-              e === 'h264_nvenc' ||
-              e === 'h264_vaapi' ||
-              e === 'h264_qsv' ||
-              e === 'h264_amf'
-          ) ?? 'libx264')
-      : avail.includes(reqEnc)
-        ? reqEnc
-        : 'libx264'
+  const cpuFallbackEncoder: VideoEncoderId = wantHevcCodec ? 'libx265' : 'libx264'
+  const hwProbe = await probeHardwareEncoders()
+  const hwEncoder: VideoEncoderId = resolveHwAccelEncoder({
+    hwAccel: settings.hwAccel,
+    legacyEncoder: settings.encoder,
+    codec: settings.codec,
+    probe: hwProbe
+  })
 
   const buildArgsForEncoder = (enc: VideoEncoderId): { bin: string; args: string[] } => {
-    const isVaapi = enc === 'h264_vaapi'
-    const parts = isVaapi
-      ? [...filterParts, '[vout]format=nv12,hwupload[vout_hw]']
-      : filterParts
-    const vMap = isVaapi ? '[vout_hw]' : '[vout]'
-    const bin = enc !== 'libx264' && engine.gpuFfmpegPath ? engine.gpuFfmpegPath : baseBin
-
+    const bin = enc !== 'libx264' && enc !== 'libx265' && engine.gpuFfmpegPath ? engine.gpuFfmpegPath : baseBin
     const preArgs: string[] = ['-y', '-v', 'error', '-progress', 'pipe:1', '-nostats']
-    if (isVaapi && vaapiDevice) {
-      preArgs.push('-vaapi_device', vaapiDevice)
-    }
-
-    const wantHevc = settings.codec === 'h265' || enc === 'libx265' || enc === 'hevc_nvenc'
-    const vBitrateArgs =
-      settings.videoBitrateMbps && settings.videoBitrateMbps > 0
-        ? [
-            '-b:v',
-            `${settings.videoBitrateMbps}M`,
-            '-maxrate',
-            `${Math.round(settings.videoBitrateMbps * 1.35)}M`,
-            '-bufsize',
-            `${Math.round(settings.videoBitrateMbps * 2)}M`
-          ]
-        : []
     const aBitrateStr = `${settings.audioBitrateKbps ?? 192}k`
 
-    const cpuThreads = String(Math.max(2, cpus().length - 2))
-    const vCodecArgs =
-      enc === 'hevc_nvenc' || (wantHevc && enc === 'h264_nvenc')
-        ? ['-c:v', 'hevc_nvenc', '-preset', 'p4', '-cq', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
-        : enc === 'libx265' || (wantHevc && enc === 'libx264')
-          ? ['-c:v', 'libx265', '-preset', preset, '-crf', crf, '-threads', cpuThreads, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
-          : enc === 'h264_nvenc'
-            ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
-            : enc === 'h264_vaapi'
-              ? ['-c:v', 'h264_vaapi', '-qp', crf, ...vBitrateArgs]
-              : enc === 'h264_qsv'
-                ? ['-c:v', 'h264_qsv', '-global_quality', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
-                : enc === 'h264_amf'
-                  ? ['-c:v', 'h264_amf', '-quality', 'balanced', '-qp_i', crf, '-qp_p', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
-                  : ['-c:v', 'libx264', '-preset', preset, '-crf', crf, '-threads', cpuThreads, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
+    let parts = filterParts
+    let vMap = '[vout]'
+    let vCodecArgs: string[]
+
+    if (enc === 'h264_qsv' || enc === 'h264_amf') {
+      const vBitrateArgs =
+        settings.videoBitrateMbps && settings.videoBitrateMbps > 0
+          ? [
+              '-b:v',
+              `${settings.videoBitrateMbps}M`,
+              '-maxrate',
+              `${Math.round(settings.videoBitrateMbps * 1.35)}M`,
+              '-bufsize',
+              `${Math.round(settings.videoBitrateMbps * 2)}M`
+            ]
+          : []
+      vCodecArgs =
+        enc === 'h264_qsv'
+          ? ['-c:v', 'h264_qsv', '-global_quality', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
+          : ['-c:v', 'h264_amf', '-quality', 'balanced', '-qp_i', crf, '-qp_p', crf, ...vBitrateArgs, '-pix_fmt', 'yuv420p']
+    } else {
+      const cfg = buildVideoEncoderConfig({
+        encoder: enc,
+        quality: settings.quality,
+        vaapiDevice: hwProbe.vaapiDevice,
+        filterParts
+      })
+      preArgs.push(...cfg.preArgs)
+      parts = cfg.filterParts
+      vMap = cfg.videoMapLabel
+      vCodecArgs = cfg.videoCodecArgs
+    }
 
     return {
       bin,
@@ -1169,8 +1144,11 @@ export async function exportTimeline(
   try {
     const primary = buildArgsForEncoder(hwEncoder)
     let result = await runSpawn(primary.bin, primary.args)
-    if (!result.ok && !result.canceled && hwEncoder !== 'libx264') {
-      const cpuFallback = buildArgsForEncoder('libx264')
+    if (!result.ok && !result.canceled && hwEncoder !== cpuFallbackEncoder) {
+      console.warn(
+        `[NoirCut Export] Donanım kodlayıcısı (${hwEncoder}) başarısız oldu (${result.error ?? 'bilinmeyen hata'}); ${cpuFallbackEncoder} ile CPU yedeklemesine geçiliyor.`
+      )
+      const cpuFallback = buildArgsForEncoder(cpuFallbackEncoder)
       result = await runSpawn(cpuFallback.bin, cpuFallback.args)
     }
     return result

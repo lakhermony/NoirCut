@@ -482,7 +482,8 @@ export type ExportResolution = '1080p' | '4k' | 'vertical'
 export type ExportFps = 24 | 30 | 60
 export type ExportFormat = 'mp4' | 'mov'
 export type ExportCodec = 'h264' | 'h265'
-export type ExportQuality = 'low' | 'medium' | 'high'
+export type ExportQuality = 'low' | 'medium' | 'high' | 'master'
+export type HwAccelMode = 'auto' | 'cpu' | 'nvenc' | 'vaapi'
 export type ExportEncoder =
   | 'auto'
   | 'libx264'
@@ -490,6 +491,7 @@ export type ExportEncoder =
   | 'h264_nvenc'
   | 'hevc_nvenc'
   | 'h264_vaapi'
+  | 'hevc_vaapi'
   | 'h264_qsv'
   | 'h264_amf'
 export type ExportPlatformPresetId =
@@ -511,6 +513,7 @@ export interface ExportSettings {
   audioBitrateKbps?: 128 | 192 | 320
   quality: ExportQuality
   encoder?: ExportEncoder
+  hwAccel?: HwAccelMode
   presetId?: ExportPlatformPresetId
   useInOutRange?: boolean
   burnInSubtitles?: boolean
@@ -636,6 +639,7 @@ export function defaultExportSettings(): ExportSettings {
     audioBitrateKbps: 192,
     quality: 'high',
     encoder: 'auto',
+    hwAccel: 'auto',
     presetId: 'custom',
     useInOutRange: false,
     burnInSubtitles: true,

@@ -76,7 +76,8 @@ const api: NoirCutApi = {
   detectSceneCuts: (mediaId, threshold) =>
     ipcRenderer.invoke('media:detect-scenes', { mediaId, threshold }),
   detectAudioTransients: (mediaId, sensitivity) =>
-    ipcRenderer.invoke('media:detect-transients', { mediaId, sensitivity })
+    ipcRenderer.invoke('media:detect-transients', { mediaId, sensitivity }),
+  getHwEncoders: () => ipcRenderer.invoke('export:get-hw-encoders')
 }
 
 contextBridge.exposeInMainWorld('noircut', api)

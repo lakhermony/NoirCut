@@ -9,8 +9,18 @@ export type VideoEncoderId =
   | 'h264_nvenc'
   | 'hevc_nvenc'
   | 'h264_vaapi'
+  | 'hevc_vaapi'
   | 'h264_qsv'
   | 'h264_amf'
+
+export interface HwEncodersProbeResult {
+  nvencH264: boolean
+  nvencHevc: boolean
+  vaapiH264: boolean
+  vaapiHevc: boolean
+  vaapiDevice: string | null
+  recommended: 'nvenc' | 'vaapi' | 'cpu'
+}
 
 export interface EngineInfo {
   /** Kullanılan ffmpeg yürütülebilir dosyasının yolu */
@@ -304,4 +314,6 @@ export interface NoirCutApi {
   detectSceneCuts?: (mediaId: string, threshold?: number) => Promise<SceneDetectResult>
   /** Çözülmüş PCM ses üzerinde RMS / enerji akısı (transient) tepe noktalarını algılar */
   detectAudioTransients?: (mediaId: string, sensitivity?: number) => Promise<TransientDetectResult>
+  /** Kullanılabilir donanım hızlandırmalı FFmpeg kodlayıcılarını (NVENC / VAAPI) sorgular */
+  getHwEncoders?: () => Promise<HwEncodersProbeResult>
 }

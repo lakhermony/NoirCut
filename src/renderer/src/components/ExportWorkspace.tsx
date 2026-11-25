@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   EXPORT_PLATFORM_PRESETS,
   EXPORT_RESOLUTION_DIM,
@@ -8,9 +8,10 @@ import {
   type ExportFps,
   type ExportQuality,
   type ExportResolution,
-  type ExportSettings
+  type ExportSettings,
+  type HwAccelMode
 } from '../../../shared/timeline'
-import type { EngineInfo } from '../../../shared/types'
+import type { EngineInfo, HwEncodersProbeResult } from '../../../shared/types'
 import { fmtDuration } from '../lib/format'
 
 export interface ExportQueueJob {
@@ -35,9 +36,17 @@ const ENCODER_LABELS: Record<ExportEncoder, string> = {
   h264_nvenc: 'NVIDIA NVENC (H.264)',
   hevc_nvenc: 'NVIDIA NVENC (HEVC)',
   h264_vaapi: 'Linux VAAPI',
+  hevc_vaapi: 'Linux VAAPI (HEVC)',
   h264_qsv: 'Intel QuickSync',
   h264_amf: 'AMD AMF'
 }
+
+const HW_ACCEL_OPTIONS: Array<{ id: HwAccelMode; label: string }> = [
+  { id: 'auto', label: 'Otomatik (Önerilen)' },
+  { id: 'cpu', label: 'CPU (x264 / x265)' },
+  { id: 'nvenc', label: 'NVIDIA NVENC' },
+  { id: 'vaapi', label: 'Linux VAAPI' }
+]
 
 const RESOLUTIONS: ExportResolution[] = ['1080p', '4k', 'vertical']
 const FPS_OPTIONS: Array<{ value: ExportFps; label: string }> = [
@@ -57,7 +66,8 @@ const AUDIO_BITRATES: Array<128 | 192 | 320> = [128, 192, 320]
 const QUALITIES: Array<{ value: ExportQuality; label: string; hint: string }> = [
   { value: 'low', label: 'Düşük', hint: 'Hızlı / Küçük Dosya' },
   { value: 'medium', label: 'Orta', hint: 'Dengeli' },
-  { value: 'high', label: 'Yüksek', hint: 'Maksimum Netlik' }
+  { value: 'high', label: 'Yüksek', hint: 'Maksimum Netlik' },
+  { value: 'master', label: 'Master', hint: 'Kayıpsıza Yakın' }
 ]
 
 export default function ExportWorkspace({
@@ -116,6 +126,23 @@ export default function ExportWorkspace({
   onClearFinishedQueue?: () => void
 }) {
   const [showLogs, setShowLogs] = useState(false)
+  const [hwProbe, setHwProbe] = useState<HwEncodersProbeResult | null>(null)
+
+  useEffect(() => {
+    let active = true
+    window.noircut
+      ?.getHwEncoders?.()
+      .then((res) => {
+        if (active && res) setHwProbe(res)
+      })
+      .catch(() => {
+        // yoksay
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
   const dim = EXPORT_RESOLUTION_DIM[settings.resolution]
   const hasRange = inPoint !== null || outPoint !== null
   const rangeStartSec = inPoint ?? 0
@@ -125,7 +152,31 @@ export default function ExportWorkspace({
       ? rangeEndSec - rangeStartSec
       : totalDuration
   const availableEncoders = engine?.availableEncoders ?? ['libx264']
-  const encoderChoices: ExportEncoder[] = ['auto', ...availableEncoders]
+  const isHevc = settings.codec === 'h265'
+  const nvencAvailable = hwProbe
+    ? isHevc
+      ? hwProbe.nvencHevc
+      : hwProbe.nvencH264
+    : availableEncoders.includes(isHevc ? 'hevc_nvenc' : 'h264_nvenc')
+  const vaapiAvailable = hwProbe
+    ? Boolean(hwProbe.vaapiDevice) && (isHevc ? hwProbe.vaapiHevc : hwProbe.vaapiH264)
+    : availableEncoders.includes('h264_vaapi')
+
+  const selectedHwAccel: HwAccelMode = settings.hwAccel ?? 'auto'
+  const activeEncoderBadge = (() => {
+    const codecLabel = isHevc ? 'HEVC' : 'H.264'
+    if (selectedHwAccel === 'cpu') return isHevc ? 'CPU x265' : 'CPU x264'
+    if (selectedHwAccel === 'nvenc') {
+      return nvencAvailable ? `NVENC ${codecLabel}` : isHevc ? 'CPU x265' : 'CPU x264'
+    }
+    if (selectedHwAccel === 'vaapi') {
+      return vaapiAvailable ? `VAAPI ${codecLabel}` : isHevc ? 'CPU x265' : 'CPU x264'
+    }
+    if (nvencAvailable) return `NVENC ${codecLabel}`
+    if (vaapiAvailable) return `VAAPI ${codecLabel}`
+    return isHevc ? 'CPU x265' : 'CPU x264'
+  })()
+
   const activeJob = exportQueue.find((j) => j.status === 'running' || j.status === 'paused')
 
   return (
@@ -461,27 +512,78 @@ export default function ExportWorkspace({
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
               <div className="mb-2 flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                <span>Donanım Hızlandırma (GPU / CPU)</span>
-                <span className="font-mono text-[8.5px] normal-case text-white/45">
-                  {availableEncoders.length > 1 ? 'GPU Algılandı' : 'CPU Fallback Aktif'}
+                <span>Donanım Hızlandırma (Hardware Acceleration)</span>
+                <span
+                  data-testid="hw-probe-summary"
+                  className="font-mono text-[8.5px] normal-case text-white/55"
+                >
+                  {nvencAvailable || vaapiAvailable
+                    ? `Aktif: ${activeEncoderBadge}`
+                    : 'CPU Fallback Aktif'}
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {encoderChoices.map((enc) => (
-                  <button
-                    key={enc}
-                    type="button"
-                    disabled={exporting}
-                    onClick={() => onSettings({ ...settings, encoder: enc })}
-                    className={`rounded-full border px-3 py-1 text-[10px] transition active:scale-[0.97] disabled:opacity-45 ${
-                      (settings.encoder ?? 'auto') === enc
-                        ? 'border-[var(--accent)] bg-[var(--accent)]/15 font-semibold text-[var(--accent)]'
-                        : 'border-[color:var(--border-subtle)] bg-[var(--bg-panel)] text-white/70 hover:border-white/25'
-                    }`}
-                  >
-                    {ENCODER_LABELS[enc]}
-                  </button>
-                ))}
+                {HW_ACCEL_OPTIONS.map((opt) => {
+                  const isNvenc = opt.id === 'nvenc'
+                  const isVaapi = opt.id === 'vaapi'
+                  const supported = isNvenc
+                    ? nvencAvailable
+                    : isVaapi
+                      ? vaapiAvailable
+                      : true
+                  const disabledByHw = !supported
+                  const tooltip = isNvenc && !nvencAvailable
+                    ? 'Bu sistemde NVIDIA NVENC donanım kodlayıcısı algılanmadı'
+                    : isVaapi && !vaapiAvailable
+                      ? 'Bu sistemde kullanılabilir Linux VAAPI aygıtı (/dev/dri/renderD*) algılanmadı'
+                      : undefined
+                  const active = selectedHwAccel === opt.id
+                  const legacyEnc: ExportEncoder =
+                    opt.id === 'cpu'
+                      ? isHevc
+                        ? 'libx265'
+                        : 'libx264'
+                      : opt.id === 'nvenc'
+                        ? isHevc
+                          ? 'hevc_nvenc'
+                          : 'h264_nvenc'
+                        : opt.id === 'vaapi'
+                          ? isHevc
+                            ? 'hevc_vaapi'
+                            : 'h264_vaapi'
+                          : 'auto'
+
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      data-testid={`hw-accel-${opt.id}`}
+                      disabled={exporting || disabledByHw}
+                      title={tooltip}
+                      onClick={() =>
+                        onSettings({ ...settings, hwAccel: opt.id, encoder: legacyEnc })
+                      }
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] transition active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45 ${
+                        active
+                          ? 'border-[var(--accent)] bg-[var(--accent)]/15 font-semibold text-[var(--accent)]'
+                          : 'border-[color:var(--border-subtle)] bg-[var(--bg-panel)] text-white/70 hover:border-white/25'
+                      }`}
+                    >
+                      <span>{opt.label}</span>
+                      {(isNvenc || isVaapi) && (
+                        <span
+                          className={`rounded-full px-1.5 py-[1px] font-mono text-[8px] ${
+                            supported
+                              ? 'bg-emerald-500/20 text-emerald-300'
+                              : 'bg-white/10 text-white/45'
+                          }`}
+                        >
+                          {hwProbe === null ? '…' : supported ? 'Hazır' : 'Yok'}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
             </div>
 
@@ -748,7 +850,7 @@ export default function ExportWorkspace({
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--text-muted)]">Kodlayıcı</span>
-                <span className="text-white">{ENCODER_LABELS[settings.encoder ?? 'auto']}</span>
+                <span className="font-semibold text-[var(--accent)]">{activeEncoderBadge}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--text-muted)]">Kaynak Modu</span>
@@ -764,8 +866,16 @@ export default function ExportWorkspace({
               <div className="space-y-2 rounded-xl border border-[color:var(--border-subtle)] bg-black/45 p-3">
                 {exporting && (
                   <>
-                    <div className="flex justify-between font-mono text-[11px] text-[var(--accent)]">
-                      <span>{queuePaused ? 'Render Duraklatıldı' : 'FFmpeg İşleniyor…'}</span>
+                    <div className="flex items-center justify-between font-mono text-[11px] text-[var(--accent)]">
+                      <span className="flex items-center gap-2">
+                        <span>{queuePaused ? 'Render Duraklatıldı' : 'FFmpeg İşleniyor…'}</span>
+                        <span
+                          data-testid="active-encoder-badge"
+                          className="rounded-full border border-[var(--accent)]/40 bg-[var(--accent)]/15 px-2 py-0.5 text-[9px] font-semibold"
+                        >
+                          {activeEncoderBadge}
+                        </span>
+                      </span>
                       <span>%{progress}</span>
                     </div>
                     <div className="h-2 w-full overflow-hidden rounded bg-white/10">

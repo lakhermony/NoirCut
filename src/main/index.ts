@@ -12,6 +12,7 @@ import {
   pauseActiveExport,
   resumeActiveExport
 } from './export/export-service'
+import { probeHardwareEncoders } from './export/hw-probe'
 import {
   ensureSoundscapeItemSync,
   generateBatchProxies,
@@ -164,6 +165,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('export:cancel', () => cancelActiveExport())
   ipcMain.handle('export:pause', () => pauseActiveExport())
   ipcMain.handle('export:resume', () => resumeActiveExport())
+  ipcMain.handle('export:get-hw-encoders', () => probeHardwareEncoders())
   ipcMain.handle('proxy:get-config', () => getProxyConfig())
   ipcMain.handle('proxy:set-config', (_e, patch) => setProxyConfig(patch))
   ipcMain.handle('proxy:select-dir', (e) =>

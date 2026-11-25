@@ -922,7 +922,98 @@ async function runAllTests() {
     assert.equal(buildAspectMaskFilter('none', 1920, 1080), null)
     console.log('[PASS] 16/16 Analog Film Pass, Integer Credits, 2-Pass LUFS & Aspect Mask')
 
-    console.log('\nALL 16 NOIRCUT v1.0.5 REGRESSION TEST SUITES PASSED.')
+    // 17. Hardware Encoder Resolution & Flag Generation (NVENC / VAAPI / CPU)
+    const {
+      resolveHwAccelEncoder,
+      buildVideoEncoderConfig
+    } = require(join(COMPILED_DIR, 'main', 'export', 'export-filters.js'))
+
+    const allHwProbe = {
+      nvencH264: true,
+      nvencHevc: true,
+      vaapiH264: true,
+      vaapiHevc: true,
+      vaapiDevice: '/dev/dri/renderD128',
+      recommended: 'nvenc'
+    }
+    const vaapiOnlyProbe = {
+      nvencH264: false,
+      nvencHevc: false,
+      vaapiH264: true,
+      vaapiHevc: true,
+      vaapiDevice: '/dev/dri/renderD128',
+      recommended: 'vaapi'
+    }
+    const cpuOnlyProbe = {
+      nvencH264: false,
+      nvencHevc: false,
+      vaapiH264: false,
+      vaapiHevc: false,
+      vaapiDevice: null,
+      recommended: 'cpu'
+    }
+
+    assert.equal(resolveHwAccelEncoder({ hwAccel: 'auto', codec: 'h264', probe: allHwProbe }), 'h264_nvenc')
+    assert.equal(resolveHwAccelEncoder({ hwAccel: 'auto', codec: 'h265', probe: allHwProbe }), 'hevc_nvenc')
+    assert.equal(resolveHwAccelEncoder({ hwAccel: 'auto', codec: 'h264', probe: vaapiOnlyProbe }), 'h264_vaapi')
+    assert.equal(resolveHwAccelEncoder({ hwAccel: 'auto', codec: 'h265', probe: vaapiOnlyProbe }), 'hevc_vaapi')
+    assert.equal(resolveHwAccelEncoder({ hwAccel: 'auto', codec: 'h264', probe: cpuOnlyProbe }), 'libx264')
+    assert.equal(resolveHwAccelEncoder({ hwAccel: 'auto', codec: 'h265', probe: cpuOnlyProbe }), 'libx265')
+    assert.equal(resolveHwAccelEncoder({ hwAccel: 'nvenc', codec: 'h264', probe: cpuOnlyProbe }), 'libx264')
+    assert.equal(resolveHwAccelEncoder({ hwAccel: 'vaapi', codec: 'h264', probe: cpuOnlyProbe }), 'libx264')
+    assert.equal(resolveHwAccelEncoder({ hwAccel: 'cpu', codec: 'h264', probe: allHwProbe }), 'libx264')
+
+    const baseFilterParts = [
+      ...anGraph.parts,
+      `[${anGraph.outLabel}]${scopeMask}[vout]`
+    ]
+
+    const nvencMaster = buildVideoEncoderConfig({
+      encoder: 'h264_nvenc',
+      quality: 'master',
+      filterParts: baseFilterParts
+    })
+    assert.deepEqual(nvencMaster.preArgs, [])
+    assert.equal(nvencMaster.videoMapLabel, '[vout]')
+    assert.deepEqual(nvencMaster.videoCodecArgs, [
+      '-c:v', 'h264_nvenc', '-preset', 'p7', '-tune', 'hq', '-rc', 'vbr', '-cq', '15', '-b:v', '0', '-pix_fmt', 'yuv420p'
+    ])
+
+    const nvencDraft = buildVideoEncoderConfig({
+      encoder: 'hevc_nvenc',
+      quality: 'low',
+      filterParts: baseFilterParts
+    })
+    assert.ok(nvencDraft.videoCodecArgs.includes('-preset') && nvencDraft.videoCodecArgs.includes('p4'))
+    assert.ok(nvencDraft.videoCodecArgs.includes('-cq') && nvencDraft.videoCodecArgs.includes('28'))
+
+    const vaapiHigh = buildVideoEncoderConfig({
+      encoder: 'h264_vaapi',
+      quality: 'high',
+      vaapiDevice: '/dev/dri/renderD128',
+      filterParts: baseFilterParts
+    })
+    assert.deepEqual(vaapiHigh.preArgs, ['-vaapi_device', '/dev/dri/renderD128'])
+    assert.equal(vaapiHigh.videoMapLabel, '[vout_hw]')
+    assert.deepEqual(vaapiHigh.videoCodecArgs, ['-c:v', 'h264_vaapi', '-rc_mode', 'CQP', '-qp', '18'])
+    const vaapiChain = vaapiHigh.filterParts.join(';')
+    const maskedMergeIdx = vaapiChain.indexOf('maskedmerge')
+    const drawboxIdx = vaapiChain.indexOf('drawbox=')
+    const hwuploadIdx = vaapiChain.indexOf(',format=nv12,hwupload[vout_hw]')
+    assert.ok(maskedMergeIdx >= 0 && drawboxIdx > maskedMergeIdx && hwuploadIdx > drawboxIdx, 'VAAPI hwupload tüm filtrelerden sonra eklenmeli')
+
+    const cpuStd = buildVideoEncoderConfig({
+      encoder: 'libx264',
+      quality: 'medium',
+      filterParts: baseFilterParts
+    })
+    assert.deepEqual(cpuStd.videoCodecArgs, [
+      '-c:v', 'libx264', '-preset', 'medium', '-crf', '22', '-pix_fmt', 'yuv420p'
+    ])
+
+    console.log('[PASS] 17/17 Hardware Encoder Resolution & Flag Generation (NVENC / VAAPI / CPU)')
+
+    console.log('\nALL 17 NOIRCUT REGRESSION TEST SUITES PASSED.')
   } finally {
     rmSync(TEMP_ROOT, { recursive: true, force: true })
   }

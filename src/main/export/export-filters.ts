@@ -1,4 +1,12 @@
-import type { SubtitleExportOverlay, TimelineClip } from '../../shared/timeline'
+import type {
+  ExportCodec,
+  ExportEncoder,
+  ExportQuality,
+  HwAccelMode,
+  SubtitleExportOverlay,
+  TimelineClip
+} from '../../shared/timeline'
+import type { HwEncodersProbeResult, VideoEncoderId } from '../../shared/types'
 import { effectiveAverageSpeedFactor } from '../../shared/timeline'
 import {
   HALATION_GAIN,
@@ -305,4 +313,125 @@ export function buildAspectMaskFilter(
   const bar = Math.max(0, Math.floor((width - activeW) / 2))
   if (bar <= 1) return null
   return `drawbox=x=0:y=0:w=${bar}:h=ih:color=black:t=fill,drawbox=x=${width - bar}:y=0:w=${bar}:h=ih:color=black:t=fill`
+}
+
+const QUALITY_RATE_VALUES: Record<ExportQuality, { qp: string; nvencPreset: string }> = {
+  low: { qp: '28', nvencPreset: 'p4' },
+  medium: { qp: '22', nvencPreset: 'p5' },
+  high: { qp: '18', nvencPreset: 'p6' },
+  master: { qp: '15', nvencPreset: 'p7' }
+}
+
+/**
+ * `hwAccel` ('auto' | 'cpu' | 'nvenc' | 'vaapi'), hedef codec ('h264' | 'h265') ve
+ * çalışma zamanı prob sonuçlarına göre kullanılacak somut FFmpeg kodlayıcısını seçer.
+ * `'auto'` öncelik sırası: nvenc -> vaapi -> cpu.
+ */
+export function resolveHwAccelEncoder(opts: {
+  hwAccel?: HwAccelMode
+  legacyEncoder?: ExportEncoder
+  codec?: ExportCodec
+  probe: HwEncodersProbeResult
+}): VideoEncoderId {
+  const isHevc = opts.codec === 'h265'
+  const cpuEnc: VideoEncoderId = isHevc ? 'libx265' : 'libx264'
+  const nvencEnc: VideoEncoderId = isHevc ? 'hevc_nvenc' : 'h264_nvenc'
+  const vaapiEnc: VideoEncoderId = isHevc ? 'hevc_vaapi' : 'h264_vaapi'
+  const hasNvenc = isHevc ? opts.probe.nvencHevc : opts.probe.nvencH264
+  const hasVaapi = (isHevc ? opts.probe.vaapiHevc : opts.probe.vaapiH264) && Boolean(opts.probe.vaapiDevice)
+
+  let mode: HwAccelMode = opts.hwAccel ?? 'auto'
+  if (!opts.hwAccel && opts.legacyEncoder && opts.legacyEncoder !== 'auto') {
+    if (opts.legacyEncoder === 'libx264' || opts.legacyEncoder === 'libx265') {
+      mode = 'cpu'
+    } else if (opts.legacyEncoder === 'h264_nvenc' || opts.legacyEncoder === 'hevc_nvenc') {
+      mode = 'nvenc'
+    } else if (opts.legacyEncoder === 'h264_vaapi' || opts.legacyEncoder === 'hevc_vaapi') {
+      mode = 'vaapi'
+    }
+  }
+
+  if (mode === 'cpu') return cpuEnc
+  if (mode === 'nvenc') return hasNvenc ? nvencEnc : cpuEnc
+  if (mode === 'vaapi') return hasVaapi ? vaapiEnc : cpuEnc
+
+  if (hasNvenc) return nvencEnc
+  if (hasVaapi) return vaapiEnc
+  return cpuEnc
+}
+
+export interface VideoEncoderConfigResult {
+  encoder: VideoEncoderId
+  preArgs: string[]
+  videoCodecArgs: string[]
+  filterParts: string[]
+  videoMapLabel: string
+}
+
+/**
+ * Seçilen kodlayıcı (CPU / NVENC / VAAPI) ve kalite ön ayarına göre
+ * FFmpeg giriş öncesi argümanları, video filtre zinciri soneki (VAAPI hwupload) ve
+ * oran-kontrol (rate-control) bayraklarını üretir.
+ */
+export function buildVideoEncoderConfig(opts: {
+  encoder: VideoEncoderId
+  quality: ExportQuality
+  vaapiDevice?: string | null
+  filterParts: string[]
+}): VideoEncoderConfigResult {
+  const rate = QUALITY_RATE_VALUES[opts.quality] ?? QUALITY_RATE_VALUES.high
+  const { encoder } = opts
+
+  if (encoder === 'h264_vaapi' || encoder === 'hevc_vaapi') {
+    const preArgs = opts.vaapiDevice ? ['-vaapi_device', opts.vaapiDevice] : []
+    const lastIdx = opts.filterParts.length - 1
+    let updatedParts: string[]
+    if (lastIdx >= 0 && opts.filterParts[lastIdx].endsWith('[vout]')) {
+      updatedParts = [...opts.filterParts]
+      updatedParts[lastIdx] = `${updatedParts[lastIdx].slice(0, -'[vout]'.length)},format=nv12,hwupload[vout_hw]`
+    } else {
+      updatedParts = [...opts.filterParts, '[vout]format=nv12,hwupload[vout_hw]']
+    }
+    return {
+      encoder,
+      preArgs,
+      videoCodecArgs: ['-c:v', encoder, '-rc_mode', 'CQP', '-qp', rate.qp],
+      filterParts: updatedParts,
+      videoMapLabel: '[vout_hw]'
+    }
+  }
+
+  if (encoder === 'h264_nvenc' || encoder === 'hevc_nvenc') {
+    return {
+      encoder,
+      preArgs: [],
+      videoCodecArgs: [
+        '-c:v',
+        encoder,
+        '-preset',
+        rate.nvencPreset,
+        '-tune',
+        'hq',
+        '-rc',
+        'vbr',
+        '-cq',
+        rate.qp,
+        '-b:v',
+        '0',
+        '-pix_fmt',
+        'yuv420p'
+      ],
+      filterParts: opts.filterParts,
+      videoMapLabel: '[vout]'
+    }
+  }
+
+  const cpuEnc = encoder === 'libx265' ? 'libx265' : 'libx264'
+  return {
+    encoder: cpuEnc,
+    preArgs: [],
+    videoCodecArgs: ['-c:v', cpuEnc, '-preset', 'medium', '-crf', rate.qp, '-pix_fmt', 'yuv420p'],
+    filterParts: opts.filterParts,
+    videoMapLabel: '[vout]'
+  }
 }
