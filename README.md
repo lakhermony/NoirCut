@@ -218,7 +218,30 @@ docs/
 - **[Katkıda Bulunma Rehberi (CONTRIBUTING)](CONTRIBUTING.md)**
 - **[Lisans (GNU GPL v3)](LICENSE)**
 
-> **Lisans & Marka Notu:** NoirCut kaynak kodu **GNU General Public License v3.0 (`GPL-3.0-only`)** kapsamında lisanslanmıştır. **NoirCut** adı ile özel logo ve marka varlıkları (`build/icon.*`, `resources/icon.png`, `noircut-logo.png`) münhasıran proje sahibinin mülkiyetindedir.
+---
+
+## License & Third-Party Notices
+
+NoirCut Studio source code is licensed under the **GNU General Public License v3.0 (`GPL-3.0-only`)**. See the [LICENSE](LICENSE) file for the full license text.
+
+### Bundled FFmpeg & Corresponding Source Disclosure (GPL v3 Section 6)
+
+NoirCut Studio redistributes unmodified static builds of **FFmpeg** / **FFprobe** compiled under the GNU General Public License v3.0 (`--enable-gpl --enable-version3`, without `--enable-nonfree`):
+
+| Target Platform | Bundled Binary | Detected Version | Upstream Build Source | Key GPL Build Flags |
+| :--- | :--- | :--- | :--- | :--- |
+| **Linux (`AppImage` / `.deb`)** | `ffmpeg-static` | `ffmpeg 7.0.2-static` | [johnvansickle.com/ffmpeg](https://johnvansickle.com/ffmpeg/) | `--enable-gpl --enable-version3 --enable-static` |
+| **Linux (`AppImage` / `.deb`)** | `ffprobe-static` | `ffprobe 4.0.2-static` | [johnvansickle.com/ffmpeg](https://johnvansickle.com/ffmpeg/) | `--enable-gpl --enable-version3 --enable-static` |
+| **Windows (`x64` `.exe`)** | `resources/bin/win/ffmpeg.exe` | `ffmpeg 6.1.1-essentials_build` | [gyan.dev/ffmpeg/builds](https://www.gyan.dev/ffmpeg/builds/) | `--enable-gpl --enable-version3 --enable-static` |
+
+In accordance with **GNU GPL v3 Section 6**:
+- **Corresponding Source:** Complete source code for NoirCut Studio and corresponding FFmpeg source archives are available via [GitHub Releases](https://github.com/lakhermony/NoirCut/releases) and the upstream FFmpeg project ([ffmpeg.org/download.html](https://ffmpeg.org/download.html)).
+- **Written Offer (3 Years):** For any distributed binary build, you may request a complete machine-readable copy of the corresponding source code for at least three (3) years from the date of distribution by contacting `lakhermony@users.noreply.github.com`.
+- **Trademark Attribution:** *FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.*
+
+### Trademark & Branding Assets
+
+The **NoirCut** name, wordmark, and custom logo/branding assets (`build/icon.png`, `build/icon.ico`, `resources/icon.png`, `src/renderer/src/assets/noircut-logo.png`, `noircut logo.jpeg`, and `site/assets/icon.png`) are **excluded** from the GNU GPL v3 source code license and remain the exclusive property of the author (`NoirCut Studio`). Redistribution or modified derivatives under the GPL v3 must not use the NoirCut name or branding assets to imply endorsement without prior written permission.
 
 ---
 
