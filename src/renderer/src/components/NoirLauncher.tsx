@@ -58,7 +58,7 @@ export default function NoirLauncher({
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({
     state: 'idle',
     currentVersion: appVersion || '1.0.6',
-    message: `NoirCut v${appVersion || '1.0.6'} — En güncel sürümü kullanıyorsunuz`
+    message: `NoirCut v${appVersion || '1.0.6'} — Güncellemeleri denetlemek için aşağıdaki butona tıklayın`
   })
 
   useEffect(() => {
@@ -85,10 +85,19 @@ export default function NoirLauncher({
     setUpdateStatus((prev) => ({
       ...prev,
       state: 'checking',
-      message: 'Güncellemeler denetleniyor…'
+      message: 'GitHub Releases üzerinden güncellemeler denetleniyor…'
     }))
-    const res = await window.noircut.checkForUpdates()
-    setUpdateStatus(res)
+    try {
+      const res = await window.noircut.checkForUpdates()
+      if (res) setUpdateStatus(res)
+    } catch (err) {
+      setUpdateStatus((prev) => ({
+        ...prev,
+        state: 'error',
+        message: `Güncelleme denetlenemedi: ${err instanceof Error ? err.message : String(err)}`,
+        lastCheckedAt: new Date().toISOString()
+      }))
+    }
   }
 
   const handleDownloadAndInstall = async () => {
@@ -213,7 +222,13 @@ export default function NoirLauncher({
               </span>
             </div>
 
-            <div className="rounded-[13px] bg-[#242830] px-3.5 py-2.5 text-[10.5px] text-[#F1F2EE]">
+            <div
+              className={`rounded-[13px] px-3.5 py-2.5 text-[10.5px] ${
+                updateStatus.state === 'error'
+                  ? 'border border-crimson/40 bg-crimson/10 text-crimson'
+                  : 'bg-[#242830] text-[#F1F2EE]'
+              }`}
+            >
               {updateStatus.message || `NoirCut ${versionLabel} — En güncel sürümü kullanıyorsunuz`}
             </div>
 

@@ -61,14 +61,15 @@ export function initAutoUpdater(): void {
     })
   })
 
-  autoUpdater.on('update-not-available', () => {
+  autoUpdater.on('update-not-available', (info) => {
     const v = app.getVersion()
-    console.info(`[NoirCut Updater] Güncel sürüm kullanılıyor: v${v}`)
+    const remoteVer = info?.version ?? v
+    console.info(`[NoirCut Updater] Güncel sürüm kullanılıyor: v${v} (GitHub: v${remoteVer})`)
     broadcast({
       state: 'not-available',
       currentVersion: v,
-      latestVersion: v,
-      message: `NoirCut v${v} — En güncel sürümü kullanıyorsunuz`,
+      latestVersion: remoteVer,
+      message: `NoirCut v${v} — En güncel sürümü kullanıyorsunuz (GitHub: v${remoteVer})`,
       lastCheckedAt: new Date().toISOString()
     })
   })
@@ -130,14 +131,29 @@ export async function checkForAppUpdates(): Promise<UpdateStatus> {
 
   initAutoUpdater()
 
+  if (!autoUpdater.isUpdaterActive()) {
+    const inactiveStatus: UpdateStatus = {
+      state: 'error',
+      currentVersion: v,
+      message: 'Otomatik güncelleyici yalnızca kurulu (NSIS) veya AppImage paketinde aktif olur.',
+      lastCheckedAt: now
+    }
+    broadcast(inactiveStatus)
+    return inactiveStatus
+  }
+
   try {
     const result = await autoUpdater.checkForUpdates()
-    if (!result || !result.updateInfo || result.updateInfo.version === v) {
+    if (latestStatus.state === 'available' || latestStatus.state === 'error') {
+      return latestStatus
+    }
+    const remoteVer = result?.updateInfo?.version ?? v
+    if (!result || !result.updateInfo || remoteVer === v) {
       const upToDate: UpdateStatus = {
         state: 'not-available',
         currentVersion: v,
-        latestVersion: v,
-        message: `NoirCut v${v} — En güncel sürümü kullanıyorsunuz`,
+        latestVersion: remoteVer,
+        message: `NoirCut v${v} — En güncel sürümü kullanıyorsunuz (GitHub: v${remoteVer})`,
         lastCheckedAt: now
       }
       broadcast(upToDate)
