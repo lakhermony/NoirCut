@@ -319,10 +319,7 @@ export default function App() {
 
   // Aktif medya seçimi yalnızca seçimi günceller; timeline kurgusunu sıfırlamaz.
 
-  const total = useMemo(() => {
-    const end = projectEnd(clips)
-    return end > 0 ? end : (lib.active?.duration ?? 0)
-  }, [clips, lib.active])
+  const total = useMemo(() => projectEnd(clips), [clips])
 
   // Renk düzenleme hedef klibi: seçili video/görsel klibi -> playhead'deki aktif video klibi -> ilk video klibi
   const targetGradeClip = useMemo(() => {
@@ -2323,7 +2320,7 @@ export default function App() {
       ? 'FFmpeg bulunamadı'
       : `FFmpeg ${engine.version} · ${engine.source === 'embedded' ? 'gömülü' : 'sistem'} · ${engine.platform}`
 
-  const monitorMedia = player.currentMedia ?? lib.active
+  const monitorMedia = player.currentMedia
 
   const activeV2Clip = useMemo(() => {
     const vLanesTopDown = [...getOrderedVideoLanesAsc(lanes, clips)].reverse()
@@ -2724,7 +2721,7 @@ export default function App() {
             fps={monitorMedia?.fps || 25}
             playing={player.playing}
             shuttleRate={player.shuttleRate}
-            canPlay={clips.length > 0 || !!lib.active}
+            canPlay={clips.length > 0}
             inPoint={inPoint}
             outPoint={outPoint}
             canUndo={undoStack.length > 0}
