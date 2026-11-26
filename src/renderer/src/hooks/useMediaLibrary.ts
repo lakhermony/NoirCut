@@ -94,6 +94,20 @@ export function useMediaLibrary() {
     [loadPeaks]
   )
 
+  const removeMedia = useCallback((mediaId: string) => {
+    setItems((prev) => {
+      const next = prev.filter((m) => m.id !== mediaId)
+      setActiveId((cur) => (cur === mediaId ? (next[0]?.id ?? null) : cur))
+      return next
+    })
+    setPeaksMap((prev) => {
+      if (!(mediaId in prev)) return prev
+      const next = { ...prev }
+      delete next[mediaId]
+      return next
+    })
+  }, [])
+
   return {
     items,
     active,
@@ -102,6 +116,7 @@ export function useMediaLibrary() {
     peaksMap,
     importMedia,
     registerVirtualMedia,
+    removeMedia,
     replaceAll,
     busy,
     errors,

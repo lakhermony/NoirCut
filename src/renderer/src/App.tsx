@@ -230,7 +230,6 @@ export default function App() {
     })
   }, [])
   const nextId = useRef(100)
-  const skipNextAutoPlaceRef = useRef(false)
 
   const lib = useMediaLibrary()
   const mediaMap = useMemo(() => new Map(lib.items.map((m) => [m.id, m])), [lib.items])
@@ -318,16 +317,7 @@ export default function App() {
     })
   }, [])
 
-  // Aktif medya değişince timeline'a tek klip olarak yerleştir (proje yükleme hariç)
-  useEffect(() => {
-    if (skipNextAutoPlaceRef.current) {
-      skipNextAutoPlaceRef.current = false
-      return
-    }
-    const m = lib.active
-    setSelectedClipId(null)
-    setClips(m ? [makeClip(m, m.mediaKind === 'audio' ? 'A1' : 'V1', 0)] : [])
-  }, [lib.active, makeClip])
+  // Aktif medya seçimi yalnızca seçimi günceller; timeline kurgusunu sıfırlamaz.
 
   const total = useMemo(() => {
     const end = projectEnd(clips)
@@ -1054,7 +1044,7 @@ export default function App() {
   )
 
   const dropMediaToLane = useCallback(
-    (mediaId: string, lane: LaneId) => {
+    (mediaId: string, lane: LaneId, dropTimeSec?: number) => {
       const m = mediaMap.get(mediaId)
       if (!m) return
       const targetLane: LaneId =
@@ -1070,10 +1060,45 @@ export default function App() {
         const laneEnd = cs
           .filter((c) => c.lane === targetLane)
           .reduce((max, c) => Math.max(max, clipEndExact(c)), 0)
-        return [...cs, makeClip(m, targetLane, round3(laneEnd))]
+        const startAt =
+          typeof dropTimeSec === 'number' && Number.isFinite(dropTimeSec)
+            ? Math.max(0, round3(dropTimeSec))
+            : round3(laneEnd)
+        return [...cs, makeClip(m, targetLane, startAt)]
       })
     },
     [mediaMap, makeClip, recordHistory]
+  )
+
+  const appendMediaToTimeline = useCallback(
+    (mediaId: string) => {
+      const m = mediaMap.get(mediaId)
+      if (!m) return
+      const targetLane: LaneId = m.mediaKind === 'audio' ? 'A1' : 'V1'
+      dropMediaToLane(mediaId, targetLane)
+      showToast(`Timeline'a eklendi (${targetLane}): ${m.name}`)
+    },
+    [mediaMap, dropMediaToLane, showToast]
+  )
+
+  const handleRemoveMedia = useCallback(
+    (mediaId: string) => {
+      const usedInTimeline = clips.some((c) => c.mediaId === mediaId)
+      if (usedInTimeline) {
+        const confirmed = window.confirm(
+          "Bu medya timeline'da kullanılıyor. Silinirse timeline'daki ilgili klipler de kaldırılacak. Devam edilsin mi?"
+        )
+        if (!confirmed) return
+        recordHistory('Medya ve Klipleri Kaldır')
+        setClips((cs) => cs.filter((c) => c.mediaId !== mediaId))
+        if (selectedClipId && clips.some((c) => c.id === selectedClipId && c.mediaId === mediaId)) {
+          setSelectedClipId(null)
+        }
+      }
+      lib.removeMedia(mediaId)
+      showToast('Medya havuzdan kaldırıldı')
+    },
+    [clips, selectedClipId, setSelectedClipId, recordHistory, lib, showToast]
   )
 
   const selectedV2Clip = useMemo(
@@ -1851,7 +1876,6 @@ export default function App() {
         return false
       }
       const proj = res.project
-      skipNextAutoPlaceRef.current = true
       lib.replaceAll(res.mediaItems ?? [], proj.activeMediaId ?? null)
       setClips(proj.clips ?? [])
       setLanes(normalizeLanesMap(proj.lanes, proj.clips))
@@ -2571,6 +2595,8 @@ export default function App() {
               errors={lib.errors}
               onImport={lib.importMedia}
               onSelectMedia={lib.setActiveId}
+              onAddMediaToTimeline={appendMediaToTimeline}
+              onRemoveMedia={handleRemoveMedia}
               onDismissErrors={lib.clearErrors}
               activeCreditTemplate={activeCredit.templateId}
               onSelectCreditTemplate={handleSelectCreditTemplate}

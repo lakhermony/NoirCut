@@ -155,7 +155,7 @@ export default function Timeline({
   onAddVideoLane?: () => void
   onAddAudioLane?: () => void
   onRemoveLane?: (lane: LaneId) => void
-  onDropMediaToLane: (mediaId: string, lane: LaneId) => void
+  onDropMediaToLane: (mediaId: string, lane: LaneId, dropTimeSec?: number) => void
   onCutClipAt?: (clipId: string, splitTime: number) => void
   onGroupSelected?: () => void
   onLinkSelected?: () => void
@@ -1443,7 +1443,11 @@ export default function Timeline({
                   onDrop={(e) => {
                     e.preventDefault()
                     const mediaId = e.dataTransfer.getData(MEDIA_DRAG_TYPE)
-                    if (mediaId) onDropMediaToLane(mediaId, lane)
+                    if (mediaId) {
+                      const rect = e.currentTarget.getBoundingClientRect()
+                      const dropTimeSec = Math.max(0, (e.clientX - rect.left) / pps)
+                      onDropMediaToLane(mediaId, lane, dropTimeSec)
+                    }
                   }}
                   className={`relative border-b border-white/[0.05] transition-colors ${
                     dropTargetLane === lane

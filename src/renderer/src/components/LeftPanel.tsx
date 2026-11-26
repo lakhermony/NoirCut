@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CREDIT_TEMPLATES, type CreditTemplateId } from '../../../shared/credits'
 import type { MediaItem } from '../../../shared/types'
 import { fmtDuration } from '../lib/format'
@@ -15,6 +15,8 @@ export default function LeftPanel({
   errors,
   onImport,
   onSelectMedia,
+  onAddMediaToTimeline,
+  onRemoveMedia,
   onDismissErrors,
   activeCreditTemplate,
   onSelectCreditTemplate
@@ -27,12 +29,26 @@ export default function LeftPanel({
   errors: string[]
   onImport: () => void
   onSelectMedia: (id: string) => void
+  onAddMediaToTimeline: (id: string) => void
+  onRemoveMedia: (id: string) => void
   onDismissErrors: () => void
   activeCreditTemplate: CreditTemplateId
   onSelectCreditTemplate: (id: CreditTemplateId) => void
 }) {
   const [collapsed, setCollapsed] = useState(false)
   const [mediaFilter, setMediaFilter] = useState<'all' | 'video' | 'audio' | 'image'>('all')
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; mediaId: string } | null>(null)
+
+  useEffect(() => {
+    if (!ctxMenu) return
+    const close = () => setCtxMenu(null)
+    window.addEventListener('click', close)
+    window.addEventListener('blur', close)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('blur', close)
+    }
+  }, [ctxMenu])
   const rawMedia = media.filter((m) => !m.id.startsWith('sfx-'))
   const videoMedia = rawMedia.filter((m) => {
     if (mediaFilter === 'all') return true
@@ -67,7 +83,17 @@ export default function LeftPanel({
   return (
     <aside
       style={{ width }}
-      className="glass flex h-full shrink-0 flex-col overflow-hidden transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
+      tabIndex={-1}
+      onKeyDown={(e) => {
+        const tag = (e.target as HTMLElement | null)?.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+        if (e.key === 'Delete' && activeMediaId) {
+          e.preventDefault()
+          e.stopPropagation()
+          onRemoveMedia(activeMediaId)
+        }
+      }}
+      className="glass flex h-full shrink-0 flex-col overflow-hidden outline-none transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
     >
       <div className="flex items-center justify-between px-4 pb-2 pt-3">
         <div className="flex items-center gap-2">
@@ -166,15 +192,55 @@ export default function LeftPanel({
                     e.dataTransfer.effectAllowed = 'copy'
                   }}
                   onClick={() => onSelectMedia(m.id)}
-                  title={`${m.name}\n${m.width}×${m.height} · ${m.codec} · ${m.fps.toFixed(2)} fps`}
+                  onDoubleClick={() => onAddMediaToTimeline(m.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onSelectMedia(m.id)
+                    setCtxMenu({ x: e.clientX, y: e.clientY, mediaId: m.id })
+                  }}
+                  title={`${m.name}\n${m.width}×${m.height} · ${m.codec} · ${m.fps.toFixed(2)} fps\nÇift tıkla veya + ile timeline'a ekle`}
                   className={`case-file-card group relative cursor-pointer overflow-hidden rounded-[13px] border bg-[var(--bg-surface)] transition duration-150 ${
                     isActive
                       ? 'border-[var(--accent)] shadow-[0_0_12px_var(--accent-glow)]'
                       : 'border-[color:var(--border-subtle)] hover:border-white/30'
                   }`}
                 >
-                  {/* Kesik Köşe Çizgisi (Chamfer Corner Accent) */}
-                  <span className="pointer-events-none absolute right-0 top-0 z-20 h-3 w-3 border-b border-l border-white/25 bg-black/75" />
+                  {/* Hover Aksiyonları: + (Timeline'a Ekle) & Sil (Trash) */}
+                  <div className="absolute right-1.5 top-1.5 z-30 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                    <button
+                      type="button"
+                      data-testid="media-card-add"
+                      title="Timeline'a Ekle"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onAddMediaToTimeline(m.id)
+                      }}
+                      className="flex h-5 w-5 items-center justify-center rounded-full border border-[var(--accent)]/60 bg-black/85 text-xs font-bold leading-none text-[var(--accent)] shadow transition hover:bg-[var(--accent)] hover:text-[var(--accent-fg)]"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="media-card-delete"
+                      title="Medyadan Kaldır (Delete)"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onRemoveMedia(m.id)
+                      }}
+                      className="flex h-5 w-5 items-center justify-center rounded-full border border-crimson/55 bg-black/85 text-[10px] text-crimson shadow transition hover:bg-crimson hover:text-white"
+                    >
+                      <svg
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        className="h-3 w-3"
+                      >
+                        <path d="M2.5 4.5h11M6 4.5V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5M12 4.5l-.6 8.2a1.2 1.2 0 0 1-1.2 1.1H5.8a1.2 1.2 0 0 1-1.2-1.1L4 4.5" />
+                      </svg>
+                    </button>
+                  </div>
 
                   <div className="relative aspect-video bg-gradient-to-br from-white/10 to-black">
                     {m.thumbnail ? (
@@ -246,6 +312,40 @@ export default function LeftPanel({
             })}
           </div>
         </>
+      )}
+
+      {ctxMenu && (
+        <div
+          data-testid="media-context-menu"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+          className="fixed z-50 min-w-[168px] rounded-xl border border-[color:var(--border-subtle)] bg-[var(--bg-elevated,#1b1f27)] p-1 shadow-2xl backdrop-blur-md"
+        >
+          <button
+            type="button"
+            onClick={() => {
+              onAddMediaToTimeline(ctxMenu.mediaId)
+              setCtxMenu(null)
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] text-white/85 transition hover:bg-[var(--accent)]/20 hover:text-[var(--accent)]"
+          >
+            <span>+</span>
+            <span>Timeline&apos;a Ekle</span>
+          </button>
+          <button
+            type="button"
+            data-testid="media-ctx-remove"
+            onClick={() => {
+              const id = ctxMenu.mediaId
+              setCtxMenu(null)
+              onRemoveMedia(id)
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] text-crimson transition hover:bg-crimson/15"
+          >
+            <span>✕</span>
+            <span>Medyadan Kaldır</span>
+          </button>
+        </div>
       )}
     </aside>
   )
