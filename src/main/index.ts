@@ -47,26 +47,27 @@ import {
   extractClipsMetadata
 } from './media/media-analysis'
 
+import { resolveChromiumFlags } from './security/chromium-flags'
+
 // Özel protokol 'ready' öncesi kaydedilmek zorunda
 registerMediaScheme()
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.noircut.studio')
 }
 
-// NVIDIA / Linux Donanım Video Çözme (Hardware Video Decode) ve AppImage Sandbox Uyumluluğu
-if (process.platform === 'linux' && process.env['APPIMAGE']) {
-  app.commandLine.appendSwitch('no-sandbox')
-  app.commandLine.appendSwitch('disable-gpu-sandbox')
+// Chromium sandbox ve GPU donanım çözme bayrakları (yalnızca AppImage'da no-sandbox; deb/rpm sandbox'lı açılır)
+const chromiumFlagRes = resolveChromiumFlags({
+  platform: process.platform,
+  isAppImage: Boolean(process.env['APPIMAGE']),
+  env: process.env
+})
+for (const sw of chromiumFlagRes.switches) {
+  if (sw.value !== undefined) {
+    app.commandLine.appendSwitch(sw.name, sw.value)
+  } else {
+    app.commandLine.appendSwitch(sw.name)
+  }
 }
-app.commandLine.appendSwitch('ignore-gpu-blocklist')
-app.commandLine.appendSwitch('enable-gpu-rasterization')
-if (!process.env['NOIRCUT_SAFE_GPU']) {
-  app.commandLine.appendSwitch('enable-zero-copy')
-}
-app.commandLine.appendSwitch(
-  'enable-features',
-  'VaapiVideoDecoder,VaapiVideoDecodeLinuxGL,UseChromeOSDirectVideoDecoder'
-)
 
 function resolveWindowIcon() {
   const candidates = [
@@ -150,6 +151,14 @@ app.on('child-process-gone', (_e, details) => {
 })
 
 app.whenReady().then(async () => {
+  console.info('[NoirCut] Process sandbox durumu:', {
+    sandboxed: process.sandboxed,
+    platform: process.platform,
+    isAppImage: Boolean(process.env['APPIMAGE'])
+  })
+  if (chromiumFlagRes.sandboxDisabledReason) {
+    console.warn(`[NoirCut] ${chromiumFlagRes.sandboxDisabledReason}`)
+  }
   await initEngine()
   registerMediaProtocol()
 

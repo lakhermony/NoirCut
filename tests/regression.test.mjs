@@ -57,6 +57,7 @@ async function runAllTests() {
         join(ROOT, 'src/main/transcribe/transcribe-service.ts'),
         join(ROOT, 'src/main/export/vaapi-device.ts'),
         join(ROOT, 'src/main/export/export-filters.ts'),
+        join(ROOT, 'src/main/security/chromium-flags.ts'),
         '--outDir',
         COMPILED_DIR,
         '--module',
@@ -115,6 +116,7 @@ async function runAllTests() {
       escapeFilterPath,
       selectSubtitleOverlays
     } = require(join(COMPILED_DIR, 'main/export/export-filters.js'))
+    const { resolveChromiumFlags } = require(join(COMPILED_DIR, 'main/security/chromium-flags.js'))
 
     // 1. Dynamic Lane Preservation (Undo/Redo)
     const lanes = defaultLanes()
@@ -1112,7 +1114,36 @@ async function runAllTests() {
     assert.equal(timelineClipToCoreClip(legacyProj.clips[0]).sourceOut, secondsToMediaTicks(4.5))
     console.log('[PASS] 18/18 Integer Tick Timebase, Media-Time Keyframes & Legacy Adapter')
 
-    console.log('\nALL 18 NOIRCUT REGRESSION TEST SUITES PASSED.')
+    // 19. Chromium Sandbox Flags (deb/rpm sandboxed, AppImage conditional, Win/macOS clean)
+    const debRpmFlags = resolveChromiumFlags({ platform: 'linux', isAppImage: false, env: {} })
+    assert.equal(debRpmFlags.switches.some((s) => s.name === 'no-sandbox'), false)
+    assert.equal(debRpmFlags.switches.some((s) => s.name === 'disable-gpu-sandbox'), false)
+    assert.equal(debRpmFlags.sandboxDisabledReason, null)
+
+    const appImageFlags = resolveChromiumFlags({ platform: 'linux', isAppImage: true, env: {} })
+    assert.equal(appImageFlags.switches.some((s) => s.name === 'no-sandbox'), true)
+    assert.equal(appImageFlags.switches.some((s) => s.name === 'disable-gpu-sandbox'), true)
+    assert.ok(appImageFlags.sandboxDisabledReason !== null)
+
+    const forcedSandboxFlags = resolveChromiumFlags({
+      platform: 'linux',
+      isAppImage: true,
+      env: { NOIRCUT_FORCE_SANDBOX: '1' }
+    })
+    assert.equal(forcedSandboxFlags.switches.some((s) => s.name === 'no-sandbox'), false)
+    assert.equal(forcedSandboxFlags.sandboxDisabledReason, null)
+
+    for (const plat of ['win32', 'darwin']) {
+      const deskFlags = resolveChromiumFlags({ platform: plat, isAppImage: false, env: {} })
+      assert.equal(deskFlags.switches.some((s) => s.name === 'no-sandbox'), false)
+      assert.equal(deskFlags.switches.some((s) => s.name === 'disable-gpu-sandbox'), false)
+    }
+
+    const pkgJson = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+    assert.equal(pkgJson.build?.linux?.executableArgs, undefined)
+    console.log('[PASS] 19/19 Chromium Sandbox Bayrakları (deb/rpm sandbox açık, AppImage koşullu)')
+
+    console.log('\nALL 19 NOIRCUT REGRESSION TEST SUITES PASSED.')
   } finally {
     rmSync(TEMP_ROOT, { recursive: true, force: true })
   }

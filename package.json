@@ -90,9 +90,6 @@
       "category": "AudioVideo",
       "icon": "build/icon.png",
       "executableName": "noircut",
-      "executableArgs": [
-        "--no-sandbox"
-      ],
       "artifactName": "NoirCut-${version}-${os}-${arch}.${ext}"
     },
     "win": {
