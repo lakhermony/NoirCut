@@ -13,7 +13,7 @@
 | `src/core/clip-ops.ts` | 187 | Kısmi üretim kullanımı (yalnızca `evaluateParameterAtMediaTick`) |
 | `src/core/types/timeline.ts` | 64 | Kısmi üretim kullanımı (yalnızca `Keyframe` tipi) |
 | `src/core/legacy-adapter.ts` | 200 | Yalnızca `adaptAnalysisTimestampsToMediaTicks` yazılıyor, okunmuyor |
-| `src/ui/timeline/viewport-math.ts` | 59 | **Ölü kod** (`src/` içinde hiçbir yerden import edilmiyor) |
+| `src/ui/timeline/viewport-math.ts` → `experimental/timebase/viewport-math.ts` | 59 | **Park edildi (Seçenek B)** (`src/` içinde kullanılmıyordu) |
 | **Toplam** | **595** | |
 
 ---
@@ -53,4 +53,4 @@
 
 ---
 
-> **Durum:** Kullanıcı kararı beklenmektedir. Seçenek (A) veya (B) onaylanana kadar herhangi bir kod taşıma veya silme işlemi yapılmamıştır.
+> **Durum:** Seçenek (B) uygulandı — kullanılmayan `src/ui/timeline/viewport-math.ts` modülü `experimental/timebase/viewport-math.ts` altına taşındı; mevcut `core/` keyframe yardımcıları ve `legacy-adapter.ts` geriye dönük test uyumluluğu için korundu.

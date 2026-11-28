@@ -47,7 +47,6 @@ async function runAllTests() {
         join(ROOT, 'src/core/types/timeline.ts'),
         join(ROOT, 'src/core/clip-ops.ts'),
         join(ROOT, 'src/core/legacy-adapter.ts'),
-        join(ROOT, 'src/ui/timeline/viewport-math.ts'),
         join(ROOT, 'src/shared/timeline.ts'),
         join(ROOT, 'src/shared/analog-film.ts'),
         join(ROOT, 'src/shared/color.ts'),
@@ -62,6 +61,25 @@ async function runAllTests() {
         join(ROOT, 'src/main/updater-state.ts'),
         '--outDir',
         COMPILED_DIR,
+        '--module',
+        'commonjs',
+        '--types',
+        'node',
+        '--target',
+        'es2022',
+        '--esModuleInterop',
+        '--skipLibCheck'
+      ],
+      { stdio: 'inherit' }
+    )
+
+    execFileSync(
+      tscBin,
+      [
+        '--ignoreConfig',
+        join(ROOT, 'experimental/timebase/viewport-math.ts'),
+        '--outDir',
+        join(COMPILED_DIR, 'exp'),
         '--module',
         'commonjs',
         '--types',
@@ -1052,7 +1070,7 @@ async function runAllTests() {
     const {
       ticksToPixels,
       pixelsToTicks
-    } = require(join(COMPILED_DIR, 'ui', 'timeline', 'viewport-math.js'))
+    } = require(join(COMPILED_DIR, 'exp', 'experimental', 'timebase', 'viewport-math.js'))
 
     assert.equal(TICKS_PER_SECOND, 254_016_000_000)
     for (const rate of [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]) {
