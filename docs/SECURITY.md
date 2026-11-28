@@ -26,3 +26,10 @@
 - `media:transcribe`: `mediaId` boş olmayan metin olmalı ve yalnızca `mediaRegistry` içindeki kayıtlı öğeler üzerinden çözümlenir.
 - `project:archive`: `project` nesnesi doğrulanır; `mediaRefs` içindeki kaynak yollarının mutlak olması ve kopyalanan dosya adlarının hedef arşiv `media/` klasörü dışına çıkmaması (`basename` + `resolve` sınırı) denetlenir.
 - `snapshot:save`: `dataUrl` yalnızca `data:image/png;base64,` önekiyle kabul edilir; `defaultName` dosya adı `basename` ve güvenli karakter filtresiyle temizlenir.
+- `updater:check`, `updater:download`, `updater:quit-and-install`: renderer'dan herhangi bir argüman veya kaynak URL parametresi kabul edilmez (`assertNoUpdaterArgs`).
+
+## Otomatik Güncelleyici Güvenlik Modeli (`electron-updater`)
+
+- **Güncelleme kaynağı:** `lakhermony/NoirCut` GitHub Releases (`package.json` `build.publish` ve `src/main/updater-state.ts`).
+- **Kullanıcı onayı:** `autoDownload = false`, `autoInstallOnAppQuit = false`, `allowDowngrade = false`, `allowPrerelease = false`. İndirilen güncelleme uygulama kapanırken sessizce kurulmaz; yalnızca kullanıcının açıkça **"Yeniden Başlat ve Kur"** düğmesine basmasıyla kurulur.
+- **Bütünlük ve İmza Sınırı:** Güncellemeler GitHub Releases'tan çekilir; bütünlük `latest*.yml` içindeki `sha512` özeti ile doğrulanır. Windows paketi şu an **kod imzalı değildir** (`signExecutable: false`); bu nedenle yayıncı doğrulaması yoktur.

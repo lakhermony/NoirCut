@@ -19,7 +19,7 @@ const ffmpegPath = require('ffmpeg-static')
 const ffprobePath = require('ffprobe-static').path
 const tscBin = join(ROOT, 'node_modules', '.bin', 'tsc')
 
-const TOTAL_SUITES = 19
+const TOTAL_SUITES = 20
 const TEMP_ROOT = join(tmpdir(), `noircut-test-${process.pid}-${Date.now()}`)
 const COMPILED_DIR = join(TEMP_ROOT, 'compiled')
 const MEDIA_DIR = join(TEMP_ROOT, 'media')
@@ -59,6 +59,7 @@ async function runAllTests() {
         join(ROOT, 'src/main/export/vaapi-device.ts'),
         join(ROOT, 'src/main/export/export-filters.ts'),
         join(ROOT, 'src/main/security/chromium-flags.ts'),
+        join(ROOT, 'src/main/updater-state.ts'),
         '--outDir',
         COMPILED_DIR,
         '--module',
@@ -118,6 +119,13 @@ async function runAllTests() {
       selectSubtitleOverlays
     } = require(join(COMPILED_DIR, 'main/export/export-filters.js'))
     const { resolveChromiumFlags } = require(join(COMPILED_DIR, 'main/security/chromium-flags.js'))
+    const {
+      UPDATER_DEFAULT_CONFIG,
+      UPDATER_SOURCE,
+      assertNoUpdaterArgs,
+      createInitialUpdaterState,
+      reduceUpdaterState
+    } = require(join(COMPILED_DIR, 'main/updater-state.js'))
 
     // 1. Dynamic Lane Preservation (Undo/Redo)
     const lanes = defaultLanes()
@@ -1143,6 +1151,57 @@ async function runAllTests() {
     const pkgJson = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
     assert.equal(pkgJson.build?.linux?.executableArgs, undefined)
     console.log(`[PASS] 19/${TOTAL_SUITES} Chromium Sandbox Bayrakları (deb/rpm sandbox açık, AppImage koşullu)`)
+
+    // 20. Auto-Updater State Machine, Defaults & IPC Arg Guard
+    assert.equal(UPDATER_DEFAULT_CONFIG.autoInstallOnAppQuit, false)
+    assert.equal(UPDATER_DEFAULT_CONFIG.autoDownload, false)
+    assert.equal(UPDATER_DEFAULT_CONFIG.allowDowngrade, false)
+    assert.equal(UPDATER_DEFAULT_CONFIG.allowPrerelease, false)
+    assert.deepEqual(UPDATER_SOURCE, { provider: 'github', owner: 'lakhermony', repo: 'NoirCut' })
+
+    let uState = createInitialUpdaterState('1.0.6')
+    assert.equal(uState.state, 'idle')
+    uState = reduceUpdaterState(uState, { type: 'checking-for-update', currentVersion: '1.0.6', at: 't0' })
+    assert.equal(uState.state, 'checking')
+    const notAvail = reduceUpdaterState(uState, {
+      type: 'update-not-available',
+      currentVersion: '1.0.6',
+      latestVersion: '1.0.6',
+      at: 't1'
+    })
+    assert.equal(notAvail.state, 'not-available')
+    const avail = reduceUpdaterState(uState, {
+      type: 'update-available',
+      currentVersion: '1.0.6',
+      latestVersion: '1.0.7',
+      at: 't2'
+    })
+    assert.equal(avail.state, 'available')
+    const dlProg = reduceUpdaterState(avail, {
+      type: 'download-progress',
+      currentVersion: '1.0.6',
+      percent: 42
+    })
+    assert.equal(dlProg.state, 'downloading')
+    assert.equal(dlProg.progress, 42)
+    const dlDone = reduceUpdaterState(dlProg, {
+      type: 'update-downloaded',
+      currentVersion: '1.0.6',
+      latestVersion: '1.0.7'
+    })
+    assert.equal(dlDone.state, 'downloaded')
+    assert.equal(dlDone.progress, 100)
+    const errState = reduceUpdaterState(uState, {
+      type: 'error',
+      currentVersion: '1.0.6',
+      message: 'network error',
+      at: 't3'
+    })
+    assert.equal(errState.state, 'error')
+
+    assert.doesNotThrow(() => assertNoUpdaterArgs([]))
+    assert.throws(() => assertNoUpdaterArgs([{ feedUrl: 'https://evil.example' }]))
+    console.log(`[PASS] 20/${TOTAL_SUITES} Auto-Updater Durum Makinesi, Varsayılanlar ve IPC Argüman Koruması`)
 
     console.log(`\nALL ${TOTAL_SUITES} NOIRCUT REGRESSION TEST SUITES PASSED.`)
   } finally {

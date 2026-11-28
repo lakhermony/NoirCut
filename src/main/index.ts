@@ -40,6 +40,7 @@ import {
   initAutoUpdater,
   quitAndInstallAppUpdate
 } from './updater'
+import { assertNoUpdaterArgs } from './updater-state'
 import { cancelActiveTranscription, transcribeMediaFile } from './transcribe/transcribe-service'
 import {
   detectAudioTransients,
@@ -512,9 +513,18 @@ app.whenReady().then(async () => {
     ])
     return { gplText, thirdPartyText }
   })
-  ipcMain.handle('updater:check', () => checkForAppUpdates())
-  ipcMain.handle('updater:download', () => downloadAppUpdate())
-  ipcMain.handle('updater:quit-and-install', () => quitAndInstallAppUpdate())
+  ipcMain.handle('updater:check', (_e, ...args: unknown[]) => {
+    assertNoUpdaterArgs(args)
+    return checkForAppUpdates()
+  })
+  ipcMain.handle('updater:download', (_e, ...args: unknown[]) => {
+    assertNoUpdaterArgs(args)
+    return downloadAppUpdate()
+  })
+  ipcMain.handle('updater:quit-and-install', (_e, ...args: unknown[]) => {
+    assertNoUpdaterArgs(args)
+    return quitAndInstallAppUpdate()
+  })
 
   initAutoUpdater()
   const win = createWindow()
