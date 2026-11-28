@@ -19,6 +19,7 @@ const ffmpegPath = require('ffmpeg-static')
 const ffprobePath = require('ffprobe-static').path
 const tscBin = join(ROOT, 'node_modules', '.bin', 'tsc')
 
+const TOTAL_SUITES = 19
 const TEMP_ROOT = join(tmpdir(), `noircut-test-${process.pid}-${Date.now()}`)
 const COMPILED_DIR = join(TEMP_ROOT, 'compiled')
 const MEDIA_DIR = join(TEMP_ROOT, 'media')
@@ -136,7 +137,7 @@ async function runAllTests() {
     assert.equal(restoredLanes.V3.locked, true)
     assert.equal(restoredLanes.V3.solo, true)
     assert.equal(restoredLanes.A3.locked, true)
-    console.log('[PASS] 1/14 Undo/Redo Dinamik Kanal Koruması (V1..Vn, A1..An)')
+    console.log(`[PASS] 1/${TOTAL_SUITES} Undo/Redo Dinamik Kanal Koruması (V1..Vn, A1..An)`)
 
     // 2. Deep Copy & Circular Reference Guard
     const cloneClipItem = (c, seen = new Set()) => {
@@ -166,7 +167,7 @@ async function runAllTests() {
     cyclic.audioEffects.eqLowDb = -10
     assert.equal(clonedCyclic.audioEffects.eqLowDb, 4)
     assert.equal(clonedCyclic.nestedClips[0].nestedClips, undefined)
-    console.log('[PASS] 2/14 Undo/Redo Derin Kopyalama ve Döngüsel Referans Koruması')
+    console.log(`[PASS] 2/${TOTAL_SUITES} Undo/Redo Derin Kopyalama ve Döngüsel Referans Koruması`)
 
     // 3. Linked A/V Razor Split Re-linking
     assert.equal(findStrictSnap(4.992, [{ time: 5.0, priority: 0 }], 0.05), 5.0)
@@ -184,7 +185,7 @@ async function runAllTests() {
       4
     )
     assert.equal(gapRes.clips[1].start, 2)
-    console.log('[PASS] 3/14 Manyetik Kenetlenme, Ripple Gap ve Linked A/V Kesim Matematiği')
+    console.log(`[PASS] 3/${TOTAL_SUITES} Manyetik Kenetlenme, Ripple Gap ve Linked A/V Kesim Matematiği`)
 
     // 4. Multi-Level Nested Sequence Flattening
     const outerNest = {
@@ -217,7 +218,7 @@ async function runAllTests() {
     assert.equal(clipAt(flat, 'V1', 2.5).mediaId, 'm-b')
     assert.equal(clipAt(flat, 'V1', 3.5).mediaId, 'm-c')
     assert.equal(clipAt(flat, 'A1', 2.0).mediaId, 'm-aud')
-    console.log('[PASS] 4/14 Çok Katmanlı Nested Sequence Düzleştirme (Önizleme & Export Eşliği)')
+    console.log(`[PASS] 4/${TOTAL_SUITES} Çok Katmanlı Nested Sequence Düzleştirme (Önizleme & Export Eşliği)`)
 
     // 5. NoirFilm 3D LUT Bake & Parse + Subtitles SRT/VTT + Auto-Ducking
     const grade = defaultColorGrade()
@@ -252,7 +253,7 @@ async function runAllTests() {
       true
     )
     assert.ok(duck < 0.35)
-    console.log('[PASS] 5/14 NoirFilm 3D LUT, Keyframe İfadesi ve Auto-Ducking Matematiği')
+    console.log(`[PASS] 5/${TOTAL_SUITES} NoirFilm 3D LUT, Keyframe İfadesi ve Auto-Ducking Matematiği`)
 
     // 6. Proxy Scale Math & FFmpeg Verification
     const computeProxyTargetWidth = (srcW, activeScale) => {
@@ -272,7 +273,7 @@ async function runAllTests() {
     assert.equal(computeProxyTargetWidth(7680, '1/4'), 1920)
     assert.equal(computeProxyTargetWidth(7680, '1/8'), 960)
     assert.equal(computeProxyTargetWidth(320, '1/8'), 160)
-    console.log('[PASS] 6/14 Proxy Ölçek Matematiği (1080p, 4K, 8K, Küçük Kaynak)')
+    console.log(`[PASS] 6/${TOTAL_SUITES} Proxy Ölçek Matematiği (1080p, 4K, 8K, Küçük Kaynak)`)
 
     // 7. Atomic Temp Export & Existing Target File Protection
     const finalFile = join(MEDIA_DIR, 'final_export.mp4')
@@ -322,7 +323,7 @@ async function runAllTests() {
     ])
     renameSync(partFile, finalFile)
     assert.equal(probeJson(finalFile).streams[0].width, 640)
-    console.log('[PASS] 7/14 Atomik Geçici (.part) Dışa Aktarma ve Dosya Bütünlüğü')
+    console.log(`[PASS] 7/${TOTAL_SUITES} Atomik Geçici (.part) Dışa Aktarma ve Dosya Bütünlüğü`)
 
     // 8. Priority 2: Speed Ramp & Gain Rubberband Keyframes
     const rampClip = {
@@ -349,7 +350,7 @@ async function runAllTests() {
     assert.ok(Math.abs(effectiveAverageSpeedFactor(rampClip) - 1.5) < 0.01)
     assert.ok(Math.abs(mapClipLocalToSourceTime(rampClip, 2) - 4.0) < 0.02)
     assert.ok(Math.abs(clipGainAt(rampClip, 1) - dbToGain(-3)) < 0.01)
-    console.log('[PASS] 8/14 Speed Ramp İntegrasyonu ve Rubberband Ses Keyframe Hesabı')
+    console.log(`[PASS] 8/${TOTAL_SUITES} Speed Ramp İntegrasyonu ve Rubberband Ses Keyframe Hesabı`)
 
     // 9. Async Whisper Transcription: Cancel + Temp Cleanup + Concurrency Guard
     const sampleAudioMp4 = join(MEDIA_DIR, 'transcribe-sample.mp4')
@@ -422,7 +423,7 @@ async function runAllTests() {
     assert.equal(missingRes.ok, false)
     assert.equal(missingRes.engineMissing, true)
     assert.deepEqual(readdirSync(whisperWorkDir), [])
-    console.log('[PASS] 9/14 Async Whisper Transkripsiyon İptali, Eşzamanlılık ve Temp Temizliği')
+    console.log(`[PASS] 9/${TOTAL_SUITES} Async Whisper Transkripsiyon İptali, Eşzamanlılık ve Temp Temizliği`)
 
     // 10. VAAPI Device Probing (Multi-GPU, Fallback to libx264, Env Override)
     clearVaapiDeviceCache()
@@ -467,7 +468,7 @@ async function runAllTests() {
       else process.env.NOIRCUT_VAAPI_DEVICE = prevEnv
       clearVaapiDeviceCache()
     }
-    console.log('[PASS] 10/14 VAAPI Cihaz Probu (Çoklu GPU, Fallback ve Env Override)')
+    console.log(`[PASS] 10/${TOTAL_SUITES} VAAPI Cihaz Probu (Çoklu GPU, Fallback ve Env Override)`)
 
     // 11. Real-FFmpeg Export Parity: Speed Ramp, Power Window Mask, Subtitle Burn-In
     const W = 160
@@ -662,7 +663,7 @@ async function runAllTests() {
 
     const overlaysOff = selectSubtitleOverlays(false, [subOverlayItem])
     assert.equal(overlaysOff.length, 0)
-    console.log('[PASS] 11/14 Gerçek FFmpeg Export Eşliği (Speed Ramp, Power Window Mask, Altyazı Burn-In)')
+    console.log(`[PASS] 11/${TOTAL_SUITES} Gerçek FFmpeg Export Eşliği (Speed Ramp, Power Window Mask, Altyazı Burn-In)`)
 
     // 12. Adversarial Filter Escaping (drawtext + lut3d path)
     const hasDrawtext = (bin) => {
@@ -745,7 +746,7 @@ async function runAllTests() {
       lutOut
     ])
     assert.equal(readFileSync(lutOut).length, 64 * 64 * 3)
-    console.log('[PASS] 12/14 Düşmanca Girdi Filtre Kaçışı (drawtext + lut3d yol kaçışı)')
+    console.log(`[PASS] 12/${TOTAL_SUITES} Düşmanca Girdi Filtre Kaçışı (drawtext + lut3d yol kaçışı)`)
 
     // 13. Shared Math <-> FFmpeg Export Parity (Color Grade LUT + Composite Order)
     const parityGrade = {
@@ -822,7 +823,7 @@ async function runAllTests() {
     const [eR, eG] = centerPx(10, 10)
     assert.ok(cG > 110 && cR < 30, `Merkez V2 yeşil olmalı: R=${cR}, G=${cG}`)
     assert.ok(eR > 200 && eG < 30, `Kenar V1 kırmızı olmalı: R=${eR}, G=${eG}`)
-    console.log('[PASS] 13/14 Paylaşılan Matematik <-> FFmpeg Export Eşliği (Renk LUT + Kompozit Sırası)')
+    console.log(`[PASS] 13/${TOTAL_SUITES} Paylaşılan Matematik <-> FFmpeg Export Eşliği (Renk LUT + Kompozit Sırası)`)
 
     // 14. Karaoke / Hormozi / Typewriter Word-Level Timing Export Frames
     const subSeg = { id: 'k1', start: 1.0, end: 4.0, text: 'Merhaba yeni dünya', language: 'tr-TR' }
@@ -854,7 +855,7 @@ async function runAllTests() {
     const twFrames = computeSubtitleAnimationFrames(subSeg, { ...baseSubStyle, animation: 'typewriter' })
     assert.ok(twFrames.length >= 2)
     assert.equal(twFrames[twFrames.length - 1].visibleCharCount, subSeg.text.length)
-    console.log('[PASS] 14/14 Karaoke/Hormozi/Typewriter Kelime Zamanlaması Export Kareleri')
+    console.log(`[PASS] 14/${TOTAL_SUITES} Karaoke/Hormozi/Typewriter Kelime Zamanlaması Export Kareleri`)
 
     // 15. Theme Registry & Frosted Sage Integration
     const typesSrc = readFileSync(resolve('src/renderer/src/types.ts'), 'utf8')
@@ -884,7 +885,7 @@ async function runAllTests() {
       assert.ok(typesSrc.includes(hex), `Frosted Sage önizleme rengi eksik: ${hex}`)
     }
     assert.ok(helpersSrc.includes('THEME_OPTIONS.some((t) => t.id === saved)'))
-    console.log('[PASS] 15/15 Theme Registry & Frosted Sage Entegrasyonu')
+    console.log(`[PASS] 15/${TOTAL_SUITES} Theme Registry & Frosted Sage Entegrasyonu`)
 
     // 16. Analog Film Pass, Integer Rolling Credits, LUFS 2-Pass & Aspect Mask
     const {
@@ -927,7 +928,7 @@ async function runAllTests() {
     const scopeMask = buildAspectMaskFilter('2.39:1', 1920, 1080)
     assert.ok(scopeMask && scopeMask.includes('drawbox='))
     assert.equal(buildAspectMaskFilter('none', 1920, 1080), null)
-    console.log('[PASS] 16/16 Analog Film Pass, Integer Credits, 2-Pass LUFS & Aspect Mask')
+    console.log(`[PASS] 16/${TOTAL_SUITES} Analog Film Pass, Integer Credits, 2-Pass LUFS & Aspect Mask`)
 
     // 17. Hardware Encoder Resolution & Flag Generation (NVENC / VAAPI / CPU)
     const {
@@ -1018,7 +1019,7 @@ async function runAllTests() {
       '-c:v', 'libx264', '-preset', 'medium', '-crf', '22', '-pix_fmt', 'yuv420p'
     ])
 
-    console.log('[PASS] 17/17 Hardware Encoder Resolution & Flag Generation (NVENC / VAAPI / CPU)')
+    console.log(`[PASS] 17/${TOTAL_SUITES} Hardware Encoder Resolution & Flag Generation (NVENC / VAAPI / CPU)`)
 
     // 18. Integer Tick Timebase, Media-Time Keyframes & Legacy Adapter
     const {
@@ -1112,7 +1113,7 @@ async function runAllTests() {
     assert.equal(adaptedProj.clips[0].keyframes[0].time, secondsToMediaTicks(1.5))
     assert.equal(adaptedProj.markers[0].time, secondsToTimelineTicks(2.5))
     assert.equal(timelineClipToCoreClip(legacyProj.clips[0]).sourceOut, secondsToMediaTicks(4.5))
-    console.log('[PASS] 18/18 Integer Tick Timebase, Media-Time Keyframes & Legacy Adapter')
+    console.log(`[PASS] 18/${TOTAL_SUITES} Integer Tick Timebase, Media-Time Keyframes & Legacy Adapter`)
 
     // 19. Chromium Sandbox Flags (deb/rpm sandboxed, AppImage conditional, Win/macOS clean)
     const debRpmFlags = resolveChromiumFlags({ platform: 'linux', isAppImage: false, env: {} })
@@ -1141,9 +1142,9 @@ async function runAllTests() {
 
     const pkgJson = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
     assert.equal(pkgJson.build?.linux?.executableArgs, undefined)
-    console.log('[PASS] 19/19 Chromium Sandbox Bayrakları (deb/rpm sandbox açık, AppImage koşullu)')
+    console.log(`[PASS] 19/${TOTAL_SUITES} Chromium Sandbox Bayrakları (deb/rpm sandbox açık, AppImage koşullu)`)
 
-    console.log('\nALL 19 NOIRCUT REGRESSION TEST SUITES PASSED.')
+    console.log(`\nALL ${TOTAL_SUITES} NOIRCUT REGRESSION TEST SUITES PASSED.`)
   } finally {
     rmSync(TEMP_ROOT, { recursive: true, force: true })
   }
