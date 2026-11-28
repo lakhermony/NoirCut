@@ -131,6 +131,8 @@ En son sürüm sayfası: [https://github.com/lakhermony/NoirCut/releases/latest]
 | **Windows Taşınabilir (Portable)** | `NoirCut-1.0.6-win-x64-Portable.exe` | [Tek Tıkla İndir (Portable .exe)](https://github.com/lakhermony/NoirCut/releases/download/v1.0.6/NoirCut-1.0.6-win-x64-Portable.exe) |
 | **Linux Taşınabilir (AppImage)** | `NoirCut-1.0.6-linux-x86_64.AppImage` | [Tek Tıkla İndir (.AppImage)](https://github.com/lakhermony/NoirCut/releases/download/v1.0.6/NoirCut-1.0.6-linux-x86_64.AppImage) |
 
+> **Paket Doğrulama ve İmza Notu:** Yayınlanan ikili dosyalar için her sürümde `SHA256SUMS.txt` ve GitHub Build Provenance attestation üretilir. Windows kurulum ve taşınabilir paketleri şu an **kod imzasızdır** (`signExecutable: false`); bu nedenle Windows SmartScreen uyarısı görülebilir. İndirme sonrası bütünlüğü `SHA256SUMS.txt` ile doğrulayabilirsiniz.
+
 ## Kurulum ve Geliştirme
 
 ### Son Kullanıcı Kurulumu

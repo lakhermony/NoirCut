@@ -7,14 +7,17 @@
 import { app, BrowserWindow } from 'electron'
 import updaterPkg from 'electron-updater'
 import type { UpdateStatus } from '../shared/types'
+import {
+  UPDATER_DEFAULT_CONFIG,
+  UPDATER_SOURCE,
+  createInitialUpdaterState,
+  reduceUpdaterState
+} from './updater-state'
 
 const { autoUpdater } = updaterPkg
 
 let initialized = false
-let latestStatus: UpdateStatus = {
-  state: 'idle',
-  currentVersion: app.getVersion()
-}
+let latestStatus: UpdateStatus = createInitialUpdaterState(app.getVersion())
 
 function broadcast(status: UpdateStatus): void {
   latestStatus = status
@@ -30,17 +33,23 @@ export function initAutoUpdater(): void {
   if (initialized) return
   initialized = true
 
-  autoUpdater.autoDownload = false
-  autoUpdater.autoInstallOnAppQuit = true
+  // Güvenlik: otomatik indirme ve çıkışta sessiz kurulum kapalı; downgrade ve prerelease engelli
+  // Kaynak: GitHub Releases (UPDATER_SOURCE.owner/repo)
+  autoUpdater.autoDownload = UPDATER_DEFAULT_CONFIG.autoDownload
+  autoUpdater.autoInstallOnAppQuit = UPDATER_DEFAULT_CONFIG.autoInstallOnAppQuit
+  autoUpdater.allowDowngrade = UPDATER_DEFAULT_CONFIG.allowDowngrade
+  autoUpdater.allowPrerelease = UPDATER_DEFAULT_CONFIG.allowPrerelease
 
   autoUpdater.on('checking-for-update', () => {
-    console.info('[NoirCut Updater] GitHub Releases üzerinden güncelleme denetleniyor...')
-    broadcast({
-      state: 'checking',
-      currentVersion: app.getVersion(),
-      message: 'GitHub Releases üzerinden güncellemeler denetleniyor…',
-      lastCheckedAt: new Date().toISOString()
-    })
+    console.info(
+      `[NoirCut Updater] GitHub Releases (${UPDATER_SOURCE.owner}/${UPDATER_SOURCE.repo}) üzerinden güncelleme denetleniyor...`
+    )
+    broadcast(
+      reduceUpdaterState(latestStatus, {
+        type: 'checking-for-update',
+        currentVersion: app.getVersion()
+      })
+    )
   })
 
   autoUpdater.on('update-available', (info) => {
@@ -51,27 +60,27 @@ export function initAutoUpdater(): void {
         : Array.isArray(info.releaseNotes)
           ? info.releaseNotes.map((r) => `${r.version}: ${r.note ?? ''}`).join('\n')
           : undefined
-    broadcast({
-      state: 'available',
-      currentVersion: app.getVersion(),
-      latestVersion: info.version,
-      releaseNotes: notes,
-      message: `Yeni sürüm bulundu: NoirCut v${info.version}`,
-      lastCheckedAt: new Date().toISOString()
-    })
+    broadcast(
+      reduceUpdaterState(latestStatus, {
+        type: 'update-available',
+        currentVersion: app.getVersion(),
+        latestVersion: info.version,
+        releaseNotes: notes
+      })
+    )
   })
 
   autoUpdater.on('update-not-available', (info) => {
     const v = app.getVersion()
     const remoteVer = info?.version ?? v
     console.info(`[NoirCut Updater] Güncel sürüm kullanılıyor: v${v} (GitHub: v${remoteVer})`)
-    broadcast({
-      state: 'not-available',
-      currentVersion: v,
-      latestVersion: remoteVer,
-      message: `NoirCut v${v} — En güncel sürümü kullanıyorsunuz (GitHub: v${remoteVer})`,
-      lastCheckedAt: new Date().toISOString()
-    })
+    broadcast(
+      reduceUpdaterState(latestStatus, {
+        type: 'update-not-available',
+        currentVersion: v,
+        latestVersion: remoteVer
+      })
+    )
   })
 
   autoUpdater.on('download-progress', (p) => {
@@ -79,36 +88,36 @@ export function initAutoUpdater(): void {
     if (pct === 0 || pct === 25 || pct === 50 || pct === 75 || pct === 100) {
       console.info(`[NoirCut Updater] İndiriliyor: %${pct}`)
     }
-    broadcast({
-      ...latestStatus,
-      state: 'downloading',
-      currentVersion: app.getVersion(),
-      progress: p.percent,
-      message: `Güncelleme indiriliyor… (%${pct})`
-    })
+    broadcast(
+      reduceUpdaterState(latestStatus, {
+        type: 'download-progress',
+        currentVersion: app.getVersion(),
+        percent: p.percent
+      })
+    )
   })
 
   autoUpdater.on('update-downloaded', (info) => {
     console.info(`[NoirCut Updater] Güncelleme indirildi ve kuruluma hazır: v${info.version}`)
-    broadcast({
-      ...latestStatus,
-      state: 'downloaded',
-      currentVersion: app.getVersion(),
-      latestVersion: info.version,
-      progress: 100,
-      message: `NoirCut v${info.version} indirildi ve kuruluma hazır.`
-    })
+    broadcast(
+      reduceUpdaterState(latestStatus, {
+        type: 'update-downloaded',
+        currentVersion: app.getVersion(),
+        latestVersion: info.version
+      })
+    )
   })
 
   autoUpdater.on('error', (err) => {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[NoirCut Updater] Güncelleme hatası:', msg)
-    broadcast({
-      state: 'error',
-      currentVersion: app.getVersion(),
-      message: `Güncelleme denetlenemedi: ${msg}`,
-      lastCheckedAt: new Date().toISOString()
-    })
+    broadcast(
+      reduceUpdaterState(latestStatus, {
+        type: 'error',
+        currentVersion: app.getVersion(),
+        message: msg
+      })
+    )
   })
 }
 
